@@ -8,11 +8,19 @@ export interface Placement {
   h: number; // canvas height in meters
 }
 
+export interface Bench {
+  /** Centre on the floor plane (x, z), metres. */
+  position: [number, number];
+  /** Footprint (width along x, depth along z), metres. */
+  size: [number, number];
+}
+
 export interface GalleryLayout {
   hallWidth: number;
   hallLength: number;
   wallHeight: number;
   placements: Placement[];
+  benches: Bench[];
 }
 
 const EYE = 1.55; // painting centerline height
@@ -76,7 +84,14 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
     });
   });
 
-  return { hallWidth, hallLength, wallHeight, placements };
+  const benches: Bench[] = [];
+  const benchCount = Math.max(1, Math.floor(hallLength / 9));
+  for (let i = 0; i < benchCount; i++) {
+    const z = -hallLength / 2 + (i + 0.5) * (hallLength / benchCount) + 1;
+    benches.push({ position: [0, z], size: [0.62, 1.9] });
+  }
+
+  return { hallWidth, hallLength, wallHeight, placements, benches };
 }
 
 /** Where the camera should stand to inspect a placement head-on. */

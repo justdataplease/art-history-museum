@@ -33,6 +33,8 @@ export interface Painting {
   /** Physical size from Wikidata (P2049 width / P2048 height), in cm; null when unknown. */
   widthCm?: number | null;
   heightCm?: number | null;
+  /** English Wikipedia pageviews of the painting article over the last 12 months (flagship ranking). */
+  pageviews?: number | null;
   story: string;
   facts: string[];
   wikipediaUrl: string | null;

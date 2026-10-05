@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { wikiThumb } from "@/lib/img";
 import { WALL_GAP, type Placement } from "./layout";
 import { placardTexture } from "./textures";
+import type { GalleryTheme } from "./theme";
 
 const FRAME_DEPTH = 0.085;
 const FRAME_BORDER = 0.085;
@@ -42,7 +43,8 @@ export function PaintingExhibit({
   artistName: string;
   focusSlug: string | null;
   registry: Map<string, THREE.Mesh>;
-  castShadows: boolean;
+  theme: GalleryTheme;
+  castShadows?: boolean;
 }) {
   const { painting, w, h } = placement;
   const spot = useRef<THREE.SpotLight>(null);

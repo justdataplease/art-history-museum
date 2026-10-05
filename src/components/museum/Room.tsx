@@ -7,13 +7,19 @@ import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { RectAreaLightUniformsLib } from "three/examples/jsm/lights/RectAreaLightUniformsLib.js";
 import type { GalleryLayout } from "./layout";
+import type { GalleryTheme } from "./theme";
 import { plankTextures, plasterTexture } from "./textures";
 
 // The architecture of the hall: environment, ambient/ceiling light, floor,
 // walls, trim, ceiling, track rails and benches.
 
 // Procedural environment map — believable reflections without any HDR download.
-export function EnvSetup() {
+export function EnvSetup(_props: {
+  layout: GalleryLayout;
+  theme: GalleryTheme;
+  /** True once every painting texture has settled (a reflection probe may be captured then). */
+  ready: boolean;
+}) {
   const { gl, scene } = useThree();
   useEffect(() => {
     RectAreaLightUniformsLib.init();
@@ -34,6 +40,7 @@ export function Lighting({
   focused,
 }: {
   layout: GalleryLayout;
+  theme: GalleryTheme;
   focused: boolean;
 }) {
   const hemi = useRef<THREE.HemisphereLight>(null);
@@ -104,7 +111,7 @@ function FloorMesh({ W, L }: { W: number; L: number }) {
   );
 }
 
-export function Room({ layout }: { layout: GalleryLayout }) {
+export function Room({ layout }: { layout: GalleryLayout; theme: GalleryTheme }) {
   const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
 
   const wallMat = useMemo(() => {
@@ -155,14 +162,7 @@ export function Room({ layout }: { layout: GalleryLayout }) {
     return items;
   }, [W, L, H]);
 
-  const benches = useMemo(() => {
-    const out: number[] = [];
-    const count = Math.max(1, Math.floor(L / 9));
-    for (let i = 0; i < count; i++) {
-      out.push(-L / 2 + (i + 0.5) * (L / count) + 1);
-    }
-    return out;
-  }, [L]);
+  const benches = layout.benches.map((b) => b.position[1]);
 
   return (
     <group>
