@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import * as dotenv from "dotenv";
 
 dotenv.config({ path: path.join(__dirname, "..", ".env.local") });
@@ -20,11 +20,18 @@ async function main() {
     process.exit(1);
   }
   const data = JSON.parse(fs.readFileSync(file, "utf8"));
-  const db = new Pool({
+  // Verified TLS (Node's CA store checks Neon's certificate chain and host
+  // name). Parameters in DATABASE_URL override this object, so never put
+  // sslmode=no-verify there. Channel binding (SCRAM-SHA-256-PLUS) when offered.
+  const config: PoolConfig & { enableChannelBinding?: boolean } = {
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: true,
+    enableChannelBinding: true,
     max: 3,
-  });
+    connectionTimeoutMillis: 10_000,
+  };
+  const db = new Pool(config);
+  db.on("error", (err) => console.error("[pg] idle client error:", err.message));
 
   await db.query(`
     DROP TABLE IF EXISTS paintings;
@@ -78,6 +85,14 @@ async function main() {
     CREATE INDEX paintings_artist_idx ON paintings(artist_id);
   `);
 
+  // Enrichment columns (scripts/enrich.ts). Idempotent, so this block is also
+  // a safe migration for a database created before these fields existed.
+  await db.query(`
+    ALTER TABLE paintings ADD COLUMN IF NOT EXISTS width_cm REAL;
+    ALTER TABLE paintings ADD COLUMN IF NOT EXISTS height_cm REAL;
+    ALTER TABLE paintings ADD COLUMN IF NOT EXISTS pageviews INTEGER;
+  `);
+
   for (let i = 0; i < data.periods.length; i++) {
     const p = data.periods[i];
     await db.query(
@@ -102,12 +117,14 @@ async function main() {
     for (const p of a.paintings) {
       await db.query(
         `INSERT INTO paintings (artist_id, slug, title, year, image_url, image_width,
-                                image_height, story, facts, wikipedia_url, sort)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                                image_height, story, facts, wikipedia_url, sort,
+                                width_cm, height_cm, pageviews)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (artist_id, slug) DO NOTHING`,
         [
           artistId, p.slug, p.title, p.year, p.imageUrl, p.imageWidth,
           p.imageHeight, p.story, JSON.stringify(p.facts), p.wikipediaUrl, sort++,
+          p.widthCm ?? null, p.heightCm ?? null, p.pageviews ?? null,
         ]
       );
     }
@@ -116,7 +133,9 @@ async function main() {
   const counts = await db.query(
     `SELECT (SELECT COUNT(*) FROM periods) AS periods,
             (SELECT COUNT(*) FROM artists) AS artists,
-            (SELECT COUNT(*) FROM paintings) AS paintings`
+            (SELECT COUNT(*) FROM paintings) AS paintings,
+            (SELECT COUNT(*) FROM paintings WHERE width_cm IS NOT NULL AND height_cm IS NOT NULL) AS with_dimensions,
+            (SELECT COUNT(*) FROM paintings WHERE pageviews IS NOT NULL) AS with_pageviews`
   );
   console.log("Loaded into Neon:", counts.rows[0]);
   await db.end();

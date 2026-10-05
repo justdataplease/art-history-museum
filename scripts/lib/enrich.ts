@@ -1,0 +1,657 @@
+// Enrich ingested paintings with real reference data:
+//   - Wikidata item (resolved from the painting's English Wikipedia article via
+//     pageprops.wikibase_item; Commons-only works fall back to a P18 image match)
+//   - physical size from Wikidata: P2049 width / P2048 height (P2386 diameter for
+//     tondi), normalised to centimetres, implausible values rejected
+//   - 12 months of English Wikipedia pageviews (Wikimedia REST, user agents only)
+//   - optionally, out-of-lifetime years replaced by the Wikidata inception (P571)
+//     or cleared when Wikidata has nothing better.
+// Nothing is invented: every value written is copied from Wikidata / Wikimedia,
+// or left null when the sources have nothing usable.
+
+import { fetchJson, sleep } from "./wiki";
+
+export interface EnrichablePainting {
+  slug: string;
+  title: string;
+  year: number | null;
+  imageUrl: string;
+  imageWidth: number | null;
+  imageHeight: number | null;
+  wikipediaUrl: string | null;
+  widthCm?: number | null;
+  heightCm?: number | null;
+  pageviews?: number | null;
+  qid?: string | null;
+}
+
+export interface EnrichableArtist {
+  slug: string;
+  name: string;
+  qid: string | null;
+  birthYear: number | null;
+  deathYear: number | null;
+  paintings: EnrichablePainting[];
+}
+
+export interface EnrichOptions {
+  /** Replace/clear years outside the artist's working life (default true). */
+  fixYears?: boolean;
+  /** Remove works attributed to another artist by both P170 and the title (default true). */
+  dropForeign?: boolean;
+  log?: (msg: string) => void;
+  now?: Date;
+}
+
+export interface EnrichReport {
+  generatedAt: string;
+  pageviewWindow: { start: string; end: string };
+  paintings: number;
+  withArticle: number;
+  withQid: number;
+  qidFromImage: number;
+  withBothDims: number;
+  withAnyDim: number;
+  withPageviews: number;
+  rejectedDims: string[];
+  yearChanges: string[];
+  /** Items whose creator (P170) is not the gallery artist (flagged; Wikidata P170 is sometimes wrong). */
+  creatorMismatch: string[];
+  /**
+   * Works removed because two independent sources agree they are by someone
+   * else: Wikidata's creator (P170) is another artist AND the title names that
+   * artist (e.g. "The Magpie (Monet)" in Picasso's gallery). "artistSlug/paintingSlug".
+   */
+  removed: string[];
+  failures: string[];
+}
+
+const WIKI_API = "https://en.wikipedia.org/w/api.php";
+const WD_API = "https://www.wikidata.org/w/api.php";
+const WDQS = "https://query.wikidata.org/sparql";
+const PAGEVIEWS = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia/all-access/user";
+
+// Wikidata unit item -> centimetres per unit.
+const UNIT_TO_CM: Record<string, number> = {
+  Q174728: 1, // centimetre
+  Q174789: 0.1, // millimetre
+  Q11573: 100, // metre
+  Q218593: 2.54, // inch
+};
+
+// Physical-size sanity bounds (cm). Smallest plausible gallery work ~2 cm;
+// the largest canvases in the collection (Veronese, Monet's Water Lilies) are ~10-13 m.
+const MIN_CM = 2;
+const MAX_CM = 3000;
+// Max disagreement between the Wikidata aspect ratio and the photo's aspect ratio.
+// Photos include a little frame or crop; anything beyond this means the
+// statement describes something else (frame, whole altarpiece, detail) or is wrong.
+const ASPECT_TOLERANCE = 1.3;
+// Transposed width/height is accepted only when it matches the photo this well.
+const SWAP_TOLERANCE = 1.05;
+
+// ---------- politeness ----------
+
+/** Concurrency limiter with a minimum spacing between request starts. */
+export function createPacer(maxConcurrent: number, minIntervalMs: number) {
+  let active = 0;
+  let nextStart = 0;
+  const queue: (() => void)[] = [];
+  return async function run<T>(fn: () => Promise<T>): Promise<T> {
+    if (active >= maxConcurrent) await new Promise<void>((r) => queue.push(r));
+    active++;
+    const wait = nextStart - Date.now();
+    nextStart = Math.max(Date.now(), nextStart) + minIntervalMs;
+    if (wait > 0) await sleep(wait);
+    try {
+      return await fn();
+    } finally {
+      active--;
+      queue.shift()?.();
+    }
+  };
+}
+
+const actionApi = createPacer(2, 250); // MediaWiki action API: serial-ish
+const restApi = createPacer(4, 60); // pageviews REST: low concurrency, modest rate
+const sparql = createPacer(1, 1000);
+
+function chunks<T>(xs: T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+}
+
+export function titleFromWikipediaUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (!/(^|\.)wikipedia\.org$/.test(u.hostname) || !u.pathname.startsWith("/wiki/")) return null;
+    return decodeURIComponent(u.pathname.slice(6)).replace(/_/g, " ");
+  } catch {
+    return null;
+  }
+}
+
+/** Commons file name ("Foo bar.jpg") behind an upload.wikimedia.org URL, or null for non-Commons files. */
+export function commonsFileName(imageUrl: string): string | null {
+  try {
+    const u = new URL(imageUrl);
+    if (u.hostname !== "upload.wikimedia.org") return null;
+    const parts = u.pathname.split("/");
+    if (parts[2] !== "commons") return null;
+    const thumb = parts[3] === "thumb";
+    const name = thumb ? parts[6] : parts[5];
+    return name ? decodeURIComponent(name).replace(/_/g, " ") : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- 1. article title -> Wikidata item ----------
+
+interface ResolvedTitle {
+  canonical: string;
+  qid: string | null;
+}
+
+async function resolveTitles(titles: string[]): Promise<Map<string, ResolvedTitle | null>> {
+  const out = new Map<string, ResolvedTitle | null>();
+  for (const batch of chunks(titles, 50)) {
+    const url =
+      `${WIKI_API}?action=query&format=json&formatversion=2&redirects=1&prop=pageprops&ppprop=wikibase_item&titles=` +
+      encodeURIComponent(batch.join("|"));
+    const data = await actionApi(() =>
+      fetchJson<{
+        query?: {
+          normalized?: { from: string; to: string }[];
+          redirects?: { from: string; to: string }[];
+          pages?: { title: string; missing?: boolean; invalid?: boolean; pageprops?: { wikibase_item?: string } }[];
+        };
+      }>(url)
+    );
+    const q = data?.query;
+    if (!q) throw new Error("pageprops query returned nothing");
+    const norm = new Map((q.normalized ?? []).map((n) => [n.from, n.to]));
+    const redir = new Map((q.redirects ?? []).map((r) => [r.from, r.to]));
+    const pages = new Map((q.pages ?? []).map((p) => [p.title, p]));
+    for (const t of batch) {
+      let title = norm.get(t) ?? t;
+      for (let hop = 0; hop < 3 && redir.has(title); hop++) title = redir.get(title)!;
+      const page = pages.get(title);
+      if (!page || page.missing || page.invalid) {
+        out.set(t, null);
+        continue;
+      }
+      out.set(t, { canonical: page.title, qid: page.pageprops?.wikibase_item ?? null });
+    }
+  }
+  return out;
+}
+
+// ---------- 2. Commons image -> Wikidata item (works without an article) ----------
+
+// PHP rawurlencode (what Wikibase uses to build Special:FilePath URIs).
+const rawUrlEncode = (s: string) =>
+  encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+
+async function itemsByImage(
+  files: { file: string; artistQid: string | null }[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const FP = "http://commons.wikimedia.org/wiki/Special:FilePath/";
+  for (const batch of chunks(files, 40)) {
+    const values = batch.map((f) => `<${FP}${rawUrlEncode(f.file)}>`).join(" ");
+    const query = `SELECT ?item ?file ?creator WHERE { VALUES ?file { ${values} } ?item wdt:P18 ?file . OPTIONAL { ?item wdt:P170 ?creator . } }`;
+    const data = await sparql(() =>
+      fetchJson<{ results?: { bindings?: Record<string, { value: string }>[] } }>(WDQS, {
+        method: "POST",
+        headers: {
+          accept: "application/sparql-results+json",
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ query, format: "json" }).toString(),
+      })
+    );
+    if (!data) throw new Error("SPARQL returned nothing");
+    const rows = data.results?.bindings ?? [];
+    for (const f of batch) {
+      const mine = rows.filter((r) => decodeURIComponent(r.file.value.slice(FP.length)) === f.file);
+      const items = [...new Set(mine.map((r) => r.item.value.split("/").pop()!))];
+      // Several items can share an image (a detail, a series); keep only an
+      // item whose creator (P170) is this artist, or a lone match with no
+      // conflicting creator.
+      const byCreator = f.artistQid
+        ? items.filter((q) => mine.some((r) => r.item.value.endsWith("/" + q) && r.creator?.value.endsWith("/" + f.artistQid)))
+        : [];
+      if (byCreator.length === 1) out.set(f.file, byCreator[0]);
+      else if (items.length === 1 && mine.every((r) => !r.creator)) out.set(f.file, items[0]);
+    }
+  }
+  return out;
+}
+
+// ---------- 3. Wikidata claims ----------
+
+interface Snak {
+  snaktype: string;
+  datavalue?: { value: any };
+}
+interface Claim {
+  rank: "preferred" | "normal" | "deprecated";
+  mainsnak: Snak;
+  qualifiers?: Record<string, Snak[]>;
+}
+type Claims = Record<string, Claim[]>;
+
+async function getClaims(qids: string[]): Promise<Map<string, Claims>> {
+  const out = new Map<string, Claims>();
+  for (const batch of chunks(qids, 50)) {
+    const url = `${WD_API}?action=wbgetentities&format=json&formatversion=2&props=claims&ids=${batch.join("|")}`;
+    const data = await actionApi(() =>
+      fetchJson<{ entities?: Record<string, { claims?: Claims; missing?: string; redirects?: { to: string } }> }>(url)
+    );
+    if (!data?.entities) throw new Error("wbgetentities returned nothing");
+    // Redirected ids come back keyed by the requested id (with `redirects`).
+    for (const q of batch) {
+      const e = data.entities[q];
+      out.set(q, e?.claims ?? {});
+    }
+  }
+  return out;
+}
+
+/** The statements to trust for a property: preferred rank wins, deprecated never counts. */
+function bestStatements(claims: Claims, prop: string): Claim[] {
+  const all = (claims[prop] ?? []).filter((c) => c.rank !== "deprecated" && c.mainsnak.snaktype === "value");
+  const preferred = all.filter((c) => c.rank === "preferred");
+  return preferred.length ? preferred : all;
+}
+
+// "applies to part" values that mean the number is NOT the painted surface.
+const NOT_THE_PAINTING = new Set([
+  "Q1060829", // picture frame
+  "Q1424051", // frame (generic)
+]);
+
+function quantityCm(claims: Claims, prop: string): { cm: number | null; note?: string } {
+  const statements = bestStatements(claims, prop)
+    // Statements qualified "applies to part: frame" describe the frame.
+    .filter((c) => !(c.qualifiers?.P518 ?? []).some((q) => NOT_THE_PAINTING.has(q.datavalue?.value?.id)));
+  // Unqualified statements describe the object as a whole; prefer them.
+  const ordered = [
+    ...statements.filter((c) => !c.qualifiers?.P518),
+    ...statements.filter((c) => c.qualifiers?.P518),
+  ];
+  for (const c of ordered) {
+    const v = c.mainsnak.datavalue?.value as { amount?: string; unit?: string } | undefined;
+    if (!v?.amount) continue;
+    const unit = (v.unit ?? "").split("/").pop() ?? "";
+    const factor = UNIT_TO_CM[unit];
+    if (!factor) return { cm: null, note: `${prop} unit ${unit || "none"} unsupported` };
+    const cm = Math.round(parseFloat(v.amount) * factor * 10) / 10;
+    if (!Number.isFinite(cm) || cm < MIN_CM || cm > MAX_CM) return { cm: null, note: `${prop}=${cm}cm out of range` };
+    return { cm };
+  }
+  return { cm: null };
+}
+
+function inceptionYear(claims: Claims): number | null {
+  for (const c of bestStatements(claims, "P571")) {
+    const v = c.mainsnak.datavalue?.value as { time?: string; precision?: number } | undefined;
+    const fromTime = (t?: { time?: string; precision?: number }) => {
+      if (!t?.time || (t.precision ?? 0) < 9) return null; // year precision or better
+      const m = /^([+-]\d+)-/.exec(t.time);
+      return m ? parseInt(m[1], 10) : null;
+    };
+    const y = fromTime(v);
+    if (y != null) return y;
+    // decade/century inception qualified with an exact "earliest date" (P1319)
+    const earliest = c.qualifiers?.P1319?.[0]?.datavalue?.value;
+    const e = fromTime(earliest);
+    if (e != null) return e;
+  }
+  return null;
+}
+
+interface Dimensions {
+  widthCm: number | null;
+  heightCm: number | null;
+  note?: string;
+}
+
+function dimensions(claims: Claims, p: EnrichablePainting): Dimensions {
+  const w = quantityCm(claims, "P2049");
+  const h = quantityCm(claims, "P2048");
+  let widthCm = w.cm;
+  let heightCm = h.cm;
+  const notes = [w.note, h.note].filter(Boolean) as string[];
+  if (widthCm == null && heightCm == null) {
+    // Tondi are recorded by diameter only.
+    const d = quantityCm(claims, "P2386");
+    if (d.cm != null) widthCm = heightCm = d.cm;
+    else if (d.note) notes.push(d.note);
+  }
+  if (widthCm != null && heightCm != null && p.imageWidth && p.imageHeight) {
+    const photo = p.imageWidth / p.imageHeight;
+    const off = (a: number) => Math.max(a / photo, photo / a);
+    if (off(widthCm / heightCm) > ASPECT_TOLERANCE) {
+      // A common Wikidata slip is entering "H x W" into width/height the wrong
+      // way round. When the transposed pair matches the photograph closely,
+      // the photo settles the orientation; anything else is rejected.
+      if (off(heightCm / widthCm) <= SWAP_TOLERANCE) {
+        return {
+          widthCm: heightCm,
+          heightCm: widthCm,
+          note: `transposed: Wikidata width ${widthCm} / height ${heightCm}cm, photo ${p.imageWidth}x${p.imageHeight}px`,
+        };
+      }
+      return {
+        widthCm: null,
+        heightCm: null,
+        note: `rejected: ${widthCm}x${heightCm}cm vs photo ${p.imageWidth}x${p.imageHeight}px (aspect off x${off(widthCm / heightCm).toFixed(2)})`,
+      };
+    }
+  }
+  return { widthCm, heightCm, note: notes.join("; ") || undefined };
+}
+
+// ---------- 4. pageviews ----------
+
+export function pageviewWindow(now = new Date()): { start: string; end: string } {
+  // The last 12 complete calendar months (UTC).
+  const endMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)); // last day of previous month
+  const startMonth = new Date(Date.UTC(endMonth.getUTCFullYear(), endMonth.getUTCMonth() - 11, 1));
+  const fmt = (d: Date) =>
+    `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}00`;
+  return { start: fmt(startMonth), end: fmt(endMonth) };
+}
+
+async function titleViews(title: string, win: { start: string; end: string }): Promise<number> {
+  const article = encodeURIComponent(title.replace(/ /g, "_"));
+  const data = await restApi(() =>
+    fetchJson<{ items?: { views: number }[] }>(`${PAGEVIEWS}/${article}/monthly/${win.start}/${win.end}`)
+  );
+  // 404 = no recorded views for an existing title in the window.
+  return (data?.items ?? []).reduce((n, it) => n + (it.views ?? 0), 0);
+}
+
+/** Main-namespace redirects to each title (continuation-aware, 50 titles/request). */
+async function redirectsTo(titles: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>(titles.map((t) => [t, []]));
+  for (const batch of chunks(titles, 50)) {
+    let cont: Record<string, string> | null = {};
+    while (cont) {
+      const qs: URLSearchParams = new URLSearchParams({
+        action: "query",
+        format: "json",
+        formatversion: "2",
+        prop: "redirects",
+        rdprop: "title",
+        rdnamespace: "0",
+        rdlimit: "max",
+        titles: batch.join("|"),
+        ...cont,
+      });
+      const data: {
+        continue?: Record<string, string>;
+        query?: { pages?: { title: string; redirects?: { title: string }[] }[] };
+      } | null = await actionApi(() => fetchJson(`${WIKI_API}?${qs}`));
+      if (!data?.query) throw new Error("redirects query returned nothing");
+      for (const p of data.query.pages ?? []) out.get(p.title)?.push(...(p.redirects ?? []).map((r) => r.title));
+      cont = data.continue ?? null;
+    }
+  }
+  return out;
+}
+
+/**
+ * 12-month views of an article = views of its current title plus every
+ * redirect to it. Pageviews are recorded under the title in the URL, so a
+ * renamed article (e.g. "Wanderer above the Sea of Fog" ->
+ * "Wanderer Above the Sea of Fog") keeps most of its traffic on the old name.
+ */
+async function pageviews(title: string, redirects: string[], win: { start: string; end: string }): Promise<number> {
+  const counts = await Promise.all([title, ...redirects].map((t) => titleViews(t, win)));
+  return counts.reduce((a, b) => a + b, 0);
+}
+
+
+async function getLabels(qids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const batch of chunks(qids, 50)) {
+    const data = await actionApi(() =>
+      fetchJson<{ entities?: Record<string, { labels?: { en?: { value: string } } }> }>(
+        `${WD_API}?action=wbgetentities&format=json&formatversion=2&props=labels&languages=en&ids=${batch.join("|")}`
+      )
+    );
+    for (const q of batch) {
+      const l = data?.entities?.[q]?.labels?.en?.value;
+      if (l) out.set(q, l);
+    }
+  }
+  return out;
+}
+
+// ---------- orchestration ----------
+
+function creators(claims: Claims): string[] {
+  return bestStatements(claims, "P170")
+    .map((c) => c.mainsnak.datavalue?.value?.id as string | undefined)
+    .filter((q): q is string => !!q);
+}
+
+/**
+ * Fill widthCm / heightCm / pageviews / qid on every painting, in place.
+ * A stage that fails (network) leaves the previous values untouched, so a
+ * partial run never wipes good data; "looked it up, nothing there" writes null.
+ */
+export async function enrichArtists(
+  artists: EnrichableArtist[],
+  opts: EnrichOptions = {}
+): Promise<EnrichReport> {
+  const log = opts.log ?? ((m: string) => console.log(m));
+  const fixYears = opts.fixYears ?? true;
+  const dropForeign = opts.dropForeign ?? true;
+  const now = opts.now ?? new Date();
+  const win = pageviewWindow(now);
+  const report: EnrichReport = {
+    generatedAt: now.toISOString(),
+    pageviewWindow: win,
+    paintings: 0,
+    withArticle: 0,
+    withQid: 0,
+    qidFromImage: 0,
+    withBothDims: 0,
+    withAnyDim: 0,
+    withPageviews: 0,
+    rejectedDims: [],
+    yearChanges: [],
+    creatorMismatch: [],
+    removed: [],
+    failures: [],
+  };
+
+  type Row = { artist: EnrichableArtist; p: EnrichablePainting; title: string | null };
+  const all: Row[] = [];
+  for (const a of artists)
+    for (const p of a.paintings) all.push({ artist: a, p, title: titleFromWikipediaUrl(p.wikipediaUrl) });
+  report.paintings = all.length;
+
+  // 1. article -> canonical title + item
+  const titles = [...new Set(all.map((x) => x.title).filter((t): t is string => !!t))];
+  log(`resolving ${titles.length} article titles -> Wikidata items (pageprops, 50/request)`);
+  let resolved: Map<string, ResolvedTitle | null> | null = null;
+  try {
+    resolved = await resolveTitles(titles);
+  } catch (err) {
+    report.failures.push(`pageprops: ${err}`);
+  }
+
+  const qidOf = new Map<EnrichablePainting, string>();
+  const canonicalOf = new Map<EnrichablePainting, string>();
+  for (const x of all) {
+    const r = x.title && resolved ? resolved.get(x.title) : undefined;
+    if (r) {
+      canonicalOf.set(x.p, r.canonical);
+      if (r.qid) qidOf.set(x.p, r.qid);
+    }
+  }
+
+  // 2. no article item: match the Commons image against Wikidata P18
+  let imageOk = true;
+  const byImage = all
+    .filter((x) => !qidOf.has(x.p) && (!x.title || resolved))
+    .map((x) => ({ x, file: commonsFileName(x.p.imageUrl) }))
+    .filter((y): y is { x: Row; file: string } => !!y.file);
+  if (byImage.length) {
+    log(`matching ${byImage.length} Commons images -> Wikidata items (P18 via WDQS)`);
+    try {
+      const found = await itemsByImage(byImage.map((y) => ({ file: y.file, artistQid: y.x.artist.qid })));
+      for (const y of byImage) {
+        const q = found.get(y.file);
+        if (q) {
+          qidOf.set(y.x.p, q);
+          report.qidFromImage++;
+        }
+      }
+    } catch (err) {
+      imageOk = false;
+      report.failures.push(`P18 SPARQL: ${err}`);
+    }
+  }
+  const lookupComplete = (x: Row) => (x.title ? resolved !== null : true) && imageOk;
+
+  // 3. claims -> dimensions (+ inception for year repair)
+  const qids = [...new Set(qidOf.values())];
+  log(`fetching claims for ${qids.length} Wikidata items (wbgetentities, 50/request)`);
+  let claims: Map<string, Claims> | null = null;
+  try {
+    claims = await getClaims(qids);
+  } catch (err) {
+    report.failures.push(`wbgetentities: ${err}`);
+  }
+
+  const mismatched: { x: Row; by: string[] }[] = [];
+  for (const x of all) {
+    const q = qidOf.get(x.p);
+    if (q) x.p.qid = q;
+    else if (lookupComplete(x)) x.p.qid = null;
+
+    const c = q && claims ? claims.get(q) : undefined;
+    if (c) {
+      const d = dimensions(c, x.p);
+      x.p.widthCm = d.widthCm;
+      x.p.heightCm = d.heightCm;
+      if (d.note) report.rejectedDims.push(`${x.artist.slug}/${x.p.slug} (${q}): ${d.note}`);
+      const by = creators(c);
+      if (x.artist.qid && by.length && !by.includes(x.artist.qid)) {
+        report.creatorMismatch.push(`${x.artist.slug}/${x.p.slug} (${q}): P170 = ${by.join(",")}`);
+        mismatched.push({ x, by });
+      }
+    } else if (!q && lookupComplete(x)) {
+      x.p.widthCm = null;
+      x.p.heightCm = null;
+    }
+
+    // Years outside the artist's working life are ingest misreads (a date
+    // from the article lead, a century-precision inception). Replace with an
+    // exact Wikidata inception inside the window, else clear.
+    const canDecide = c ? true : !q && lookupComplete(x);
+    if (fixYears && canDecide && x.p.year != null) {
+      const lo = x.artist.birthYear != null ? x.artist.birthYear + 5 : -Infinity;
+      const hi = x.artist.deathYear != null ? x.artist.deathYear + 1 : now.getUTCFullYear();
+      const y = x.p.year;
+      if (y < lo || y > hi) {
+        const inc = c ? inceptionYear(c) : null;
+        const next = inc != null && inc >= lo && inc <= hi ? inc : null;
+        report.yearChanges.push(
+          `${x.artist.slug}/${x.p.slug}: ${y} -> ${next ?? "null"} (${
+            next != null ? `Wikidata ${q} P571` : `outside ${x.artist.birthYear}-${x.artist.deathYear ?? "today"}, no usable Wikidata inception`
+          })`
+        );
+        x.p.year = next;
+      }
+    }
+  }
+
+  // 3b. works by someone else: P170 names another artist and so does the title
+  if (dropForeign && mismatched.length) {
+    try {
+      const labels = await getLabels([...new Set(mismatched.flatMap((m) => m.by))]);
+      const words = (s: string) =>
+        s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+      for (const { x, by } of mismatched) {
+        const titleWords = new Set(words(`${x.p.title} ${x.title ?? ""}`));
+        const other = by
+          .map((q) => labels.get(q))
+          .find((l) => {
+            const surname = l ? words(l).pop() ?? "" : "";
+            return surname.length >= 3 && titleWords.has(surname);
+          });
+        if (!other) continue;
+        const i = x.artist.paintings.indexOf(x.p);
+        if (i >= 0) x.artist.paintings.splice(i, 1);
+        report.removed.push(`${x.artist.slug}/${x.p.slug}`);
+        log(`  removed ${x.artist.slug}/${x.p.slug}: Wikidata creator is ${other} and the title names them`);
+      }
+    } catch (err) {
+      report.failures.push(`creator labels: ${err}`);
+    }
+  }
+  const kept = new Set(artists.flatMap((a) => a.paintings));
+  for (let i = all.length - 1; i >= 0; i--) if (!kept.has(all[i].p)) all.splice(i, 1);
+  report.paintings = all.length;
+
+  // 4. pageviews (articles only)
+  const canonTitles = [...new Set(canonicalOf.values())];
+  let redirects = new Map<string, string[]>();
+  try {
+    redirects = await redirectsTo(canonTitles);
+  } catch (err) {
+    report.failures.push(`redirects: ${err}`);
+  }
+  const nRedirects = [...redirects.values()].reduce((n, r) => n + r.length, 0);
+  log(
+    `fetching 12-month pageviews for ${canonTitles.length} articles + ${nRedirects} redirects (${win.start}..${win.end})`
+  );
+  const views = new Map<string, number>();
+  let done = 0;
+  await Promise.all(
+    canonTitles.map(async (t) => {
+      try {
+        // Without the redirect list (lookup failed) a sum would be an undercount: skip.
+        if (!redirects.has(t)) throw new Error("redirect list unavailable");
+        views.set(t, await pageviews(t, redirects.get(t)!, win));
+      } catch (err) {
+        report.failures.push(`pageviews ${t}: ${err}`);
+      }
+      if (++done % 100 === 0) log(`  pageviews ${done}/${canonTitles.length}`);
+    })
+  );
+  for (const x of all) {
+    const t = canonicalOf.get(x.p);
+    if (t && views.has(t)) x.p.pageviews = views.get(t)!;
+    else if (!x.title) x.p.pageviews = null;
+    else if (x.p.pageviews === undefined) x.p.pageviews = null;
+  }
+
+  // Stable key order for the new fields (appended after the ingest fields).
+  for (const x of all) {
+    const p = x.p as unknown as Record<string, unknown>;
+    for (const k of ["widthCm", "heightCm", "pageviews", "qid"]) {
+      const v = p[k] === undefined ? null : p[k];
+      delete p[k];
+      p[k] = v;
+    }
+  }
+
+  for (const x of all) {
+    if (x.title) report.withArticle++;
+    if (x.p.qid) report.withQid++;
+    if (x.p.widthCm != null && x.p.heightCm != null) report.withBothDims++;
+    if (x.p.widthCm != null || x.p.heightCm != null) report.withAnyDim++;
+    if (x.p.pageviews != null) report.withPageviews++;
+  }
+  return report;
+}

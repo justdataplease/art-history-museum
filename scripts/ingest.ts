@@ -5,6 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { EXTRA_PAINTINGS, PERIODS } from "./seed";
+import { enrichArtists } from "./lib/enrich";
+import { cleanArtistName, decodeEntities } from "../src/lib/text";
 import {
   createLimiter,
   extractFacts,
@@ -38,6 +40,11 @@ export interface PaintingOut {
   facts: string[];
   wikipediaUrl: string | null;
   sitelinks: number;
+  // Filled by enrichArtists (scripts/lib/enrich.ts) from Wikidata / Wikimedia pageviews.
+  widthCm?: number | null;
+  heightCm?: number | null;
+  pageviews?: number | null;
+  qid?: string | null;
 }
 
 export interface ArtistOut {
@@ -67,13 +74,8 @@ function slugify(s: string): string {
 }
 
 function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  // every named / numeric entity ("&#039;" included), not a fixed list
+  return decodeEntities(html.replace(/<[^>]*>/g, " "))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -255,19 +257,38 @@ export async function ingestArtist(
     return true;
   });
 
+  // Portrait: the article's lead image, unless that is the artist's signature
+  // (Franz Marc's article leads with his autograph) — then Wikidata's image (P18).
+  let portrait = summary.originalimage
+    ? { url: summary.originalimage.source, width: summary.originalimage.width, height: summary.originalimage.height }
+    : null;
+  if (qid && (!portrait || /autograph|signature|signatur/i.test(decodeURIComponent(portrait.url)))) {
+    const claims = await wikiLimit(() =>
+      fetchJson<any>(
+        `https://www.wikidata.org/w/api.php?action=wbgetclaims&format=json&property=P18&entity=${qid}`
+      )
+    );
+    const file: string | undefined = claims?.claims?.P18?.[0]?.mainsnak?.datavalue?.value;
+    const ci = file
+      ? await commonsFileInfo(`https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}`)
+      : null;
+    if (ci) portrait = { url: ci.url.split("?")[0], width: ci.width, height: ci.height };
+  }
+
   const artist: ArtistOut = {
     slug,
     periodSlug,
-    name: stripHtml(summary.displaytitle ?? summary.title),
+    // display name without a "(artist)" disambiguator; wikiTitle keeps the article title
+    name: cleanArtistName(stripHtml(summary.displaytitle ?? summary.title)),
     wikiTitle: summary.title,
     qid,
     birthYear: dates.birthYear ?? null,
     deathYear: dates.deathYear ?? null,
     tagline: summary.description ?? "",
     bio: summary.extract,
-    portraitUrl: summary.originalimage?.source ?? null,
-    portraitWidth: summary.originalimage?.width ?? null,
-    portraitHeight: summary.originalimage?.height ?? null,
+    portraitUrl: portrait?.url ?? null,
+    portraitWidth: portrait?.width ?? null,
+    portraitHeight: portrait?.height ?? null,
     wikipediaUrl: summary.content_urls?.desktop?.page ?? null,
     paintings,
   };
@@ -317,6 +338,20 @@ async function main() {
       }
     }
   }
+
+  // Physical size (Wikidata P2049/P2048), 12-month pageviews, Wikidata item,
+  // year sanity — same pass as `npm run enrich`.
+  console.log("\n== Enrich (Wikidata dimensions + pageviews) ==");
+  const enrich = await enrichArtists(artistsOut);
+  for (const r of enrich.failures) problems.push(`enrich: ${r}`);
+  for (const r of enrich.removed) problems.push(`removed (by another artist): ${r}`);
+  for (const r of enrich.yearChanges) problems.push(`year: ${r}`);
+  problems.push(
+    `enrich coverage: dimensions ${enrich.withBothDims}/${enrich.paintings}, pageviews ${enrich.withPageviews}/${enrich.paintings}`
+  );
+  for (const a of artistsOut)
+    fs.writeFileSync(path.join(ARTIST_CACHE, `${a.slug}.json`), JSON.stringify(a, null, 2));
+  fs.writeFileSync(path.join(CACHE, "enrich-report.json"), JSON.stringify(enrich, null, 2));
 
   const out = {
     generatedAt: new Date().toISOString(),

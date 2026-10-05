@@ -1,37 +1,63 @@
 // Helpers for pulling data from Wikipedia, Wikidata and Wikimedia Commons.
 // All text stored in the museum is verbatim Wikipedia content.
 
-const UA =
+// Wikimedia's User-Agent policy: identify the client and give a contact.
+export const UA =
   "ArtHistoryMuseum/1.0 (https://justdataplease.com; hey@justdataplease.com) node-fetch";
 
-async function sleep(ms: number) {
+export async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Milliseconds to wait according to a Retry-After header (seconds or HTTP date). */
+function retryAfterMs(res: Response): number | null {
+  const v = res.headers.get("retry-after");
+  if (!v) return null;
+  const s = Number(v);
+  if (Number.isFinite(s)) return Math.max(0, s * 1000);
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? Math.max(0, t - Date.now()) : null;
+}
+
+/**
+ * GET a JSON document politely: descriptive User-Agent, retries on 429/5xx
+ * honouring Retry-After (falls back to exponential backoff), and on the
+ * MediaWiki `maxlag` error. Returns null on 404.
+ */
 export async function fetchJson<T>(
   url: string,
   init: RequestInit = {},
-  retries = 4
+  retries = 6
 ): Promise<T | null> {
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; ; attempt++) {
+    const backoff = Math.min(30_000, 1000 * 2 ** attempt);
+    let res: Response;
     try {
-      const res = await fetch(url, {
+      res = await fetch(url, {
         ...init,
-        headers: { "user-agent": UA, accept: "application/json", ...init.headers },
+        headers: { "user-agent": UA, "api-user-agent": UA, accept: "application/json", ...init.headers },
       });
-      if (res.status === 404) return null;
-      if (res.status === 429 || res.status >= 500) {
-        await sleep(1000 * (attempt + 1) ** 2);
-        continue;
-      }
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
-      return (await res.json()) as T;
     } catch (err) {
-      if (attempt === retries) throw err;
-      await sleep(800 * (attempt + 1));
+      // network error / reset: retry with backoff
+      if (attempt >= retries) throw err;
+      await sleep(backoff);
+      continue;
     }
+    if (res.status === 404) return null;
+    if (res.status === 429 || res.status >= 500) {
+      if (attempt >= retries) throw new Error(`${res.status} after ${retries} retries for ${url}`);
+      await sleep((retryAfterMs(res) ?? backoff) + 250);
+      continue;
+    }
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
+    const body = (await res.json()) as T & { error?: { code?: string } };
+    if (body && typeof body === "object" && body.error?.code === "maxlag") {
+      if (attempt >= retries) throw new Error(`maxlag after ${retries} retries for ${url}`);
+      await sleep((retryAfterMs(res) ?? 5000) + 250);
+      continue;
+    }
+    return body;
   }
-  return null;
 }
 
 // Tiny concurrency limiter so we stay polite to the APIs.
