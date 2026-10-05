@@ -1,36 +1,62 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# The Timeline Museum
 
-## Getting Started
+An interactive 3D museum of art history that runs in the browser.
 
-First, run the development server:
+- **The Timeline** — a zoomable, infinite-canvas timeline of 18 art-history periods
+  (Medieval & Gothic → Contemporary) with 72 artists placed at the dates they
+  actually worked. Three switchable views: **Gallery Wall**, **Star Map**, **The River**.
+  Filter by period or artist from the animated Explore dropdown. Click an artist for
+  their museum-placard card.
+- **The Museum** — from any artist card, walk through the doors into a first-person
+  3D gallery (WASD + mouse) hung with their real paintings: PBR materials, a spotlight
+  per painting, soft shadows, reflective floor, ACES tone mapping. Click a painting
+  to glide into an inspect view with the story and verbatim fun facts.
+
+## Data — all from Wikipedia
+
+Every period description, artist bio, portrait, painting image, date, story and fun
+fact is pulled from **English Wikipedia, Wikidata and Wikimedia Commons** at ingest
+time. Nothing is AI-generated: stories are article leads, fun facts are verbatim
+sentences from article bodies. 796 paintings across 72 artists.
+
+## Setup
 
 ```bash
+npm install
+
+# 1. Pull the collection from Wikipedia (resumable; caches per-artist)
+npm run ingest
+
+# 2. Create .env.local with your Neon Postgres connection string:
+#    DATABASE_URL=postgres://...
+# then load the database:
+npm run load-db
+
+# 3. Run
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Without `.env.local`, the app transparently falls back to the local ingest cache
+(`data/cache/museum.json`), so it runs end-to-end either way. With `DATABASE_URL`
+set, all reads go through Neon Postgres (`periods`, `artists`, `paintings`).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Controls
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Where | Input | Action |
+|---|---|---|
+| Timeline | scroll / drag | zoom through time / pan |
+| Timeline | click period band | dive into that period |
+| Timeline | click artist | open placard card → Enter the Gallery |
+| Museum | click | lock cursor |
+| Museum | WASD / mouse | walk / look |
+| Museum | click painting | inspect (scroll = lean in, Esc = step back) |
 
-## Learn More
+## Notes
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Wikimedia thumbnails are restricted to fixed width buckets; `src/lib/img.ts`
+  snaps every request to an allowed size.
+- Three artists hold fewer than 8 works (de Kooning 6, Hockney 7, Haring 6) — the
+  hard ceiling of illustrated painting articles on Wikipedia for late-modern,
+  still-copyrighted art. Every other gallery hangs 8–12.
+- `node scripts/verify-e2e.mjs` drives the app in Chrome and drops evidence
+  screenshots into `verify-artifacts/`.

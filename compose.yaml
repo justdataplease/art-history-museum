@@ -1,0 +1,10 @@
+services:
+  museum:
+    build: .
+    container_name: timeline-museum
+    ports:
+      - "3000:3000"
+    env_file:
+      - path: .env.local
+        required: false
+    restart: unless-stopped
