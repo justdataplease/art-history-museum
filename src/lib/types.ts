@@ -30,6 +30,9 @@ export interface Painting {
   imageUrl: string;
   imageWidth: number | null;
   imageHeight: number | null;
+  /** Physical size from Wikidata (P2049 width / P2048 height), in cm; null when unknown. */
+  widthCm?: number | null;
+  heightCm?: number | null;
   story: string;
   facts: string[];
   wikipediaUrl: string | null;

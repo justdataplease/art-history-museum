@@ -22,6 +22,12 @@ const EYE = 1.55; // painting centerline height
 // avoids z-fighting while keeping the frame visually flush with the wall.
 export const WALL_GAP = 0.028;
 
+// Lighting track: rails run the length of the hall TRACK_INSET metres in from
+// each side wall, plus a cross rail TRACK_INSET in front of the far end wall,
+// all hanging TRACK_DROP below the ceiling. Spot fixtures clamp onto these.
+export const TRACK_INSET = 2.0;
+export const TRACK_DROP = 0.32;
+
 function canvasSize(p: Painting): { w: number; h: number } {
   const aspect =
     p.imageWidth && p.imageHeight ? p.imageWidth / p.imageHeight : 0.8;

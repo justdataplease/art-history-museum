@@ -1,3 +1,5 @@
+import type { Painting } from "./types";
+
 // Client-safe helper: build a resized Wikimedia thumbnail from an upload.wikimedia.org URL.
 // Wikimedia only renders a fixed set of thumb widths (others return HTTP 400),
 // so requested widths snap to the nearest allowed bucket.
@@ -41,4 +43,22 @@ export function wikiThumb(
   } catch {
     return url;
   }
+}
+
+// ---- painting textures -------------------------------------------------
+// One place decides which URL a painting texture is fetched from, so the
+// server page can emit preload hints for exactly what the gallery requests.
+
+/** Texture width (px) to hang a work at while walking the hall. */
+export function wallTexturePx(p: Painting): number {
+  return 1280;
+}
+
+/** Texture width (px) to stream in when the work is inspected up close. */
+export function inspectTexturePx(p: Painting): number {
+  return 2600;
+}
+
+export function paintingTextureUrl(p: Painting, px: number): string {
+  return wikiThumb(p.imageUrl, px, p.imageWidth);
 }

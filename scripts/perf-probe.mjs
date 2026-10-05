@@ -17,7 +17,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch({
   channel: "chrome",
   headless: true,
-  args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11"],
+  args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", "--disable-gpu-vsync", "--disable-frame-rate-limit"],
 });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 const errs = [];
@@ -25,6 +25,8 @@ page.on("console", (m) => m.type() === "error" && errs.push(m.text().slice(0, 20
 
 let imageBytes = 0;
 let imageCount = 0;
+let lastImageMs = 0;
+let tStart = Date.now();
 page.on("response", async (res) => {
   const url = res.url();
   if (!url.includes("upload.wikimedia.org")) return;
@@ -32,6 +34,7 @@ page.on("response", async (res) => {
     const body = await res.body();
     imageBytes += body.length;
     imageCount++;
+    lastImageMs = Math.max(lastImageMs, Date.now() - tStart);
   } catch {}
 });
 
@@ -58,6 +61,7 @@ await page.addInitScript(() => {
 });
 
 const tNav = Date.now();
+tStart = tNav;
 const resp = await page.goto(`${base}/museum/${slug}`, { waitUntil: "domcontentloaded" });
 const ttfbMs = Date.now() - tNav;
 const status = resp?.status();
@@ -114,7 +118,7 @@ const jsBytes = await page.evaluate(() =>
 );
 
 const summary = {
-  label, slug, status, gpu, ttfbMs, doorsOpenMs,
+  label, slug, status, gpu, ttfbMs, lastImageMs, doorsOpenMs,
   ...sample,
   wikimediaImages: imageCount,
   wikimediaMB: +(imageBytes / 1e6).toFixed(2),
