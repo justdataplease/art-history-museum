@@ -5,3 +5,9 @@ node_modules
 verify-artifacts
 *.md
 prompt.txt
+dev-server.log
+*.tsbuildinfo
+# Ingest working files: the build and runtime only read data/cache/museum.json
+data/cache/artists
+data/cache/report.json
+data/cache/enrich-report.json
