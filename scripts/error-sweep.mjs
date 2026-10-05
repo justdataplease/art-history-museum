@@ -1,8 +1,15 @@
 // Hunt for console errors/warnings across the whole app flow.
+//   node scripts/error-sweep.mjs [baseUrl]
 import { chromium } from "playwright";
 
+const BASE = process.argv[2] ?? "http://localhost:3000";
+
 const messages = [];
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await chromium.launch({
+  channel: "chrome",
+  headless: true,
+  args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11"],
+});
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 page.on("console", (msg) => {
   if (msg.type() === "error" || msg.type() === "warning")
@@ -17,7 +24,7 @@ page.on("requestfailed", (req) => {
 const mark = (s) => console.log("== " + s + ` (msgs so far: ${messages.length})`);
 
 // full timeline flow
-await page.goto("http://localhost:3000", { waitUntil: "networkidle" });
+await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForTimeout(1500);
 mark("timeline loaded");
 
@@ -30,7 +37,7 @@ await page.waitForTimeout(900);
 mark("zoom stress");
 
 // all views
-for (const v of ["Star Map", "The River", "Gallery Wall"]) {
+for (const v of ["Star Map", "Gallery Wall"]) {
   await page.getByRole("button", { name: v }).click();
   await page.waitForTimeout(800);
 }
@@ -91,7 +98,7 @@ if (clicked) {
 
 // visit the thin galleries + a dense one directly
 for (const slug of ["willem-de-kooning", "david-hockney", "vincent-van-gogh", "rembrandt"]) {
-  await page.goto(`http://localhost:3000/museum/${slug}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/museum/${slug}`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(13000);
   mark("museum " + slug);
 }

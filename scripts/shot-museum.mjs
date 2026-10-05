@@ -8,7 +8,11 @@ const slug = process.argv[2] ?? "caravaggio";
 const prefix = process.argv[3] ?? "r";
 const base = process.argv[4] ?? "http://localhost:3000";
 
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await chromium.launch({
+  channel: "chrome",
+  headless: true,
+  args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11"],
+});
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 const errs = [];
 page.on("console", (m) => m.type() === "error" && errs.push(m.text().slice(0, 200)));
