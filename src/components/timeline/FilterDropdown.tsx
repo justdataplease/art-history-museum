@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import type { Artist, Period } from "@/lib/types";
-import { wikiThumb } from "@/lib/img";
+import { wikiSrcSet } from "@/lib/img";
 
 export type Filter =
   | { type: "period"; slug: string }
   | { type: "artist"; slug: string }
   | null;
 
-export function FilterDropdown({
+export const FilterDropdown = memo(function FilterDropdown({
   periods,
   artists,
   filter,
@@ -26,74 +26,77 @@ export function FilterDropdown({
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const closingRef = useRef(false);
+  const panelId = useId();
 
-  // Panel entrance / exit.
+  // Panel entrance.
   useEffect(() => {
     const panel = panelRef.current;
-    if (!panel) return;
-    if (open) {
-      gsap.fromTo(
-        panel,
-        { opacity: 0, scale: 0.82, y: -14, rotateX: -12 },
-        {
-          opacity: 1,
-          scale: 1,
-          y: 0,
-          rotateX: 0,
-          duration: 0.45,
-          ease: "back.out(1.6)",
-        }
-      );
-      gsap.fromTo(
-        panel.querySelectorAll(".filter-item"),
-        { opacity: 0, x: 22 },
-        { opacity: 1, x: 0, duration: 0.35, stagger: 0.022, ease: "power2.out", delay: 0.08 }
-      );
-    }
+    if (!panel || !open) return;
+    closingRef.current = false;
+    gsap.fromTo(
+      panel,
+      { opacity: 0, scale: 0.86, y: -12, rotateX: -10 },
+      { opacity: 1, scale: 1, y: 0, rotateX: 0, duration: 0.42, ease: "back.out(1.5)" }
+    );
+    gsap.fromTo(
+      panel.querySelectorAll(".filter-item"),
+      { opacity: 0, x: 18 },
+      { opacity: 1, x: 0, duration: 0.32, stagger: 0.018, ease: "power2.out", delay: 0.06 }
+    );
+    panel.querySelector<HTMLElement>(".filter-tab.active")?.focus({ preventScroll: true });
   }, [open]);
 
   // Content swap between tabs.
   useEffect(() => {
     const list = listRef.current;
     if (!list || !open) return;
+    list.scrollTop = 0;
     gsap.fromTo(
       list.querySelectorAll(".filter-item"),
-      { opacity: 0, y: 16 },
-      { opacity: 1, y: 0, duration: 0.32, stagger: 0.018, ease: "power2.out" }
+      { opacity: 0, y: 14 },
+      { opacity: 1, y: 0, duration: 0.3, stagger: 0.016, ease: "power2.out" }
     );
   }, [tab, open]);
 
-  // Close on outside click / Esc.
+  // Close on outside pointer (capture phase: nothing on the page can swallow it) / Esc.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) close();
+      if (!wrapRef.current?.contains(e.target as Node)) close(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        close(true);
+      }
     };
-    window.addEventListener("pointerdown", onDown);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("keydown", onKey, true);
     return () => {
-      window.removeEventListener("pointerdown", onDown);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("keydown", onKey, true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  function close() {
+  function close(refocus: boolean) {
+    if (closingRef.current) return;
+    closingRef.current = true;
     const panel = panelRef.current;
-    if (!panel) {
+    const done = () => {
       setOpen(false);
-      return;
-    }
+      if (refocus) btnRef.current?.focus({ preventScroll: true });
+    };
+    if (!panel) return done();
     gsap.to(panel, {
       opacity: 0,
-      scale: 0.86,
-      y: -10,
-      duration: 0.25,
+      scale: 0.9,
+      y: -8,
+      duration: 0.22,
       ease: "power2.in",
-      onComplete: () => setOpen(false),
+      onComplete: done,
     });
   }
 
@@ -104,34 +107,46 @@ export function FilterDropdown({
         ? artists.find((a) => a.slug === filter.slug)?.name
         : null;
 
-  const sortedArtists = [...artists].sort((a, b) =>
-    (a.birthYear ?? 3000) - (b.birthYear ?? 3000)
+  const sortedArtists = useMemo(
+    () => [...artists].sort((a, b) => (a.birthYear ?? 3000) - (b.birthYear ?? 3000)),
+    [artists]
   );
 
   return (
     <div className="filter-wrap" ref={wrapRef}>
       <button
-        className={`filter-btn${open ? " open" : ""}`}
-        onClick={() => (open ? close() : setOpen(true))}
+        ref={btnRef}
+        type="button"
+        className={`filter-btn${open ? " open" : ""}${filter ? " has-filter" : ""}`}
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => (open ? close(false) : setOpen(true))}
       >
-        {label ?? "Explore"}
-        <span className="chev">▼</span>
+        <span className="filter-btn-label">{label ?? "Explore"}</span>
+        <span className="chev" aria-hidden>
+          ▾
+        </span>
       </button>
 
       {open && (
-        <div className="filter-panel" ref={panelRef}>
+        <div className="filter-panel" ref={panelRef} id={panelId} role="dialog" aria-label="Explore the collection">
           <div className="filter-tabs">
             <button
+              type="button"
+              aria-pressed={tab === "periods"}
               className={`filter-tab${tab === "periods" ? " active" : ""}`}
               onClick={() => setTab("periods")}
             >
-              Periods
+              Periods <span className="count" aria-hidden>{periods.length}</span>
             </button>
             <button
+              type="button"
+              aria-pressed={tab === "artists"}
               className={`filter-tab${tab === "artists" ? " active" : ""}`}
               onClick={() => setTab("artists")}
             >
-              Artists
+              Artists <span className="count" aria-hidden>{artists.length}</span>
             </button>
           </div>
 
@@ -139,15 +154,14 @@ export function FilterDropdown({
             {tab === "periods"
               ? periods.map((p) => (
                   <button
+                    type="button"
                     key={p.slug}
                     className={`filter-item${
-                      filter?.type === "period" && filter.slug === p.slug
-                        ? " selected"
-                        : ""
+                      filter?.type === "period" && filter.slug === p.slug ? " selected" : ""
                     }`}
-                    onClick={() => {
+                    onClick={(e) => {
                       onChange({ type: "period", slug: p.slug });
-                      close();
+                      close(e.detail === 0); // keyboard: hand focus back to the button
                     }}
                   >
                     <span className="chip" style={{ background: p.color }} />
@@ -162,22 +176,25 @@ export function FilterDropdown({
                 ))
               : sortedArtists.map((a) => (
                   <button
+                    type="button"
                     key={a.slug}
                     className={`filter-item${
-                      filter?.type === "artist" && filter.slug === a.slug
-                        ? " selected"
-                        : ""
+                      filter?.type === "artist" && filter.slug === a.slug ? " selected" : ""
                     }`}
                     onClick={() => {
                       onChange({ type: "artist", slug: a.slug });
-                      close();
+                      close(false);
                     }}
                   >
                     {a.portraitUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={wikiThumb(a.portraitUrl, 80, a.portraitWidth)}
+                        {...wikiSrcSet(a.portraitUrl, 34, a.portraitWidth)}
                         alt=""
+                        width={34}
+                        height={34}
                         loading="lazy"
+                        decoding="async"
                       />
                     ) : (
                       <span className="chip" style={{ background: "#b8a87e" }} />
@@ -186,7 +203,7 @@ export function FilterDropdown({
                       <span className="fi-name">{a.name}</span>
                       <br />
                       <span className="fi-sub">
-                        {a.birthYear ?? "?"} – {a.deathYear ?? "now"}
+                        {a.birthYear ?? "?"} – {a.deathYear ?? "today"}
                       </span>
                     </span>
                   </button>
@@ -195,10 +212,11 @@ export function FilterDropdown({
 
           {filter && (
             <button
+              type="button"
               className="filter-clear"
-              onClick={() => {
+              onClick={(e) => {
                 onChange(null);
-                close();
+                close(e.detail === 0);
               }}
             >
               Clear · show everything
@@ -208,4 +226,4 @@ export function FilterDropdown({
       )}
     </div>
   );
-}
+});

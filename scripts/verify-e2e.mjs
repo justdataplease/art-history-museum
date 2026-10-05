@@ -1,153 +1,296 @@
-// Drive the running app in real Chrome and capture evidence screenshots.
+// Drive the running app in real Chrome, assert the timeline behaves, and
+// capture evidence screenshots.  Usage: node scripts/verify-e2e.mjs [baseUrl]
 import { chromium } from "playwright";
 import fs from "node:fs";
 
+const BASE = process.argv[2] ?? "http://localhost:3000";
 const OUT = "verify-artifacts";
+const W = 1600;
+const H = 900;
 fs.mkdirSync(OUT, { recursive: true });
 
 const consoleErrors = [];
 const failedRequests = [];
+const failures = [];
 
-const browser = await chromium.launch({ channel: "chrome", headless: true });
-const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+const browser = await chromium.launch({
+  channel: "chrome",
+  headless: true,
+  args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11"],
+});
+const page = await browser.newPage({ viewport: { width: W, height: H } });
 
 page.on("console", (msg) => {
-  if (msg.type() === "error") consoleErrors.push(msg.text().slice(0, 300));
+  if (msg.type() === "error")
+    consoleErrors.push(`@${new URL(page.url()).pathname}: ${msg.text().slice(0, 300)}`);
 });
+page.on("pageerror", (e) =>
+  consoleErrors.push(`pageerror @${new URL(page.url()).pathname}: ${e.message.slice(0, 300)}`)
+);
 page.on("requestfailed", (req) => {
   failedRequests.push(`${req.failure()?.errorText} ${req.url().slice(0, 140)}`);
 });
 
-function log(s) {
-  console.log("STEP: " + s);
+const log = (s) => console.log("STEP: " + s);
+function check(ok, what) {
+  console.log(`${ok ? "  ok  " : "  FAIL"} ${what}`);
+  if (!ok) failures.push(what);
 }
 
-// ---- 1. timeline, Gallery Wall zoomed out ----
-await page.goto("http://localhost:3000", { waitUntil: "networkidle" });
+/** Visible text labels that overlap each other (should always be none). */
+const labelOverlaps = () =>
+  page.evaluate(() => {
+    const sel = [
+      ".rail-label:not(.offscreen)",
+      ".wall-row:not(.offscreen) .name",
+      ".wall-row.m-full:not(.offscreen) .years",
+      ".neb-label:not(.offscreen)",
+      ".star-label",
+    ].join(",");
+    const boxes = [...document.querySelectorAll(sel)]
+      .map((el) => ({ el, r: el.getBoundingClientRect(), t: el.textContent.trim().slice(0, 28) }))
+      .filter((b) => b.r.width > 0 && b.r.right > 0 && b.r.left < innerWidth && b.r.bottom > 0 && b.r.top < innerHeight);
+    const bad = [];
+    for (let i = 0; i < boxes.length; i++)
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+        const ix = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+        const iy = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+        if (ix > 1 && iy > 1) bad.push(`${a.t} <> ${b.t}`);
+      }
+    return { n: boxes.length, bad };
+  });
+
+/** Pixels per year + the year at the screen centre, read off the axis labels. */
+const axisState = () =>
+  page.evaluate(() => {
+    const labels = [...document.querySelectorAll(".tl-axis .ax-label")]
+      .map((t) => ({ y: +t.textContent, x: t.getBoundingClientRect().left + t.getBoundingClientRect().width / 2 }))
+      .filter((l) => Number.isFinite(l.y));
+    if (labels.length < 2) return null;
+    const a = labels[0];
+    const b = labels[labels.length - 1];
+    const ppy = (b.x - a.x) / (b.y - a.y);
+    return { ppy, center: a.y + (innerWidth / 2 - a.x) / ppy, n: labels.length, step: labels[1].y - labels[0].y };
+  });
+
+const xOfYear = (year) => ((year - 1170) / 865) * W;
+
+// ---------------------------------------------------------------- 1. overview
+await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForTimeout(1500);
+log("gallery wall overview");
+check((await page.getByRole("button", { name: /the river/i }).count()) === 0, "River view removed (no switcher entry)");
+check((await page.locator(".stream, .river-svg").count()) === 0, "River view removed (no river DOM)");
 const bands = await page.locator(".band").count();
-log(`gallery wall bands rendered: ${bands}`);
-const ticks = await page.locator(".tl-axis .tick").count();
-log(`axis ticks: ${ticks}`);
+check(bands >= 15, `period bands rendered: ${bands}`);
+const railLabels = await page.locator(".rail-label:not(.offscreen)").count();
+check(railLabels >= 16, `period titles identifiable at overview: ${railLabels}/18`);
+let ov = await labelOverlaps();
+check(ov.bad.length === 0, `no overlapping labels at overview (${ov.n} labels) ${ov.bad.slice(0, 3).join(" | ")}`);
+const ax0 = await axisState();
+check(ax0 && ax0.n >= 8, `year axis labels at overview: ${ax0?.n} (step ${ax0?.step})`);
 await page.screenshot({ path: `${OUT}/1-wall-zoomed-out.png` });
 
-// ---- 2. wheel-zoom into Baroque (~1650). Find its x by evaluating ----
-const center = { x: 800, y: 480 };
-// zoom toward year 1650: position mouse where Baroque band is
-await page.mouse.move(center.x, center.y);
-for (let i = 0; i < 18; i++) {
+// ---------------------------------------------------------------- 2. wheel zoom
+log("wheel zoom toward the Baroque");
+await page.mouse.move(xOfYear(1650), 480);
+for (let i = 0; i < 14; i++) {
   await page.mouse.wheel(0, -240);
-  await page.waitForTimeout(70);
+  await page.waitForTimeout(60);
 }
-await page.waitForTimeout(1800);
-let nodes = await page.locator(".artist-node").count();
-log(`artist nodes visible after zoom: ${nodes}`);
+await page.waitForTimeout(900);
+const ax1 = await axisState();
+check(ax1 && ax1.ppy > ax0.ppy * 4, `wheel zoomed in (px/year ${ax0?.ppy.toFixed(2)} -> ${ax1?.ppy.toFixed(2)})`);
+check(ax1 && ax1.step < 100, `axis ticks densify when zoomed (step ${ax1?.step}y)`);
+const portraits = await page.locator(".wall-row:not(.offscreen) .ring img").count();
+check(portraits >= 3, `artist portraits visible after zoom: ${portraits}`);
+ov = await labelOverlaps();
+check(ov.bad.length === 0, `no overlapping labels zoomed in (${ov.n} labels) ${ov.bad.slice(0, 3).join(" | ")}`);
 await page.screenshot({ path: `${OUT}/2-wall-zoomed-in.png` });
 
-// ---- 3. click an artist node -> placard card ----
-if (nodes === 0) {
-  // pan a bit and retry
-  await page.mouse.move(800, 480);
+// ctrl+wheel (= trackpad pinch) must be swallowed by the timeline, not zoom the page
+await page.evaluate(() => {
+  window.__wheelPrevented = null;
+  window.addEventListener("wheel", (e) => (window.__wheelPrevented = e.defaultPrevented), { once: true });
+});
+await page.keyboard.down("Control");
+await page.mouse.wheel(0, 120);
+await page.keyboard.up("Control");
+await page.waitForTimeout(300);
+check((await page.evaluate(() => window.__wheelPrevented)) === true, "ctrl+wheel is handled by the timeline (default prevented)");
+
+// ---------------------------------------------------------------- 3. drag never dives
+log("drag that starts on a period band");
+const before = await axisState();
+const bandBox = await page.evaluate(() => {
+  for (const b of document.querySelectorAll(".band")) {
+    const r = b.getBoundingClientRect();
+    const x = Math.max(r.left, 40) + 30;
+    const y = r.top + Math.min(r.height - 6, 40);
+    if (x < innerWidth - 400 && y > 130 && y < innerHeight - 80 && document.elementFromPoint(x, y)?.closest(".band, .wall-row"))
+      return { x, y };
+  }
+  return null;
+});
+if (bandBox) {
+  await page.mouse.move(bandBox.x, bandBox.y);
   await page.mouse.down();
-  await page.mouse.move(400, 480, { steps: 10 });
+  await page.mouse.move(bandBox.x + 300, bandBox.y, { steps: 12 });
   await page.mouse.up();
-  await page.waitForTimeout(800);
-  nodes = await page.locator(".artist-node").count();
-  log(`artist nodes after pan: ${nodes}`);
-}
-if (nodes > 0) {
-  // click the first node actually on screen
-  let target = null;
-  for (const el of await page.locator(".artist-node").all()) {
-    const box = await el.boundingBox();
-    if (box && box.x > 40 && box.x + box.width < 1560 && box.y > 100 && box.y < 820) {
-      target = el;
-      break;
-    }
-  }
-  if (!target) {
-    log("no on-screen artist node found");
-    process.exit(1);
-  }
-  await target.click();
-  await page.waitForTimeout(1400);
-  const cardVisible = await page.locator(".card").isVisible();
-  const cardName = cardVisible
-    ? await page.locator(".card-name").innerText()
-    : "(none)";
-  log(`artist card visible: ${cardVisible} name: ${cardName}`);
+  await page.waitForTimeout(1500);
+  const after = await axisState();
+  check(Math.abs(after.ppy - before.ppy) / before.ppy < 0.02, `drag kept the zoom (no dive): px/year ${before.ppy.toFixed(2)} -> ${after.ppy.toFixed(2)}`);
+  check(after.center < before.center - 1, `drag panned back in time: centre ${before.center.toFixed(1)} -> ${after.center.toFixed(1)}`);
+} else check(false, "found a band to drag");
+
+// ---------------------------------------------------------------- 4. click dives
+log("click a period title to dive in");
+await page.locator(".tl-canvas").focus();
+await page.keyboard.press("Home");
+await page.waitForTimeout(1400);
+await page.locator('.rail-label[data-period="impressionism"]').click();
+await page.waitForTimeout(1600);
+const ax2 = await axisState();
+check(ax2 && Math.abs(ax2.center - 1877.5) < 8, `period click dives into Impressionism (centre ${ax2?.center.toFixed(1)})`);
+check((await page.locator(".wall-text p").count()) >= 1, "period wall text shown when zoomed into a period");
+
+// ---------------------------------------------------------------- 5. artist card
+log("open an artist placard");
+const node = page.locator(".wall-row:not(.offscreen) .artist-node").first();
+const slug = await node.getAttribute("data-slug");
+await node.click();
+await page.waitForTimeout(1300);
+const cardVisible = await page.locator(".card").isVisible();
+check(cardVisible, `artist card visible (${slug})`);
+if (cardVisible) {
+  const name = await page.locator(".card-name").innerText();
+  const sub = await page.locator(".card-sub").innerText();
+  const years = sub.match(/\b1\d{3}\b|\b20\d{2}\b/g) ?? [];
+  check(new Set(years).size === years.length, `card prints the dates once: "${sub.replace(/\n/g, " / ")}"`);
+  check((await page.locator(".card[role=dialog][aria-modal=true]").count()) === 1, "card is a modal dialog");
+  const focused = await page.evaluate(() => document.activeElement?.className ?? "");
+  check(focused.includes("card-enter"), "focus moves to Enter the Gallery");
+  const srcset = await page.locator(".card-portrait img").getAttribute("srcset").catch(() => null);
+  check(srcset === null || /1x, .* 2x/.test(srcset), `card portrait has a HiDPI srcset (${srcset ? "yes" : "single size"})`);
+  log(`card: ${name}`);
   await page.screenshot({ path: `${OUT}/3-artist-card.png` });
   await page.keyboard.press("Escape");
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(700);
+  check(!(await page.locator(".card").isVisible().catch(() => false)), "Escape closes the card");
+  const back = await page.evaluate(() => document.activeElement?.getAttribute("data-slug"));
+  check(back === slug, `focus returns to the artist (${back})`);
 }
 
-// ---- 4. switch views (zoom back out first for full-sweep screenshots) ----
-await page.mouse.move(800, 480);
-for (let i = 0; i < 20; i++) {
-  await page.mouse.wheel(0, 260);
-  await page.waitForTimeout(50);
+// ---------------------------------------------------------------- 6. keyboard path
+log("keyboard: Tab to an artist, Enter opens it");
+await page.locator(".tl-canvas").focus();
+let reached = null;
+for (let i = 0; i < 12 && !reached; i++) {
+  await page.keyboard.press("Tab");
+  reached = await page.evaluate(() => {
+    const a = document.activeElement;
+    return a?.classList.contains("artist-node") ? a.getAttribute("data-slug") : null;
+  });
 }
-await page.waitForTimeout(900);
+check(!!reached, `Tab reaches an artist node (${reached})`);
+if (reached) {
+  await page.waitForTimeout(700);
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(1200);
+  check(await page.locator(".card").isVisible(), "Enter on a focused artist opens the card");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(700);
+}
+
+// ---------------------------------------------------------------- 7. star map
+log("star map");
+await page.locator(".tl-canvas").focus();
+await page.keyboard.press("Home");
+await page.waitForTimeout(1300);
 await page.getByRole("button", { name: "Star Map" }).click();
 await page.waitForTimeout(1200);
-log("switched to star map");
+const stars = await page.locator(".star:not(.offscreen)").count();
+check(stars >= 60, `stars rendered at overview: ${stars}`);
+const figures = await page.locator(".constellations path").count();
+check(figures >= 12, `constellation figures drawn: ${figures}`);
+const starTitles = await page.locator(".neb-label:not(.offscreen)").count();
+check(starTitles >= 16, `constellation titles at overview: ${starTitles}/18`);
+ov = await labelOverlaps();
+check(ov.bad.length === 0, `no overlapping star-map labels (${ov.n}) ${ov.bad.slice(0, 3).join(" | ")}`);
+const blurred = await page.evaluate(() =>
+  [...document.querySelectorAll(".star-layer *")].filter((e) => getComputedStyle(e).filter !== "none").length
+);
+check(blurred === 0, `no CSS filters in the star map (${blurred})`);
 await page.screenshot({ path: `${OUT}/4-star-map.png` });
+await page.mouse.move(xOfYear(1900), 480);
+for (let i = 0; i < 10; i++) {
+  await page.mouse.wheel(0, -220);
+  await page.waitForTimeout(60);
+}
+await page.waitForTimeout(900);
+ov = await labelOverlaps();
+check(ov.bad.length === 0, `no overlapping star-map labels zoomed (${ov.n}) ${ov.bad.slice(0, 3).join(" | ")}`);
+await page.screenshot({ path: `${OUT}/5-star-map-zoomed.png` });
 
-await page.getByRole("button", { name: "The River" }).click();
-await page.waitForTimeout(1200);
-const streams = await page.locator(".stream").count();
-log(`river streams rendered: ${streams}`);
-await page.screenshot({ path: `${OUT}/5-river.png` });
-
-// ---- 5. filter dropdown ----
+// ---------------------------------------------------------------- 8. explore dropdown
+log("explore dropdown");
 await page.getByRole("button", { name: "Explore" }).click();
 await page.waitForTimeout(900);
-await page.screenshot({ path: `${OUT}/6-filter-dropdown.png` });
 const items = await page.locator(".filter-item").count();
-log(`filter items (periods tab): ${items}`);
-await page.keyboard.press("Escape");
-
-// ---- 6. museum page ----
-await page.goto("http://localhost:3000/museum/caravaggio", {
-  waitUntil: "domcontentloaded",
+check(items === 18, `filter items (periods tab): ${items}`);
+check((await page.locator(".filter-btn[aria-expanded=true]").count()) === 1, "Explore button reports aria-expanded");
+await page.screenshot({ path: `${OUT}/6-filter-dropdown.png` });
+await page.mouse.click(400, 700);
+await page.waitForTimeout(600);
+check((await page.locator(".filter-panel").count()) === 0, "dropdown closes on an outside click");
+await page.getByRole("button", { name: "Explore" }).click();
+await page.waitForTimeout(600);
+await page.getByRole("button", { name: "Artists" }).click();
+await page.waitForTimeout(500);
+await page.locator(".filter-item", { hasText: "Johannes Vermeer" }).click();
+await page.waitForTimeout(1800);
+check((await page.locator(".filter-btn").innerText()).toLowerCase().includes("johannes vermeer"), "artist filter applied");
+const vermeer = await page.evaluate(() => {
+  const el = document.querySelector('.artist-node[data-slug="johannes-vermeer"]');
+  if (!el || el.classList.contains("offscreen")) return null;
+  const r = el.getBoundingClientRect();
+  return { inView: r.left >= 0 && r.right <= innerWidth && r.top > 100 && r.bottom < innerHeight, focused: document.activeElement === el };
 });
+check(vermeer?.inView, `flew to the selected artist (in view: ${vermeer?.inView}, focused: ${vermeer?.focused})`);
+await page.screenshot({ path: `${OUT}/7-filter-artist.png` });
+
+// ---------------------------------------------------------------- 9. into the museum
+log("enter the gallery from a placard");
+await page.getByRole("button", { name: "Gallery Wall" }).click();
+await page.waitForTimeout(900);
+const vNode = page.locator('.artist-node[data-slug="johannes-vermeer"]:not(.dimmed)').first();
+if (await vNode.isVisible().catch(() => false)) {
+  await vNode.click();
+  await page.waitForTimeout(1400);
+  await page.getByRole("button", { name: /Enter the Gallery/i }).click();
+  await page.waitForURL(/\/museum\//, { timeout: 20000 }).catch(() => {});
+}
+if (!/\/museum\//.test(page.url())) {
+  await page.goto(`${BASE}/museum/johannes-vermeer`, { waitUntil: "domcontentloaded" });
+}
+check(/\/museum\//.test(page.url()), `museum route reached: ${page.url()}`);
 await page.waitForTimeout(1200);
-await page.screenshot({ path: `${OUT}/7-museum-doors.png` });
-log("doors screenshot taken");
-// wait for doors to open + textures
-await page.waitForTimeout(15000);
+await page.screenshot({ path: `${OUT}/8-museum-doors.png` });
+await page
+  .waitForFunction(() => {
+    const d = document.querySelector(".doors");
+    return !d || getComputedStyle(d).display === "none" || getComputedStyle(d).opacity === "0";
+  }, null, { timeout: 30000 })
+  .catch(() => {});
+await page.waitForTimeout(1500);
 const hasCanvas = await page.locator("canvas").count();
-const startVisible = await page.locator(".mus-click-to-start").isVisible().catch(() => false);
-log(`webgl canvas count: ${hasCanvas}, click-to-start overlay: ${startVisible}`);
-await page.screenshot({ path: `${OUT}/8-museum-gallery.png` });
+check(hasCanvas > 0, `webgl canvas count: ${hasCanvas}`);
+await page.screenshot({ path: `${OUT}/9-museum-gallery.png` });
 
-// ---- 7. probe: enter pointer lock and walk forward, then click to inspect ----
-if (startVisible) {
-  await page.locator(".mus-click-to-start").click();
-  await page.waitForTimeout(900);
-}
-const locked = await page.evaluate(() => document.pointerLockElement !== null);
-log(`pointer locked: ${locked}`);
-if (locked) {
-  await page.keyboard.down("KeyW");
-  await page.waitForTimeout(2500);
-  await page.keyboard.up("KeyW");
-  // turn right toward a wall painting (horizontal delta only, keep pitch level)
-  await page.mouse.move(800, 450);
-  await page.mouse.move(1290, 450, { steps: 8 });
-  await page.waitForTimeout(600);
-  await page.screenshot({ path: `${OUT}/9-museum-walked.png` });
-  // click to inspect whatever is aimed
-  await page.mouse.click(800, 450);
-  await page.waitForTimeout(2600);
-  const panelX = await page
-    .locator(".insp-panel")
-    .evaluate((el) => getComputedStyle(el).transform);
-  log(`inspect panel transform after click: ${panelX}`);
-  await page.screenshot({ path: `${OUT}/10-museum-inspect.png` });
-}
-
-// ---- 8. wikimedia request audit ----
+// ---------------------------------------------------------------- report
 const wikiFails = failedRequests.filter((r) => r.includes("wikimedia"));
 log(`console errors: ${consoleErrors.length}`);
 consoleErrors.slice(0, 12).forEach((e) => console.log("  CONSOLE-ERR: " + e));
@@ -155,4 +298,9 @@ log(`failed requests: ${failedRequests.length} (wikimedia: ${wikiFails.length})`
 failedRequests.slice(0, 12).forEach((e) => console.log("  REQ-FAIL: " + e));
 
 await browser.close();
-console.log("DONE");
+if (failures.length) {
+  console.log(`\nFAILED ${failures.length} check(s):`);
+  failures.forEach((f) => console.log("  - " + f));
+  process.exit(1);
+}
+console.log("\nDONE - all checks passed");
