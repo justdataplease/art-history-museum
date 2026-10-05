@@ -1,0 +1,180 @@
+/* Background-music control for the gallery HUD: a round toggle fixed
+   bottom-left, with a "now playing" credit card rising above it.
+
+   Stacking: above the WebGL canvas and the "click to step inside" overlay
+   (.mus-click-to-start, z 30) so the toggle stays clickable there, but drops
+   below the inspect panel (.insp-panel, z 25) while a painting is open. The
+   entry doors (z 200) still cover it; it only fades in once started. */
+
+.root {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  z-index: 31;
+  font-family: var(--sans, var(--font-sans), system-ui, sans-serif);
+  color: #e9ddc2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+
+.root[data-ready="true"] {
+  opacity: 1;
+}
+
+.root[data-inspecting="true"] {
+  z-index: 24;
+}
+
+/* Below ~880px the centred controls hint (.mus-hint, nowrap) reaches the
+   left edge; sit above it instead of on top of it. */
+@media (max-width: 880px) {
+  .root {
+    bottom: 72px;
+  }
+}
+
+.button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  color: #e9ddc2;
+  border: 1px solid rgba(233, 221, 194, 0.3);
+  background: rgba(20, 16, 12, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    color 0.2s;
+}
+
+.root[data-ready="true"] .button {
+  pointer-events: auto;
+}
+
+.button:hover {
+  border-color: rgba(233, 221, 194, 0.7);
+  background: rgba(20, 16, 12, 0.75);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--gold-soft, #c9ab6e);
+  outline-offset: 3px;
+}
+
+/* muted, or waiting for a click because autoplay was blocked */
+.button[data-off="true"] {
+  color: rgba(233, 221, 194, 0.5);
+}
+
+.button svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+
+/* ---- now-playing credit ---- */
+
+.credit {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  width: max-content;
+  max-width: min(360px, calc(100vw - 48px));
+  padding: 10px 15px 11px;
+  border: 1px solid rgba(233, 221, 194, 0.18);
+  border-radius: 6px;
+  background: rgba(20, 16, 12, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(5px);
+  transition:
+    opacity 0.7s ease,
+    transform 0.7s ease,
+    visibility 0s linear 0.7s;
+}
+
+.credit[data-visible="true"],
+.root[data-ready="true"]:hover .credit,
+.root[data-ready="true"]:focus-within .credit {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity 0.7s ease,
+    transform 0.7s ease,
+    visibility 0s;
+}
+
+.eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--gold-soft, #c9ab6e);
+}
+
+.work {
+  margin-top: 5px;
+  font-family: var(--serif, Georgia, serif);
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  color: #f1e7cf;
+}
+
+.meta {
+  margin-top: 5px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(233, 221, 194, 0.62);
+}
+
+.meta a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(201, 171, 110, 0.45);
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.meta a:hover,
+.meta a:focus-visible {
+  color: #e9ddc2;
+  border-color: rgba(233, 221, 194, 0.8);
+  outline: none;
+}
+
+/* On narrow screens the inspect panel spans almost the full width, so get
+   out of its way entirely while it is open. (Kept last: it must override the
+   data-ready rules above at equal specificity.) */
+@media (max-width: 760px) {
+  .root[data-inspecting="true"] {
+    opacity: 0;
+  }
+  .root[data-inspecting="true"] .button,
+  .root[data-inspecting="true"] .credit {
+    pointer-events: none;
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root,
+  .credit,
+  .credit[data-visible="true"] {
+    transition: none;
+  }
+}
