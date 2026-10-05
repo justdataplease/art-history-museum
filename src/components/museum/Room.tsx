@@ -1,256 +1,439 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { MeshReflectorMaterial } from "@react-three/drei";
 import * as THREE from "three";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { RectAreaLightUniformsLib } from "three/examples/jsm/lights/RectAreaLightUniformsLib.js";
 import type { GalleryLayout } from "./layout";
 import type { GalleryTheme } from "./theme";
-import { plankTextures, plasterTexture } from "./textures";
+import { setGalleryEnv } from "./env-store";
+import { buildGlass, buildHall, ceilingSpec, disposeHall } from "./room-geometry";
+import { captureProbe, ENV_INTENSITY, initialEnvironment, roomDimmers, roomState } from "./room-env";
+import { ReflectiveFloor } from "./room-floor";
+import { patchRoomMaterial } from "./room-shading";
+import { damaskTextures, laylightTexture, plasterTextures, woodGrainTexture } from "./textures";
 
-// The architecture of the hall: environment, ambient/ceiling light, floor,
-// walls, trim, ceiling, track rails and benches.
+// The architecture of the hall: environment, ceiling light, floor, walls,
+// mouldings, laylight / lightbox, lighting track and benches.
 
-// Procedural environment map — believable reflections without any HDR download.
-export function EnvSetup(_props: {
+// LTC tables for the laylight's RectAreaLight — once, at module load (they
+// are plain DataTextures, so this is safe during SSR evaluation too).
+RectAreaLightUniformsLib.init();
+
+// ------------------------------------------------------------- environment
+
+export function EnvSetup({
+  layout,
+  theme,
+  ready,
+}: {
   layout: GalleryLayout;
   theme: GalleryTheme;
-  /** True once every painting texture has settled (a reflection probe may be captured then). */
+  /** True once every painting texture has settled (the reflection probe is captured then). */
   ready: boolean;
 }) {
-  const { gl, scene } = useThree();
-  useEffect(() => {
-    RectAreaLightUniformsLib.init();
-    const pmrem = new THREE.PMREMGenerator(gl);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environment = env;
-    scene.environmentIntensity = 0.18;
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const invalidate = useThree((s) => s.invalidate);
+  const envRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  const captured = useRef(false);
+  const countdown = useRef(-1);
+  const retired = useRef<{ rt: THREE.WebGLRenderTarget; timer: ReturnType<typeof setTimeout> }[]>([]);
+
+  // Synchronously, inside the commit that adds the room: the first frame
+  // already sees an environment, so no program is ever compiled without one.
+  const pmremRef = useRef<THREE.PMREMGenerator | null>(null);
+  useLayoutEffect(() => {
+    // one generator for the proxy and the probe: its blur programs compile once
+    const pm = new THREE.PMREMGenerator(gl);
+    pmremRef.current = pm;
+    const rt = initialEnvironment(pm, layout, theme);
+    envRef.current = rt;
+    captured.current = false;
+    scene.environment = rt.texture;
+    scene.environmentIntensity = ENV_INTENSITY * envDimFactor(roomState.dim);
+    setGalleryEnv(rt.texture);
+    const pending = retired.current;
     return () => {
-      env.dispose();
-      pmrem.dispose();
+      pm.dispose();
+      pmremRef.current = null;
+      if (scene.environment === envRef.current?.texture) scene.environment = null;
+      setGalleryEnv(null);
+      envRef.current?.dispose();
+      envRef.current = null;
+      pending.forEach((p) => {
+        clearTimeout(p.timer);
+        p.rt.dispose();
+      });
+      pending.length = 0;
     };
-  }, [gl, scene]);
+  }, [gl, scene, layout, theme]);
+
+  // Safety net: if `ready` never arrives, capture the hall anyway.
+  const [fallback, setFallback] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setFallback(true), 15000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if ((ready || fallback) && !captured.current && countdown.current < 0) {
+      // let the freshly settled canvases commit and upload first
+      countdown.current = 3;
+      invalidate();
+    }
+    // re-armed when the room is rebuilt (a new layout/theme gets its own probe)
+  }, [ready, fallback, invalidate, layout, theme]);
+
+  useFrame((state) => {
+    if (countdown.current < 0 || captured.current) return;
+    // capture at rest (not while a painting is focused and the room dimmed)
+    if (countdown.current > 0 || roomState.dim < 0.98) {
+      if (countdown.current > 0) countdown.current--;
+      state.invalidate();
+      return;
+    }
+    countdown.current = -1;
+    captured.current = true;
+    const pm = pmremRef.current ?? new THREE.PMREMGenerator(gl);
+    const probe = captureProbe(gl, pm, scene, layout);
+    // the generator's work is done: free its internal targets and programs
+    pm.dispose();
+    pmremRef.current = null;
+    const old = envRef.current;
+    envRef.current = probe;
+    scene.environment = probe.texture;
+    setGalleryEnv(probe.texture);
+    if (old) {
+      // exhibits re-bind on their next React commit; free the proxy after that
+      const list = retired.current;
+      const entry = {
+        rt: old,
+        timer: setTimeout(() => {
+          old.dispose();
+          const i = list.indexOf(entry);
+          if (i >= 0) list.splice(i, 1);
+        }, 2500),
+      };
+      list.push(entry);
+    }
+    state.invalidate();
+  });
+
   return null;
 }
 
+/** Environment strength while a painting is focused (dim = 0) vs at rest (1). */
+function envDimFactor(dim: number) {
+  return 0.3 + 0.7 * dim;
+}
+
+// ---------------------------------------------------------------- lighting
+
+/**
+ * The laylight (or modern lightbox): emissive glass panes in the ceiling and
+ * the RectAreaLight that is their light. Both — and the environment — dim
+ * together while a painting is focused.
+ */
 export function Lighting({
   layout,
+  theme,
   focused,
 }: {
   layout: GalleryLayout;
   theme: GalleryTheme;
   focused: boolean;
 }) {
-  const hemi = useRef<THREE.HemisphereLight>(null);
-  const amb = useRef<THREE.AmbientLight>(null);
+  const scene = useThree((s) => s.scene);
+  const invalidate = useThree((s) => s.invalidate);
   const area = useRef<THREE.RectAreaLight>(null);
-  useFrame((_, dt) => {
-    if (hemi.current)
-      hemi.current.intensity = THREE.MathUtils.damp(
-        hemi.current.intensity, focused ? 0.03 : 0.16, 4, dt);
-    if (amb.current)
-      amb.current.intensity = THREE.MathUtils.damp(
-        amb.current.intensity, focused ? 0.015 : 0.055, 4, dt);
-    if (area.current)
-      area.current.intensity = THREE.MathUtils.damp(
-        area.current.intensity, focused ? 0.12 : 1.5, 4, dt);
+  const spec = useMemo(() => ceilingSpec(layout, theme), [layout, theme]);
+  const level = useRef(1);
+
+  const glass = useMemo(() => {
+    const geometry = buildGlass(spec);
+    const map = laylightTexture(spec.panes[0], spec.panes[1]);
+    const base = new THREE.Color(theme.room.daylight).multiplyScalar(theme.room.daylightLevel);
+    const material = new THREE.MeshBasicMaterial({ color: base.clone(), map });
+    return { geometry, material, map, base };
+  }, [spec, theme]);
+  useEffect(
+    () => () => {
+      glass.geometry.dispose();
+      glass.material.dispose();
+      glass.map.dispose();
+    },
+    [glass]
+  );
+
+  const areaBase = theme.room.daylightLevel * (theme.room.ceiling === "laylight" ? 1.0 : 1.25);
+  const apply = (k: number) => {
+    if (area.current) area.current.intensity = areaBase * (0.1 + 0.9 * k);
+    glass.material.color.copy(glass.base).multiplyScalar(0.22 + 0.78 * k);
+    scene.environmentIntensity = ENV_INTENSITY * envDimFactor(k);
+    roomDimmers.forEach((d) => d.uniform.value.copy(d.base).multiplyScalar(0.25 + 0.75 * k));
+    roomState.dim = k;
+  };
+
+  useEffect(() => {
+    invalidate();
+  }, [focused, invalidate]);
+
+  useFrame((state, dt) => {
+    const target = focused ? 0 : 1;
+    const cur = level.current;
+    if (Math.abs(cur - target) < 0.001) {
+      if (cur !== target) {
+        level.current = target;
+        apply(target);
+      }
+      return;
+    }
+    level.current = THREE.MathUtils.damp(cur, target, 4, Math.min(dt, 0.1));
+    apply(level.current);
+    state.invalidate();
   });
+
+  const glassLen = spec.wellZ1 - spec.wellZ0;
   return (
     <>
-      <hemisphereLight
-        ref={hemi}
-        args={["#f3e8d4", "#241c12", 0.16]}
-        position={[0, layout.wallHeight, 0]}
-      />
-      <ambientLight ref={amb} intensity={0.055} color="#efe4cd" />
-      {/* soft warm wash from the ceiling cove */}
       <rectAreaLight
         ref={area}
-        args={["#f4e7ce", 1.5, layout.hallWidth - 2.4, layout.hallLength - 2.5]}
-        position={[0, layout.wallHeight - 0.12, 0]}
+        args={[theme.room.daylight, areaBase, 2 * spec.wellX, glassLen]}
+        position={[0, spec.yGlass - 0.04, (spec.wellZ0 + spec.wellZ1) / 2]}
         rotation-x={-Math.PI / 2}
       />
+      <mesh geometry={glass.geometry} material={glass.material} matrixAutoUpdate={false} />
     </>
   );
 }
 
-// ------------------------------------------------------------------- Room
+// -------------------------------------------------------------------- room
 
-function FloorMesh({ W, L }: { W: number; L: number }) {
-  const { map, roughnessMap } = useMemo(() => {
-    const { map, roughnessMap } = plankTextures();
-    const m = map.clone();
-    const r = roughnessMap.clone();
-    // ~0.2 m planks running the length of the hall
-    m.repeat.set(W / 1.4, L / 2.9);
-    r.repeat.set(W / 1.4, L / 2.9);
-    m.needsUpdate = true;
-    r.needsUpdate = true;
-    return { map: m, roughnessMap: r };
-  }, [W, L]);
-  return (
-    <mesh rotation-x={-Math.PI / 2} receiveShadow>
-      <planeGeometry args={[W, L]} />
-      <MeshReflectorMaterial
-        blur={[400, 130]}
-        resolution={1024}
-        mixBlur={1}
-        mixStrength={0.38}
-        roughness={0.85}
-        depthScale={1.1}
-        minDepthThreshold={0.4}
-        maxDepthThreshold={1.4}
-        map={map}
-        roughnessMap={roughnessMap}
-        color="#9a8568"
-        metalness={0}
-      />
-    </mesh>
-  );
-}
+function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
+  return useMemo(() => {
+    const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
+    const roomHalf = new THREE.Vector3(W / 2, H, L / 2);
+    const textures: THREE.Texture[] = [];
+    const finish = theme.room.wallFinish;
 
-export function Room({ layout }: { layout: GalleryLayout; theme: GalleryTheme }) {
-  const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
-
-  const wallMat = useMemo(() => {
-    const map = plasterTexture().clone();
-    map.repeat.set(Math.round(L / 3), 2);
-    map.needsUpdate = true;
-    return new THREE.MeshStandardMaterial({
-      color: "#e6decb",
-      map,
-      roughness: 0.93,
+    // walls — UVs are in metres, so repeat = 1 / tile size
+    const wall = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(theme.wall.color),
+      roughness: theme.wall.roughness,
       metalness: 0,
     });
-  }, [L]);
-  const darkWood = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: "#3a2c1e",
-        roughness: 0.55,
-        metalness: 0.08,
-      }),
-    []
-  );
-  const ceilMat = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({ color: "#efe8d8", roughness: 0.95 }),
-    []
-  );
-  const benchLeather = useMemo(
-    () =>
-      new THREE.MeshPhysicalMaterial({
-        color: "#4a3526",
-        roughness: 0.42,
-        clearcoat: 0.35,
-        clearcoatRoughness: 0.3,
-      }),
-    []
-  );
-
-  // coffered ceiling beams
-  const beams = useMemo(() => {
-    const items: { pos: [number, number, number]; size: [number, number, number] }[] = [];
-    const step = 3.6;
-    for (let z = -L / 2 + step; z < L / 2; z += step) {
-      items.push({ pos: [0, H - 0.14, z], size: [W, 0.28, 0.3] });
+    if (finish === "damask") {
+      const { map, roughness } = damaskTextures();
+      map.repeat.set(1 / 0.56, 1 / 0.84);
+      roughness.repeat.copy(map.repeat);
+      wall.map = map;
+      wall.roughnessMap = roughness;
+      textures.push(map, roughness);
+    } else {
+      const { map, bump } = plasterTextures();
+      if (finish === "plaster") {
+        // lime plaster: soft trowel undulation plus fine grain
+        map.repeat.set(1 / 2.2, 1 / 2.2);
+        bump.repeat.set(1 / 1.3, 1 / 1.3);
+        wall.map = map;
+        wall.bumpScale = 0.6;
+        textures.push(map);
+      } else {
+        // painted board: even colour, only a fine orange-peel texture
+        map.dispose();
+        bump.repeat.set(1 / 0.35, 1 / 0.35);
+        wall.bumpScale = 0.12;
+      }
+      wall.bumpMap = bump;
+      textures.push(bump);
     }
-    items.push({ pos: [-W / 4, H - 0.14, 0], size: [0.3, 0.28, L] });
-    items.push({ pos: [W / 4, H - 0.14, 0], size: [0.3, 0.28, L] });
-    return items;
-  }, [W, L, H]);
+    // Modern rooms: track-mounted asymmetric wall-washers give the white cube
+    // its even, bright walls (an even vertical wash, softening toward the
+    // floor). Classical rooms get their wash from the laylight instead.
+    const washBase = new THREE.Color(theme.light.ambient).multiplyScalar(theme.room.wallWash);
+    const wash = { value: washBase.clone().multiplyScalar(0.25 + 0.75 * roomState.dim) };
+    const useWash = theme.room.wallWash > 0;
+    patchRoomMaterial(wall, {
+      key: `wall-${finish}-${useWash ? "wash" : "nowash"}`,
+      roomHalf,
+      ao: [0.5, 0.38, 0.3],
+      mottle: finish === "paint" ? 0.006 : 0.03,
+      mottleScale: 0.4,
+      shadowGap: theme.room.classical ? undefined : { bottom: 0.045, top: 0.018 },
+      extraUniforms: { uWash: wash },
+      extraPars: "uniform vec3 uWash;",
+      extraDirect: useWash
+        ? `{
+  float t = clamp(vRoomPos.y / uRoomHalf.y, 0.0, 1.0);
+  float wsh = mix(0.6, 1.0, smoothstep(0.0, 0.75, t)) * (1.0 - 0.3 * smoothstep(0.85, 1.0, t));
+  reflectedLight.directDiffuse += diffuseColor.rgb * uWash * wsh;
+}`
+        : "",
+    });
 
-  const benches = layout.benches.map((b) => b.position[1]);
+    // Concealed uplighting on top of the cornice (and the bounce it gives):
+    // brightest in the cove, fading across the ceiling band. Dims with the
+    // laylight while a painting is focused.
+    const uplightBase = new THREE.Color(theme.room.daylight).multiplyScalar(
+      theme.room.ceiling === "laylight" ? 0.3 : 0.5
+    );
+    const uplight = { value: uplightBase.clone().multiplyScalar(0.25 + 0.75 * roomState.dim) };
+    const dimmers = [
+      { uniform: uplight, base: uplightBase },
+      { uniform: wash, base: washBase },
+    ];
+    const ceiling = patchRoomMaterial(
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(theme.ceiling),
+        roughness: 0.95,
+        metalness: 0,
+      }),
+      {
+        key: "ceiling",
+        roomHalf,
+        ao: [0.42, 0.3, 0.25],
+        mottle: 0.02,
+        mottleScale: 0.35,
+        extraUniforms: { uUplight: uplight },
+        extraPars: "uniform vec3 uUplight;",
+        extraColor: `{
+  float dw = min(uRoomHalf.x - abs(vRoomPos.x), uRoomHalf.z - abs(vRoomPos.z));
+  float up = exp(-max(dw, 0.0) / 1.2);
+  totalEmissiveRadiance += diffuseColor.rgb * uUplight * (0.3 + 0.7 * up);
+}`,
+      }
+    );
+
+    const stone = theme.era === "sacred";
+    const trim = patchRoomMaterial(
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(theme.trim),
+        roughness: stone ? 0.82 : theme.room.classical ? 0.42 : 0.6,
+        metalness: 0,
+      }),
+      { key: "trim", roomHalf, ao: [0.45, 0.25, 0.3], mottle: stone ? 0.05 : 0.0, mottleScale: 2.2 }
+    );
+
+    const track = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(theme.room.track),
+      roughness: 0.38,
+      metalness: 0.55,
+    });
+
+    // Benches: wooden parts get oak grain projected in world space (the
+    // merged rounded boxes have no meaningful UVs); leather is plain satin.
+    // share the floor's grain canvas when the floor is wood (one generation per room)
+    const grain = woodGrainTexture(theme.floor.kind === "oak-dark" ? "oak-dark" : "oak-light");
+    textures.push(grain);
+    const woodGrain = (m: THREE.MeshStandardMaterial, key: string) => {
+      m.map = grain;
+      return patchRoomMaterial(m, {
+        key,
+        roomHalf,
+        ao: [0.0, 0.3, 0.0],
+        replaceMap: `{
+  vec3 an = abs(normalize(vRoomNrm));
+  vec2 wuv = an.y > 0.5 ? vRoomPos.xz : (an.x > 0.5 ? vRoomPos.yz : vRoomPos.xy);
+  diffuseColor *= texture2D(map, wuv / vec2(0.3, 0.6));
+}`,
+      });
+    };
+    const oakSeat = theme.room.bench === "oak-block";
+    const benchSeat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(theme.room.benchSeat),
+      roughness: oakSeat ? 0.5 : 0.46,
+      metalness: 0,
+    });
+    if (oakSeat) woodGrain(benchSeat, "bench-wood");
+    const steel = theme.room.bench === "modern-leather";
+    const benchFrame = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(theme.room.benchFrame),
+      roughness: steel ? 0.3 : 0.5,
+      metalness: steel ? 1 : 0,
+    });
+    if (!steel) woodGrain(benchFrame, "bench-wood");
+
+    // soft contact shadow under each bench: an SDF blob, no texture, no pass
+    const benchShadow = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+      uniforms: { uOpacity: { value: 0.72 } },
+      vertexShader: /* glsl */ `
+        attribute vec2 aLocal;
+        attribute vec2 aHalf;
+        varying vec2 vLocal;
+        varying vec2 vHalf;
+        void main() {
+          vLocal = aLocal;
+          vHalf = aHalf;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform float uOpacity;
+        varying vec2 vLocal;
+        varying vec2 vHalf;
+        float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
+        void main() {
+          // umbra under the seat, a soft penumbra spilling ~35 cm past it
+          float d = sdBox(vLocal, vHalf - 0.03);
+          float umbra = 1.0 - smoothstep(-0.18, 0.04, d);
+          float penumbra = 1.0 - smoothstep(-0.02, 0.36, d);
+          float a = uOpacity * (0.6 * umbra + 0.4 * penumbra);
+          gl_FragColor = vec4(0.0, 0.0, 0.0, a);
+        }`,
+    });
+
+    const all = [wall, ceiling, trim, track, benchSeat, benchFrame, benchShadow];
+    return {
+      wall,
+      ceiling,
+      trim,
+      track,
+      benchSeat,
+      benchFrame,
+      benchShadow,
+      dimmers,
+      dispose() {
+        all.forEach((m) => m.dispose());
+        textures.forEach((t) => t.dispose());
+      },
+    };
+  }, [layout, theme]);
+}
+
+export function Room({ layout, theme }: { layout: GalleryLayout; theme: GalleryTheme }) {
+  const hall = useMemo(() => buildHall(layout, theme), [layout, theme]);
+  const mats = useRoomMaterials(layout, theme);
+  useEffect(() => () => disposeHall(hall), [hall]);
+  useEffect(() => {
+    mats.dimmers.forEach((d) => roomDimmers.add(d));
+    return () => {
+      mats.dimmers.forEach((d) => roomDimmers.delete(d));
+      mats.dispose();
+    };
+  }, [mats]);
 
   return (
     <group>
-      {/* reflective plank floor */}
-      <FloorMesh W={W} L={L} />
-
-      {/* walls */}
-      <mesh position={[-W / 2 - 0.1, H / 2, 0]} material={wallMat} receiveShadow castShadow>
-        <boxGeometry args={[0.2, H, L]} />
-      </mesh>
-      <mesh position={[W / 2 + 0.1, H / 2, 0]} material={wallMat} receiveShadow castShadow>
-        <boxGeometry args={[0.2, H, L]} />
-      </mesh>
-      <mesh position={[0, H / 2, -L / 2 - 0.1]} material={wallMat} receiveShadow castShadow>
-        <boxGeometry args={[W + 0.4, H, 0.2]} />
-      </mesh>
-      <mesh position={[0, H / 2, L / 2 + 0.1]} material={wallMat} receiveShadow castShadow>
-        <boxGeometry args={[W + 0.4, H, 0.2]} />
-      </mesh>
-
-      {/* entry doorway silhouette on the near wall */}
-      <mesh position={[0, 1.45, L / 2 - 0.005]} material={darkWood}>
-        <boxGeometry args={[2.6, 2.9, 0.08]} />
-      </mesh>
-
-      {/* baseboards & picture rail */}
-      {[-1, 1].map((s) => (
-        <group key={s}>
-          <mesh position={[s * (W / 2 - 0.04), 0.09, 0]} material={darkWood}>
-            <boxGeometry args={[0.08, 0.18, L]} />
-          </mesh>
-          <mesh position={[s * (W / 2 - 0.025), H - 0.55, 0]} material={darkWood}>
-            <boxGeometry args={[0.05, 0.07, L]} />
-          </mesh>
-        </group>
-      ))}
-      <mesh position={[0, 0.09, -L / 2 + 0.04]} material={darkWood}>
-        <boxGeometry args={[W, 0.18, 0.08]} />
-      </mesh>
-
-      {/* ceiling + coffers */}
-      <mesh rotation-x={Math.PI / 2} position={[0, H, 0]} material={ceilMat}>
-        <planeGeometry args={[W + 0.4, L + 0.4]} />
-      </mesh>
-      {beams.map((b, i) => (
-        <mesh key={i} position={b.pos} material={ceilMat}>
-          <boxGeometry args={b.size} />
-        </mesh>
-      ))}
-
-      {/* glowing cove strips where the ceiling meets the walls */}
-      {[-1, 1].map((s) => (
-        <mesh key={`cove${s}`} position={[s * (W / 2 - 0.3), H - 0.18, 0]}>
-          <boxGeometry args={[0.05, 0.04, L - 0.6]} />
-          <meshStandardMaterial
-            color="#2a241c"
-            emissive="#ffdfb0"
-            emissiveIntensity={2.6}
-          />
-        </mesh>
-      ))}
-
-      {/* lighting track rails */}
-      {[-1, 1].map((s) => (
-        <mesh
-          key={s}
-          position={[s * (W / 2 - 2.0), H - 0.32, 0]}
-          rotation-x={Math.PI / 2}
-        >
-          <cylinderGeometry args={[0.035, 0.035, L - 1, 10]} />
-          <meshStandardMaterial color="#1c1812" roughness={0.4} metalness={0.6} />
-        </mesh>
-      ))}
-
-      {/* benches */}
-      {benches.map((z) => (
-        <group key={z} position={[0, 0, z]}>
-          <mesh position={[0, 0.46, 0]} material={benchLeather} castShadow receiveShadow>
-            <boxGeometry args={[0.62, 0.14, 1.9]} />
-          </mesh>
-          {[-0.75, 0.75].map((dz) => (
-            <mesh key={dz} position={[0, 0.2, dz]} material={darkWood} castShadow>
-              <boxGeometry args={[0.5, 0.4, 0.12]} />
-            </mesh>
-          ))}
-        </group>
-      ))}
+      <ReflectiveFloor W={layout.hallWidth} L={layout.hallLength} H={layout.wallHeight} theme={theme} />
+      <mesh geometry={hall.walls} material={mats.wall} matrixAutoUpdate={false} />
+      <mesh geometry={hall.ceiling} material={mats.ceiling} matrixAutoUpdate={false} />
+      <mesh geometry={hall.trim} material={mats.trim} matrixAutoUpdate={false} />
+      <mesh geometry={hall.benchSeat} material={mats.benchSeat} matrixAutoUpdate={false} />
+      <mesh geometry={hall.benchFrame} material={mats.benchFrame} matrixAutoUpdate={false} />
+      {/* small props: skipped by the floor reflection */}
+      <mesh geometry={hall.track} material={mats.track} matrixAutoUpdate={false} layers={1} />
+      <mesh
+        geometry={hall.benchShadow}
+        material={mats.benchShadow}
+        matrixAutoUpdate={false}
+        layers={1}
+        renderOrder={1}
+      />
     </group>
   );
 }
-

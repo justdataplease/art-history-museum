@@ -1,0 +1,69 @@
+/* Museum HUD overrides layered on the global .mus-* / .insp-* rules.
+   Classes are doubled (.x.x) so they win over the single-class globals
+   regardless of stylesheet order. */
+
+/* The top bar (back link) sits above the "step inside" overlay (z 30), so
+   the way out is always reachable. */
+.top.top {
+  z-index: 40;
+}
+
+/* ...but the centred title card must not catch clicks meant for the overlay
+   or cover the inspect panel on narrower screens. */
+.placard.placard {
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+
+.placardHidden.placardHidden {
+  opacity: 0;
+}
+
+.topSpacer {
+  width: 110px;
+}
+
+@media (max-width: 640px) {
+  .topSpacer {
+    display: none;
+  }
+  .placard.placard {
+    padding: 8px 14px;
+  }
+}
+
+/* Controls hint: wrap instead of running off narrow screens. */
+@media (max-width: 880px) {
+  .hint.hint {
+    bottom: 16px;
+    max-width: calc(100vw - 32px);
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 6px;
+    column-gap: 18px;
+    white-space: normal;
+    text-align: center;
+    border-radius: 18px;
+  }
+}
+
+/* Inspect panel: a bottom sheet on narrow screens. Keep the breakpoint and
+   height in sync with inspectPanelInset() in layout.ts. */
+@media (max-width: 760px) {
+  .panel.panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: min(50vh, 480px);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -24px 60px rgba(0, 0, 0, 0.5);
+  }
+  .panel.panel :global(.insp-scroll) {
+    padding: 30px 22px 22px;
+  }
+  .panel.panel :global(.insp-zoom-hint) {
+    padding: 10px 22px;
+  }
+}

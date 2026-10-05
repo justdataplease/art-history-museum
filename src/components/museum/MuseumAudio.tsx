@@ -444,7 +444,8 @@ export function MuseumAudio({
         </svg>
       </button>
 
-      <div className={styles.credit} data-visible={creditVisible && !off ? "true" : "false"}>
+      {/* hidden while a painting is inspected: it would cover the work's lower-left corner */}
+      <div className={styles.credit} data-visible={creditVisible && !off && !inspecting ? "true" : "false"}>
         <div className={styles.eyebrow}>
           {muted ? "Music muted · M" : blocked ? "Click anywhere for music" : "Now playing"}
         </div>
