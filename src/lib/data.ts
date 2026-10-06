@@ -69,6 +69,7 @@ interface CacheShape {
   artists: CacheArtist[];
 }
 
+// Read once per server process: an edit to museum.json needs a restart.
 let cache: CacheShape | null = null;
 function readCache(): CacheShape | null {
   if (cache) return cache;
@@ -121,6 +122,7 @@ function toPainting(p: Painting): Painting {
     imageUrl: p.imageUrl,
     imageWidth: p.imageWidth,
     imageHeight: p.imageHeight,
+    imageBytes: p.imageBytes ?? null,
     widthCm: p.widthCm ?? null,
     heightCm: p.heightCm ?? null,
     pageviews: p.pageviews ?? null,
@@ -164,6 +166,7 @@ SELECT a.slug, a.period_slug, a.name, a.birth_year, a.death_year, a.tagline, a.b
        COALESCE(json_agg(json_build_object(
          'slug', p.slug, 'title', p.title, 'year', p.year,
          'imageUrl', p.image_url, 'imageWidth', p.image_width, 'imageHeight', p.image_height,
+         'imageBytes', to_jsonb(p) -> 'image_bytes',
          'widthCm', to_jsonb(p) -> 'width_cm',
          'heightCm', to_jsonb(p) -> 'height_cm',
          'pageviews', to_jsonb(p) -> 'pageviews',

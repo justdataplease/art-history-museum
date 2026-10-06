@@ -9,9 +9,20 @@ import { MuseumApp } from "@/components/museum/MuseumApp";
 
 // Every gallery is prerendered at build time (from the JSON cache when the
 // database is unavailable) and regenerated in the background at most hourly.
-// Slugs added later render on first request and are then cached
-// (dynamicParams defaults to true); unknown slugs 404.
 export const revalidate = 3600;
+
+// Only the prerendered slugs are served; any other /museum/<slug> is a 404
+// without rendering. With the default (true) every unknown slug was rendered
+// (one database query each) and its 404 cached to disk as an ISR entry, so
+// requests for random slugs grew the cache without bound.
+// Trade-off: generateStaticParams runs only at build time (not on
+// revalidation, and on-demand revalidation cannot add a path either), so an
+// artist added by `npm run load-db` gets a gallery at the next build/deploy -
+// load-db lists such slugs. Existing galleries still pick up reloaded data
+// within the hour. Keeping runtime discovery instead would need a proxy.ts
+// allow-list backed by the database, which the Proxy docs advise against
+// (no shared modules or globals there).
+export const dynamicParams = false;
 
 export async function generateStaticParams(): Promise<{ slug: string }[]> {
   return (await getArtistSlugs()).map((slug) => ({ slug }));

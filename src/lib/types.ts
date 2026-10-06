@@ -30,6 +30,8 @@ export interface Painting {
   imageUrl: string;
   imageWidth: number | null;
   imageHeight: number | null;
+  /** Byte size of the original file behind imageUrl (Wikimedia imageinfo); null when unknown. */
+  imageBytes?: number | null;
   /** Physical size from Wikidata (P2049 width / P2048 height), in cm; null when unknown. */
   widthCm?: number | null;
   heightCm?: number | null;

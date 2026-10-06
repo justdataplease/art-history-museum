@@ -40,11 +40,12 @@ export interface PaintingOut {
   facts: string[];
   wikipediaUrl: string | null;
   sitelinks: number;
-  // Filled by enrichArtists (scripts/lib/enrich.ts) from Wikidata / Wikimedia pageviews.
+  // Filled by enrichArtists (scripts/lib/enrich.ts) from Wikidata / Wikimedia.
   widthCm?: number | null;
   heightCm?: number | null;
   pageviews?: number | null;
   qid?: string | null;
+  imageBytes?: number | null;
 }
 
 export interface ArtistOut {
@@ -346,6 +347,7 @@ async function main() {
   for (const r of enrich.failures) problems.push(`enrich: ${r}`);
   for (const r of enrich.removed) problems.push(`removed (by another artist): ${r}`);
   for (const r of enrich.yearChanges) problems.push(`year: ${r}`);
+  for (const r of enrich.imageChanges) problems.push(`image re-uploaded: ${r}`);
   problems.push(
     `enrich coverage: dimensions ${enrich.withBothDims}/${enrich.paintings}, pageviews ${enrich.withPageviews}/${enrich.paintings}`
   );

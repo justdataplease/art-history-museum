@@ -1,16 +1,17 @@
 // Enrich the ingest cache with real reference data from Wikidata / Wikimedia:
-// physical size (widthCm / heightCm), 12-month enwiki pageviews and the
-// painting's Wikidata item (qid). Re-runnable: pageviews are refreshed on
-// every run; a failed lookup never overwrites values from an earlier run.
+// physical size (widthCm / heightCm), 12-month enwiki pageviews, the
+// painting's Wikidata item (qid) and its image file's byte size (imageBytes).
+// Re-runnable: pageviews are refreshed on every run; a failed lookup never
+// overwrites values from an earlier run.
 //
 //   npm run enrich                # update data/cache/museum.json + data/cache/artists/*.json
 //   npm run enrich -- --dry-run   # fetch and report, write nothing
 //   npm run enrich -- --keep-years    # don't repair out-of-lifetime years
 //   npm run enrich -- --keep-foreign  # don't drop works Wikidata + title attribute to another artist
 //
-// Only the new fields change, plus (unless disabled) out-of-lifetime years and
-// works by another artist; everything else is written back unchanged in the
-// same JSON layout.
+// Only the new fields change, plus the pixel size of re-uploaded image files
+// and (unless disabled) out-of-lifetime years and works by another artist;
+// everything else is written back unchanged in the same JSON layout.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -26,7 +27,7 @@ const dryRun = args.has("--dry-run");
 const fixYears = !args.has("--keep-years");
 const dropForeign = !args.has("--keep-foreign");
 
-const ENRICHED = ["widthCm", "heightCm", "pageviews", "qid"] as const;
+const ENRICHED = ["widthCm", "heightCm", "pageviews", "qid", "imageBytes"] as const;
 const key = (artistSlug: string, p: EnrichablePainting) => `${artistSlug}\u0000${p.slug}\u0000${p.imageUrl}`;
 
 function readJson<T>(file: string): T {
@@ -70,6 +71,8 @@ async function main() {
       if (!src || src === p) continue;
       const rec = p as unknown as Record<string, unknown>;
       p.year = src.year;
+      p.imageWidth = src.imageWidth;
+      p.imageHeight = src.imageHeight;
       for (const k of ENRICHED) {
         delete rec[k];
         rec[k] = (src as unknown as Record<string, unknown>)[k] ?? null;
@@ -85,6 +88,7 @@ async function main() {
     withBothDims: live.filter((p) => p.widthCm != null && p.heightCm != null).length,
     withAnyDim: live.filter((p) => p.widthCm != null || p.heightCm != null).length,
     withPageviews: live.filter((p) => p.pageviews != null).length,
+    withImageBytes: live.filter((p) => p.imageBytes != null).length,
   };
 
   console.log("\nRun:", {
@@ -94,11 +98,16 @@ async function main() {
     qidFromImage: report.qidFromImage,
     withBothDims: report.withBothDims,
     withPageviews: report.withPageviews,
+    withImageBytes: report.withImageBytes,
   });
   console.log("museum.json coverage:", coverage);
   if (report.rejectedDims.length) {
     console.log(`\nDimension notes (transposed / rejected / partial) (${report.rejectedDims.length}):`);
     for (const r of report.rejectedDims) console.log("  - " + r);
+  }
+  if (report.imageChanges.length) {
+    console.log(`\nImage files re-uploaded at another size (${report.imageChanges.length}):`);
+    for (const r of report.imageChanges) console.log("  - " + r);
   }
   if (report.yearChanges.length) {
     console.log(`\nYear repairs (${report.yearChanges.length}):`);

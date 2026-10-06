@@ -4,10 +4,13 @@
 //   - physical size from Wikidata: P2049 width / P2048 height (P2386 diameter for
 //     tondi), normalised to centimetres, implausible values rejected
 //   - 12 months of English Wikipedia pageviews (Wikimedia REST, user agents only)
+//   - the image file's byte size, and its current pixel size (imageinfo; a file
+//     can be re-uploaded at another resolution under the same URL)
 //   - optionally, out-of-lifetime years replaced by the Wikidata inception (P571)
 //     or cleared when Wikidata has nothing better.
-// Nothing is invented: every value written is copied from Wikidata / Wikimedia,
-// or left null when the sources have nothing usable.
+// Nothing is invented: every value written is copied from Wikidata / Wikimedia
+// (a multi-panel work recorded per panel is multiplied out), or left null when
+// the sources have nothing usable.
 
 import { fetchJson, sleep } from "./wiki";
 
@@ -23,6 +26,7 @@ export interface EnrichablePainting {
   heightCm?: number | null;
   pageviews?: number | null;
   qid?: string | null;
+  imageBytes?: number | null;
 }
 
 export interface EnrichableArtist {
@@ -53,7 +57,10 @@ export interface EnrichReport {
   withBothDims: number;
   withAnyDim: number;
   withPageviews: number;
+  withImageBytes: number;
   rejectedDims: string[];
+  /** Image files whose pixel size changed since the ingest (re-uploaded). */
+  imageChanges: string[];
   yearChanges: string[];
   /** Items whose creator (P170) is not the gallery artist (flagged; Wikidata P170 is sometimes wrong). */
   creatorMismatch: string[];
@@ -242,7 +249,7 @@ interface Claim {
   mainsnak: Snak;
   qualifiers?: Record<string, Snak[]>;
 }
-type Claims = Record<string, Claim[]>;
+export type Claims = Record<string, Claim[]>;
 
 async function getClaims(qids: string[]): Promise<Map<string, Claims>> {
   const out = new Map<string, Claims>();
@@ -320,7 +327,25 @@ interface Dimensions {
   note?: string;
 }
 
-function dimensions(claims: Claims, p: EnrichablePainting): Dimensions {
+// Multi-panel works: how many panels the item's class (P31) or title says it has.
+const PANELS_BY_CLASS: Record<string, number> = {
+  Q475476: 2, // diptych
+  Q79218: 3, // triptych
+};
+
+function panelCount(claims: Claims, title: string): number | null {
+  for (const c of bestStatements(claims, "P31")) {
+    const n = PANELS_BY_CLASS[c.mainsnak.datavalue?.value?.id];
+    if (n) return n;
+  }
+  if (/\bdiptych\b/i.test(title)) return 2;
+  if (/\btriptych\b/i.test(title)) return 3;
+  return null;
+}
+
+const round1 = (cm: number) => Math.round(cm * 10) / 10;
+
+export function dimensions(claims: Claims, p: EnrichablePainting): Dimensions {
   const w = quantityCm(claims, "P2049");
   const h = quantityCm(claims, "P2048");
   let widthCm = w.cm;
@@ -336,14 +361,42 @@ function dimensions(claims: Claims, p: EnrichablePainting): Dimensions {
     const photo = p.imageWidth / p.imageHeight;
     const off = (a: number) => Math.max(a / photo, photo / a);
     if (off(widthCm / heightCm) > ASPECT_TOLERANCE) {
+      const photoPx = `photo ${p.imageWidth}x${p.imageHeight}px`;
+      // Multi-panel works are sometimes recorded per panel: Wikidata gives
+      // Warhol's Marilyn Diptych as 205.4 x 144.8 cm, one of its two panels.
+      // When the class or title names the panel count and that many panels
+      // side by side (or stacked) match the photo, the work is the whole row.
+      const panels = panelCount(claims, p.title);
+      if (panels && off((panels * widthCm) / heightCm) <= SWAP_TOLERANCE) {
+        return {
+          widthCm: round1(panels * widthCm),
+          heightCm,
+          note: `${panels} panels side by side: Wikidata width ${widthCm} / height ${heightCm}cm is one panel, ${photoPx}`,
+        };
+      }
+      if (panels && off(widthCm / (panels * heightCm)) <= SWAP_TOLERANCE) {
+        return {
+          widthCm,
+          heightCm: round1(panels * heightCm),
+          note: `${panels} panels stacked: Wikidata width ${widthCm} / height ${heightCm}cm is one panel, ${photoPx}`,
+        };
+      }
       // A common Wikidata slip is entering "H x W" into width/height the wrong
       // way round. When the transposed pair matches the photograph closely,
-      // the photo settles the orientation; anything else is rejected.
+      // the photo settles the orientation; anything else is rejected. Near a
+      // sqrt(2) or sqrt(3) photo aspect a 2- or 3-panel reading fits as well;
+      // for a work not known to have panels the transpose is the likelier
+      // reading, but the report says so.
       if (off(heightCm / widthCm) <= SWAP_TOLERANCE) {
+        const alsoPanels = [2, 3].find(
+          (k) => off((k * widthCm) / heightCm) <= SWAP_TOLERANCE || off(widthCm / (k * heightCm)) <= SWAP_TOLERANCE
+        );
         return {
           widthCm: heightCm,
           heightCm: widthCm,
-          note: `transposed: Wikidata width ${widthCm} / height ${heightCm}cm, photo ${p.imageWidth}x${p.imageHeight}px`,
+          note:
+            `transposed: Wikidata width ${widthCm} / height ${heightCm}cm, ${photoPx}` +
+            (alsoPanels ? ` (also fits ${alsoPanels} panels of that size: check)` : ""),
         };
       }
       return {
@@ -417,6 +470,71 @@ async function pageviews(title: string, redirects: string[], win: { start: strin
 }
 
 
+// ---------- 0. image file: byte size + current pixel size ----------
+
+/** Wiki project ("commons", "en") and file name behind an upload.wikimedia.org URL (original or thumb). */
+export function wikiFileOf(imageUrl: string): { project: string; file: string } | null {
+  try {
+    const u = new URL(imageUrl);
+    if (u.hostname !== "upload.wikimedia.org") return null;
+    // /wikipedia/<project>/[thumb/]a/ab/File.jpg[/<N>px-File.jpg]
+    const m = /^\/wikipedia\/([^/]+)\/(?:thumb\/)?[0-9a-f]\/[0-9a-f]{2}\/([^/]+)/.exec(u.pathname);
+    return m ? { project: m[1], file: decodeURIComponent(m[2]).replace(/_/g, " ") } : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface ImageFileInfo {
+  bytes: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * imageinfo (latest version) for each file, keyed "project|file". Files that
+ * do not exist are left out; a failed request throws.
+ */
+export async function imageFileInfo(
+  files: { project: string; file: string }[]
+): Promise<Map<string, ImageFileInfo>> {
+  const out = new Map<string, ImageFileInfo>();
+  const byProject = new Map<string, Set<string>>();
+  for (const f of files) {
+    if (!byProject.has(f.project)) byProject.set(f.project, new Set());
+    byProject.get(f.project)!.add(f.file);
+  }
+  for (const [project, names] of byProject) {
+    const api = project === "commons" ? "https://commons.wikimedia.org/w/api.php" : `https://${project}.wikipedia.org/w/api.php`;
+    for (const batch of chunks([...names], 50)) {
+      const qs = new URLSearchParams({
+        action: "query",
+        format: "json",
+        formatversion: "2",
+        prop: "imageinfo",
+        iiprop: "size",
+        titles: batch.map((f) => `File:${f}`).join("|"),
+      });
+      const data = await actionApi(() =>
+        fetchJson<{
+          query?: {
+            normalized?: { from: string; to: string }[];
+            pages?: { title: string; imageinfo?: { size: number; width: number; height: number }[] }[];
+          };
+        }>(`${api}?${qs}`)
+      );
+      if (!data?.query) throw new Error(`imageinfo (${project}) returned nothing`);
+      const norm = new Map((data.query.normalized ?? []).map((n) => [n.from, n.to]));
+      const pages = new Map((data.query.pages ?? []).map((p) => [p.title, p]));
+      for (const f of batch) {
+        const ii = pages.get(norm.get(`File:${f}`) ?? `File:${f}`)?.imageinfo?.[0];
+        if (ii?.size) out.set(`${project}|${f}`, { bytes: ii.size, width: ii.width, height: ii.height });
+      }
+    }
+  }
+  return out;
+}
+
 async function getLabels(qids: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   for (const batch of chunks(qids, 50)) {
@@ -442,9 +560,40 @@ function creators(claims: Claims): string[] {
 }
 
 /**
- * Fill widthCm / heightCm / pageviews / qid on every painting, in place.
- * A stage that fails (network) leaves the previous values untouched, so a
- * partial run never wipes good data; "looked it up, nothing there" writes null.
+ * Image file of every painting, in place: imageBytes from imageinfo, and
+ * imageWidth / imageHeight refreshed when the file was re-uploaded at another
+ * size (each change listed in report.imageChanges). On a failed request the
+ * previous values stay (reported in report.failures).
+ */
+export async function enrichImageFiles(
+  rows: { artistSlug: string; p: EnrichablePainting }[],
+  report: Pick<EnrichReport, "imageChanges" | "failures">
+): Promise<void> {
+  const files = rows.map((r) => ({ r, f: wikiFileOf(r.p.imageUrl) }));
+  let info: Map<string, ImageFileInfo>;
+  try {
+    info = await imageFileInfo(files.flatMap((x) => (x.f ? [x.f] : [])));
+  } catch (err) {
+    report.failures.push(`imageinfo: ${err}`);
+    return;
+  }
+  for (const { r, f } of files) {
+    const ii = f ? info.get(`${f.project}|${f.file}`) : undefined;
+    r.p.imageBytes = ii?.bytes ?? null;
+    if (ii && ii.width > 0 && ii.height > 0 && (ii.width !== r.p.imageWidth || ii.height !== r.p.imageHeight)) {
+      report.imageChanges.push(
+        `${r.artistSlug}/${r.p.slug}: ${r.p.imageWidth}x${r.p.imageHeight} -> ${ii.width}x${ii.height}px (${f!.file})`
+      );
+      r.p.imageWidth = ii.width;
+      r.p.imageHeight = ii.height;
+    }
+  }
+}
+
+/**
+ * Fill widthCm / heightCm / pageviews / qid / imageBytes on every painting, in
+ * place. A stage that fails (network) leaves the previous values untouched, so
+ * a partial run never wipes good data; "looked it up, nothing there" writes null.
  */
 export async function enrichArtists(
   artists: EnrichableArtist[],
@@ -465,7 +614,9 @@ export async function enrichArtists(
     withBothDims: 0,
     withAnyDim: 0,
     withPageviews: 0,
+    withImageBytes: 0,
     rejectedDims: [],
+    imageChanges: [],
     yearChanges: [],
     creatorMismatch: [],
     removed: [],
@@ -477,6 +628,13 @@ export async function enrichArtists(
   for (const a of artists)
     for (const p of a.paintings) all.push({ artist: a, p, title: titleFromWikipediaUrl(p.wikipediaUrl) });
   report.paintings = all.length;
+
+  // 0. image files first: the photo's aspect checks the Wikidata size below
+  log(`fetching image file info for ${all.length} paintings (imageinfo, 50/request)`);
+  await enrichImageFiles(
+    all.map((x) => ({ artistSlug: x.artist.slug, p: x.p })),
+    report
+  );
 
   // 1. article -> canonical title + item
   const titles = [...new Set(all.map((x) => x.title).filter((t): t is string => !!t))];
@@ -639,7 +797,7 @@ export async function enrichArtists(
   // Stable key order for the new fields (appended after the ingest fields).
   for (const x of all) {
     const p = x.p as unknown as Record<string, unknown>;
-    for (const k of ["widthCm", "heightCm", "pageviews", "qid"]) {
+    for (const k of ["widthCm", "heightCm", "pageviews", "qid", "imageBytes"]) {
       const v = p[k] === undefined ? null : p[k];
       delete p[k];
       p[k] = v;
@@ -652,6 +810,7 @@ export async function enrichArtists(
     if (x.p.widthCm != null && x.p.heightCm != null) report.withBothDims++;
     if (x.p.widthCm != null || x.p.heightCm != null) report.withAnyDim++;
     if (x.p.pageviews != null) report.withPageviews++;
+    if (x.p.imageBytes != null) report.withImageBytes++;
   }
   return report;
 }
