@@ -1,16 +1,13 @@
-// Record a video walkthrough of the app: the timeline (Gallery Wall, Star Map,
-// Explore filter, artist card) and three galleries from different eras.
-// Frames come from the DevTools screencast with their real timestamps and are
-// encoded to constant-30fps H.264.
+// Record a one-minute tour: the Gallery Wall and Star Map, Van Gogh's
+// gallery (Debussy) and Fra Angelico's sacred hall (Salve Regina). Frames come
+// from the DevTools screencast with their real timestamps and are encoded to
+// constant-30fps H.264, capped at a minute.
 //
 //   node scripts/record-demo.mjs [baseUrl] [out.mp4]
 //
-// Needs an ffmpeg with libx264: set FFMPEG=/path/to/ffmpeg (or have it on PATH).
-// Optional soundtrack: set DEMO_AUDIO_DIR to a folder with <era>.mp3 files
-// (old-master.mp3, impressionist.mp3, postwar.mp3) — the first track of each
-// era's playlist in src/components/museum/music.ts. Each is mixed in from the
-// moment that gallery's doors open, as the app itself does (the screencast
-// can't capture page audio).
+// Needs an ffmpeg with libx264 and AAC: set FFMPEG=/path/to/ffmpeg (or have
+// it on PATH). The screencast can't capture page audio, so each gallery's
+// first track is mixed in from public/audio (npm run fetch-music).
 // Run against a production build so the dev overlay isn't in the shot.
 import { chromium } from "playwright";
 import { spawnSync } from "node:child_process";
@@ -21,7 +18,13 @@ import path from "node:path";
 const base = process.argv[2] ?? "http://localhost:3000";
 const out = path.resolve(process.argv[3] ?? "demo/museum-demo.mp4");
 const ffmpeg = process.env.FFMPEG ?? "ffmpeg";
-const audioDir = process.env.DEMO_AUDIO_DIR ?? "";
+// Soundtrack: each gallery's first track, mixed in from the local mirror in
+// public/audio from the moment its doors open (as the app plays it).
+const SOUNDTRACK = {
+  impressionist: "public/audio/clair-de-lune-claude-debussy-suite-bergamasque.m4a",
+  sacred: "public/audio/petits-chanteurs-de-passy-salve-regina-de-hermann-contract.m4a",
+};
+const MAX_SECONDS = 60;
 const W = 1600;
 const H = 900;
 
@@ -190,85 +193,63 @@ async function gallery(slug, era, script) {
   seg.end = now();
 }
 
-// ---- the walkthrough ----
+// ---- the walkthrough (about a minute) ----
 await page.goto(base, { waitUntil: "networkidle" });
 await wait(1500);
 await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: W, maxHeight: H, everyNthFrame: 1 });
 recording = true;
 const t0 = now();
 await page.mouse.move(mx, my);
-await wait(2600);
-
-// 1. Gallery Wall: fly into the Baroque, read the wall text and lifelines
-await explore("Periods", "Baroque");
-await wait(3800);
-await moveTo(W * 0.55, H * 0.55, 600);
-await drag(-240, 0, 1100);
-await wait(1800);
-
-// 2. Star Map constellations
-await clickOn(page.locator(".tl-switch", { hasText: "Star Map" }).first());
 await wait(3200);
-await drag(300, 0, 1200);
-await wait(1600);
 
-// 3. Explore: fly to Impressionism
-await explore("Periods", "Impressionism");
-await wait(3400);
+// 1. Star Map: the periods as constellations
+await clickOn(page.locator(".tl-switch", { hasText: "Star Map" }).first());
+await wait(2800);
+await moveTo(W * 0.55, H * 0.5, 500);
+await drag(-280, 0, 1200);
+await wait(1400);
 
-// 4. Gallery Wall → Caravaggio's placard → enter
+// 2. Back on the Gallery Wall: find Van Gogh, open his placard, step in
 await clickOn(page.locator(".tl-switch", { hasText: "Gallery Wall" }).first());
-await wait(1500);
-await explore("Artists", "Caravaggio");
+await wait(1200);
+await explore("Artists", "Vincent van Gogh");
+await wait(2200);
+const node = page.locator(".artist-node", { hasText: "Vincent van Gogh" }).first();
+if (!(await clickOn(node, 700))) await page.goto(`${base}/museum/vincent-van-gogh`);
 await wait(2600);
-const node = page.locator(".artist-node", { hasText: "Caravaggio" }).first();
-if (!(await clickOn(node, 700))) await page.goto(`${base}/museum/caravaggio`);
-await wait(3400);
-await clickOn(page.locator(".card-enter").first(), 800);
+await clickOn(page.locator(".card-enter").first(), 700);
 
-// 5. Caravaggio — the Baroque hall
-await gallery("caravaggio", "old-master", async () => {
-  await walk("KeyW", 1700);
-  await look(0, -240, 1300); // up at the laylight and the track fixtures
-  await wait(900);
-  await look(-420, 120, 1500);
-  await wait(600);
-  await look(0, 120, 700);
-  await look(820, 0, 2600);
+// 3. Van Gogh: a Post-Impressionist suite, one work up close
+await gallery("vincent-van-gogh", "impressionist", async () => {
+  await walk("KeyW", 1500);
+  await look(-380, 0, 1500);
   await wait(500);
-  await walk("KeyW", 1200);
-  if (await aimAtPainting(-1)) {
-    await wait(500);
+  await look(760, 0, 2300);
+  await wait(400);
+  if (await aimAtPainting(-1, 700)) {
+    await wait(300);
     await page.mouse.click(W / 2, H / 2);
-    await wait(3600);
-    for (let i = 0; i < 6; i++) {
+    await wait(2800);
+    for (let i = 0; i < 5; i++) {
       await page.mouse.wheel(0, -120);
-      await wait(150);
+      await wait(140);
     }
-    await wait(2400);
+    await wait(1600);
     await page.keyboard.press("Escape");
-    await wait(2000);
+    await wait(1200);
   }
 });
 
-// 6. Monet — an Impressionist room at real scale
-await page.goto(`${base}/museum/claude-monet`);
-await gallery("claude-monet", "impressionist", async () => {
-  await walk("KeyW", 2200);
-  await look(-500, 0, 1800);
-  await wait(800);
-  await look(1000, 0, 3000);
-  await wait(1000);
-});
-
-// 7. Rothko — the post-war white cube
-await page.goto(`${base}/museum/mark-rothko`);
-await gallery("mark-rothko", "postwar", async () => {
-  await walk("KeyW", 2000);
-  await look(-520, 0, 2000);
-  await wait(900);
-  await look(1040, 0, 3200);
-  await wait(1600);
+// 4. Fra Angelico: the gold-ground sacred hall, with chant
+await page.goto(`${base}/museum/fra-angelico`);
+await gallery("fra-angelico", "sacred", async () => {
+  await walk("KeyW", 1600);
+  await look(0, -200, 1200);
+  await wait(500);
+  await look(-420, 200, 1600);
+  await wait(400);
+  await look(840, 0, 2800);
+  await wait(1400);
 });
 
 recording = false;
@@ -289,14 +270,16 @@ for (let i = 0; i < frames.length; i++) {
 lines.push(`file '${frames[frames.length - 1].file.replace(/\\/g, "/")}'`);
 const list = path.join(frameDir, "frames.txt");
 fs.writeFileSync(list, lines.join("\n"));
-const total = frames[frames.length - 1].t - first;
+const total = Math.min(MAX_SECONDS, frames[frames.length - 1].t - first);
 
 const args = ["-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list];
 const segs = marks
-  .map((m) => ({ ...m, file: audioDir && path.join(audioDir, `${m.era}.mp3`) }))
+  .map((m) => ({ ...m, file: SOUNDTRACK[m.era] && path.resolve(SOUNDTRACK[m.era]) }))
   .filter((m) => m.file && fs.existsSync(m.file) && m.end > m.start);
 segs.forEach((s) => args.push("-i", s.file));
-const filters = [`[0:v]fps=30,scale=${W}:${H}:flags=lanczos,format=yuv420p[v]`];
+const filters = [
+  `[0:v]fps=30,scale=${W}:${H}:flags=lanczos,fade=t=in:d=0.6,fade=t=out:st=${(total - 1.2).toFixed(2)}:d=1.2,format=yuv420p[v]`,
+];
 segs.forEach((s, i) => {
   const at = Math.max(0, s.start - first);
   const len = s.end - s.start;
@@ -307,7 +290,7 @@ segs.forEach((s, i) => {
   );
 });
 if (segs.length) {
-  filters.push(`${segs.map((_, i) => `[a${i}]`).join("")}amix=inputs=${segs.length}:normalize=0,apad,atrim=0:${total.toFixed(2)}[a]`);
+  filters.push(`${segs.map((_, i) => `[a${i}]`).join("")}amix=inputs=${segs.length}:normalize=0,apad,atrim=0:${total.toFixed(2)},afade=t=out:st=${(total - 1.2).toFixed(2)}:d=1.2[a]`);
 }
 args.push("-filter_complex", filters.join(";"), "-map", "[v]");
 if (segs.length) args.push("-map", "[a]", "-c:a", "aac", "-b:a", "160k");

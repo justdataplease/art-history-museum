@@ -86,6 +86,7 @@ async function repair(
   for (const [k, v] of m) meta.set(k, v);
   add("images", problems.filter((p) => p.startsWith("image: ")).map((p) => p.slice(7)));
   add("imagesToCheck", problems.filter((p) => p.startsWith("image check: ")).map((p) => p.slice(13)));
+  add("nonPaintingImages", problems.filter((p) => p.startsWith("image filter: ")).map((p) => p.slice(14)));
   add("copyrightLabels", problems.filter((p) => p.startsWith("©: ")).map((p) => p.slice(3)));
   add("commonsStories", problems.filter((p) => p.startsWith("commons story: ")).map((p) => p.slice(15)));
   add("pagedImages", problems.filter((p) => p.startsWith("paged image: ")).map((p) => p.slice(13)));

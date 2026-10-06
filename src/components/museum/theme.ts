@@ -3,6 +3,11 @@
 // saturated silk-damask walls under a laylight, the 19th century deep greens
 // and greys, early modernism off-white rooms with plain wood frames, and
 // post-war work the white cube with unframed canvases on polished concrete.
+// Beyond Europe: East Asian painting in dark-wood rooms with paper-toned
+// walls and silk mounts (the Met's Asian Art galleries, the Tokyo National
+// Museum), Japanese prints in a dim print room, matted and thinly framed,
+// and Indian and Persian court miniatures on jewel-toned walls, small works
+// in wide mats with thin gilt slips under focused light.
 
 export type EraKey =
   | "sacred"
@@ -14,7 +19,10 @@ export type EraKey =
   | "impressionist"
   | "secession"
   | "early-modern"
-  | "postwar";
+  | "postwar"
+  | "east-asian"
+  | "print-room"
+  | "court-miniature";
 
 /**
  * tabernacle — wide flat gilded frame with a raised outer bead (pre-1500)
@@ -22,8 +30,14 @@ export type EraKey =
  * gilt-simple — slimmer 19th-century gilt moulding
  * wood        — plain hardwood moulding, no gilding
  * floater     — no frame: canvas edge visible with a dark shadow-gap tray
+ * mount       — East Asian mounting: a silk border round the work, edged
+ *               with a thin dark-wood strip (hanging scrolls, screens)
+ * print       — a print room's: a wide off-white mat with a bevelled window
+ *               in a thin black-lacquer frame
+ * miniature   — a thin gilt slip at the window, a wide cream mat and a
+ *               slim gilt outer moulding (court miniatures)
  */
-export type FrameStyle = "tabernacle" | "baroque" | "gilt-simple" | "wood" | "floater";
+export type FrameStyle = "tabernacle" | "baroque" | "gilt-simple" | "wood" | "floater" | "mount" | "print" | "miniature";
 
 export type FloorKind = "oak-dark" | "oak-light" | "concrete";
 
@@ -42,6 +56,17 @@ export type CeilingKind = "laylight" | "lightbox";
 export type WallFinish = "plaster" | "damask" | "paint";
 
 export type BenchStyle = "leather" | "modern-leather" | "oak-block";
+
+/**
+ * What kind of object the room mostly hangs, for sizing works whose
+ * dimensions are unknown and for how densely a room is hung:
+ * painting  — easel paintings (the default heuristics)
+ * scroll    — hanging scrolls, handscrolls and screens on silk or paper
+ * print     — woodblock prints (an oban sheet is about 26 x 38 cm), hung close
+ * miniature — album and manuscript paintings (about 20 x 30 cm)
+ * icon      — devotional panels (Greek icons: mostly 30 x 40 to 80 x 100 cm)
+ */
+export type WorkScale = "painting" | "scroll" | "print" | "miniature" | "icon";
 
 /** Architectural details of the room (owned by Room.tsx). */
 export interface RoomStyle {
@@ -67,6 +92,8 @@ export interface RoomStyle {
   plankWidth: number;
   /** Track-mounted wall-washer level (modern rooms; 0 = the laylight does it). */
   wallWash: number;
+  /** Lightbox diffuser half-width (default 0.75 m); a cabinet has a slim slot. */
+  diffuserHalfWidth?: number;
 }
 
 export interface GalleryTheme {
@@ -84,7 +111,11 @@ export interface GalleryTheme {
     roughness: number;
     /** Frame moulding width in metres (0 for floater: tray reveal only). */
     width: number;
+    /** Mat / silk mount colour (mount, print and miniature styles). */
+    mat?: string;
   };
+  /** The kind of work the room hangs (sizes and hanging density). */
+  works: WorkScale;
   /** Gallery lighting: spot colour temperature as sRGB hex. */
   light: { spot: string; ambient: string };
   room: RoomStyle;
@@ -95,6 +126,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // trim, as in the National Gallery's Sainsbury Wing.
   sacred: {
     era: "sacred",
+    works: "painting",
     wall: { color: "#5d6a70", roughness: 0.95 },
     trim: "#4d504f",
     ceiling: "#e2ddd2",
@@ -121,6 +153,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // the National Gallery's Rubens and Caravaggio rooms.
   "old-master": {
     era: "old-master",
+    works: "painting",
     wall: { color: "#6b2a26", roughness: 0.93 },
     trim: "#2e1d16",
     ceiling: "#e8dfcf",
@@ -147,6 +180,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // ebonised mouldings Rembrandt's and Vermeer's contemporaries framed in.
   northern: {
     era: "northern",
+    works: "painting",
     wall: { color: "#3e4951", roughness: 0.94 },
     trim: "#252a2d",
     ceiling: "#e4e0d8",
@@ -172,6 +206,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // 18th century: sage-green silk and cream boiserie trim (Wallace Collection).
   eighteenth: {
     era: "eighteenth",
+    works: "painting",
     wall: { color: "#7f8f7a", roughness: 0.92 },
     trim: "#e4ddcd",
     ceiling: "#f1ebdf",
@@ -197,6 +232,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // 19th century: deep green distemper (Alte Nationalgalerie's Friedrich room).
   nineteenth: {
     era: "nineteenth",
+    works: "painting",
     wall: { color: "#34503f", roughness: 0.93 },
     trim: "#1f2420",
     ceiling: "#e3ddd0",
@@ -223,6 +259,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // (Leighton House) the Pre-Raphaelites and Salon painters were hung in.
   victorian: {
     era: "victorian",
+    works: "painting",
     wall: { color: "#26474f", roughness: 0.92 },
     trim: "#1c2224",
     ceiling: "#e6e0d3",
@@ -248,6 +285,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // Impressionists: Orsay-style warm grey under a glazed skylight, pale oak.
   impressionist: {
     era: "impressionist",
+    works: "painting",
     wall: { color: "#8c8a85", roughness: 0.92 },
     trim: "#3b3936",
     ceiling: "#ece8df",
@@ -274,6 +312,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // Klimt room), flat gilt frames, gilded bands for trim.
   secession: {
     era: "secession",
+    works: "painting",
     wall: { color: "#2f2d2b", roughness: 0.9 },
     trim: "#a8864a",
     ceiling: "#ecebe7",
@@ -299,6 +338,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // Early modernism: off-white walls, pale oak boards, flat ceiling (MoMA, Whitney).
   "early-modern": {
     era: "early-modern",
+    works: "painting",
     wall: { color: "#e8e4dc", roughness: 0.9 },
     trim: "#cfc8bb",
     ceiling: "#f2f0eb",
@@ -324,6 +364,7 @@ const THEMES: Record<EraKey, GalleryTheme> = {
   // Post-war: the white cube — polished concrete, unframed canvases.
   postwar: {
     era: "postwar",
+    works: "painting",
     wall: { color: "#f2f1ee", roughness: 0.9 },
     trim: "#e6e4df",
     ceiling: "#f5f5f3",
@@ -344,6 +385,95 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       floorRoughness: 0.28,
       plankWidth: 3.0,
       wallWash: 0.28,
+    },
+  },
+  // East Asian painting: warm dark wood, paper-toned plaster, low warm
+  // light, no gilding (the Met's Chinese and Japanese galleries, the Tokyo
+  // National Museum). Works hang in silk mounts edged with thin dark wood.
+  "east-asian": {
+    era: "east-asian",
+    works: "scroll",
+    wall: { color: "#d2cab9", roughness: 0.95 },
+    trim: "#3a2a1e",
+    ceiling: "#d8cebd",
+    floor: { kind: "oak-dark", tint: "#5a4130" },
+    frame: { style: "mount", color: "#2a1d15", metalness: 0, roughness: 0.5, width: 0.07, mat: "#c9bc9c" },
+    light: { spot: "#ffdbb4", ambient: "#e6dccb" },
+    room: {
+      ceiling: "lightbox",
+      wallFinish: "plaster",
+      classical: false,
+      pictureRail: false,
+      daylight: "#f6e9d6",
+      daylightLevel: 1.0,
+      track: "#2a2420",
+      bench: "oak-block",
+      benchSeat: "#4a3424",
+      benchFrame: "#3a281b",
+      floorRoughness: 0.38,
+      plankWidth: 0.16,
+      wallWash: 0.12,
+    },
+  },
+  // Ukiyo-e: a print room (the British Museum's, the Art Institute of
+  // Chicago's): light-sensitive paper under low light, warm grey walls, the
+  // prints matted in thin black-lacquer frames and hung close together.
+  "print-room": {
+    era: "print-room",
+    works: "print",
+    wall: { color: "#aaa59b", roughness: 0.93 },
+    trim: "#2e2b27",
+    ceiling: "#e4e0d8",
+    floor: { kind: "oak-light", tint: "#a48a68" },
+    frame: { style: "print", color: "#141210", metalness: 0, roughness: 0.32, width: 0.06, mat: "#f1efe9" },
+    light: { spot: "#ffdcb4", ambient: "#e9e4da" },
+    room: {
+      ceiling: "lightbox",
+      wallFinish: "paint",
+      classical: false,
+      pictureRail: false,
+      daylight: "#f2eee6",
+      daylightLevel: 0.85,
+      track: "#232323",
+      bench: "modern-leather",
+      benchSeat: "#24211e",
+      benchFrame: "#6b6660",
+      floorRoughness: 0.4,
+      plankWidth: 0.2,
+      wallWash: 0.06,
+      diffuserHalfWidth: 0.3,
+    },
+  },
+  // Indian and Persian court painting: jewel-toned walls (the V&A's and the
+  // Met's Islamic and South Asian galleries, the Chester Beatty), small works
+  // in wide cream mats with thin gilt slips, in a low cabinet (layout.ts):
+  // a dim ceiling with a slim diffuser, focused spots, the room receding. Deep teal by default; a period can
+  // set its own wall (lapis for Persian miniatures).
+  "court-miniature": {
+    era: "court-miniature",
+    works: "miniature",
+    wall: { color: "#2a6365", roughness: 0.94 },
+    trim: "#1a2223",
+    ceiling: "#5a5650",
+    floor: { kind: "oak-dark", tint: "#5e4632" },
+    frame: { style: "miniature", color: "#d6ad5c", metalness: 1, roughness: 0.3, width: 0.07, mat: "#f4efe4" },
+    light: { spot: "#ffd9aa", ambient: "#e6dcc8" },
+    room: {
+      ceiling: "lightbox",
+      wallFinish: "plaster",
+      classical: true,
+      pictureRail: false,
+      daylight: "#f5ece0",
+      daylightLevel: 0.85,
+      track: "#1d1c1a",
+      bench: "leather",
+      benchSeat: "#3a2620",
+      benchFrame: "#241a14",
+      floorRoughness: 0.34,
+      plankWidth: 0.17,
+      wallWash: 0.07,
+      // a cabinet: a slim, dim slot; the works glow in their spots
+      diffuserHalfWidth: 0.16,
     },
   },
 };
@@ -372,11 +502,49 @@ const ERA_BY_PERIOD: Record<string, EraKey> = {
   "abstract-art": "early-modern",
   surrealism: "early-modern",
   "american-modernism": "early-modern",
+  "mexican-muralism": "early-modern",
   "abstract-expressionism": "postwar",
   "pop-art": "postwar",
   contemporary: "postwar",
+  "group-of-seven": "early-modern",
+  "chinese-painting": "east-asian",
+  "japanese-painting": "east-asian",
+  "ukiyo-e": "print-room",
+  "indian-painting": "court-miniature",
+  "persian-miniature": "court-miniature",
+  // Greek icons: tempera and gold on panel, as the early Italian rooms
+  "cretan-school": "sacred",
+  // colonial Baroque: carved gilt on crimson, as Madrid and Lima hang it
+  "cusco-school": "old-master",
 };
 
+/** A period's own touches on its era's room (the same room otherwise). */
+const PERIOD_TWEAKS: Record<string, (t: GalleryTheme) => GalleryTheme> = {
+  // Persian miniatures: lapis walls, a paler mat
+  "persian-miniature": (t) => ({
+    ...t,
+    wall: { ...t.wall, color: "#2e4577" },
+    trim: "#161d30",
+    frame: { ...t.frame, mat: "#f5f0e6" },
+  }),
+  // Cretan icons: the early Italian room, hung as panels of icon size
+  "cretan-school": (t) => ({ ...t, works: "icon" }),
+  // Japanese painting: a cooler paper tone and a celadon-grey mount silk
+  "japanese-painting": (t) => ({
+    ...t,
+    wall: { ...t.wall, color: "#d5d0c2" },
+    frame: { ...t.frame, mat: "#b8b49c" },
+  }),
+};
+
+const byPeriod = new Map<string, GalleryTheme>();
+
+/** The gallery theme of a period (one stable object per period). */
 export function galleryTheme(periodSlug: string): GalleryTheme {
-  return THEMES[ERA_BY_PERIOD[periodSlug] ?? "nineteenth"];
+  const hit = byPeriod.get(periodSlug);
+  if (hit) return hit;
+  const base = THEMES[ERA_BY_PERIOD[periodSlug] ?? "nineteenth"];
+  const t = PERIOD_TWEAKS[periodSlug]?.(base) ?? base;
+  byPeriod.set(periodSlug, t);
+  return t;
 }

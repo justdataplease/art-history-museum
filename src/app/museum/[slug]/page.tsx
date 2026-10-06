@@ -6,6 +6,7 @@ import { getArtist, getArtistSlugs } from "@/lib/data";
 import { FLAGSHIP_THUMB_PX, paintingTextureUrl, wallTexturePx } from "@/lib/img";
 import { buildLayout, entryPreloads } from "@/components/museum/layout";
 import { MuseumApp } from "@/components/museum/MuseumApp";
+import { galleryTheme } from "@/components/museum/theme";
 
 // Every gallery is prerendered at build time (from the JSON cache when the
 // database is unavailable) and regenerated in the background at most hourly.
@@ -55,7 +56,9 @@ export default async function MuseumPage({ params }: Props) {
   // doors, with the exact URLs the gallery will request. PaintingExhibit
   // loads them with fetch(url, { mode: "cors", credentials: "same-origin" }),
   // which a crossorigin="anonymous" as="fetch" preload matches.
-  const layout = buildLayout(artist.paintings);
+  // (the same layout the gallery builds: the period's room decides how
+  // works of unknown size are hung)
+  const layout = buildLayout(artist.paintings, { works: galleryTheme(artist.periodSlug).works });
   const bySlug = new Map(artist.paintings.map((p) => [p.slug, p]));
   entryPreloads(layout, 2).forEach(({ slug: s, thumb }, i) => {
     const p = bySlug.get(s);

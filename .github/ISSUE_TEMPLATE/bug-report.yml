@@ -6,7 +6,7 @@ body:
     id: url
     attributes:
       label: Page
-      placeholder: https://the-virtual-art-gallery.vercel.app/museum/caravaggio
+      placeholder: https://art-history.artfrompixels.com/museum/caravaggio
     validations:
       required: true
   - type: textarea

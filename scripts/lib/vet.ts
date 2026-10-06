@@ -56,7 +56,6 @@ export const ARTWORK_CLASSES = new Set([
   "Q12043905", // pastel artwork
   "Q5299612", // double-sided painting
   "Q18573970", // group of paintings
-  "Q1404472", // group of paintings
   "Q114054440", // pair of paintings
   "Q591644", // pendant
   "Q110315192", // series of similar 2-D artworks
@@ -106,6 +105,31 @@ export const ARTWORK_CLASSES = new Set([
   "Q17152495", // prime version
   "Q2910675", // unfinished creative work
   "Q1406161", // artistic theme (a composition known in several versions)
+  "Q282129", // miniature
+  "Q678664", // Persian miniature
+  "Q268639", // Ottoman miniature
+  "Q8362", // manuscript illumination
+  "Q7282803", // Ragamala painting
+  "Q4307822", // muraqqa
+  "Q28104579", // album leaf
+  "Q916651", // thangka
+  "Q10827799", // silk painting
+  "Q19969434", // scroll painting
+  "Q5647631", // handscroll
+  "Q1190781", // emakimono
+  "Q3125472", // makimono
+  "Q2188827", // hanging scroll
+  "Q277583", // kakemono
+  "Q50488927", // fan painting
+  "Q741226", // byōbu
+  "Q1144689", // folding screen
+  "Q126456658", // fusuma-e
+  "Q103929010", // shōhekiga
+  "Q28913685", // woodblock print
+  "Q18219090", // woodcut print
+  "Q1683337", // nishiki-e
+  "Q19960510", // series of prints
+  "Q1396354", // color woodcut
 ]);
 
 /** Classes that are never an artwork: people's biographies are judged by their lead instead. */
@@ -236,7 +260,9 @@ export function notAnArtwork(c: ArticleCheck): string | null {
 
 // ---------- year ----------
 
-const YEAR_RE = /\b(1[2-9]\d{2}|20[0-2]\d)\b(?!s)/g;
+// 900–2029: Song-dynasty painters date from the 10th century (the artist's
+// life window filters out stray numbers)
+const YEAR_RE = /\b(9\d{2}|1\d{3}|20[0-2]\d)\b(?!s)/g;
 // years that date something other than the making of the work
 const NOT_MAKING =
   /(acquired|purchased|bought|donated|bequeathed|sold|auction|stolen|theft|restored|restoration|rediscovered|discovered|cleaned|loaned|lent|transferred|since|until|reopened|opened|founded|born|died|death|exhibited at the|catalogued)\W+(?:\w+\W+){0,4}$/i;
@@ -389,7 +415,7 @@ const mentions = (text: string, words: string[]) => {
 // A file name / object name that says the photo is of a place or of people,
 // not of the work itself.
 const SCENE_WORDS =
-  /\b(regarding|with observer|visitors?|installation view|exhibition|exposition|expo|museum interior|gallery interior|fa[cç]ade|postcard|street view)\b/i;
+  /\b(regarding|with observer|visitors?|installation view|exhibition|exposition|expo|museum interior|gallery interior|interno|fa[cç]ade|postcard|street view)\b/i;
 const SCENE_CATEGORY = /^(Interior of |Interiors of |Photographs by |Images from Geograph|.* photographs taken on \d)/i;
 
 export interface ImageCheck {
@@ -460,6 +486,8 @@ export const IMAGE_REVIEW: Record<string, "ok" | "wrong" | { replace: string }> 
     replace: "Robert Delaunay - Eiffel Tower - 1911 - Solomon R. Guggenheim Museum.jpg",
   }, // was a photo of the tower
   "henri-matisse/the-dance-ii": { replace: "Matisse - Carra, 467.jpg" }, // was a room with part of the mural
+  "benozzo-gozzoli/stories-from-the-life-of-st-augustine": "wrong", // the church interior
+  "raoul-dufy/la-fee-electricite": "wrong", // the gallery room, with a visitor
   // checked: the image is the work
   "marcel-duchamp/the-bride": "ok",
   "david-hockney/portrait-of-sir-david-webster": "ok",

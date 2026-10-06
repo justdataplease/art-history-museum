@@ -27,9 +27,22 @@ const MAX_HALF_ANGLE = THREE.MathUtils.degToRad(52);
  * a softer, slightly dimmer beam keeps the pool from reading as a hard disc.
  */
 export function spotTune(era: GalleryTheme["era"]): { level: number; penumbra: number } {
-  return era === "early-modern" || era === "postwar"
-    ? { level: 0.85, penumbra: 0.45 }
-    : { level: 1, penumbra: SPOT_PENUMBRA };
+  switch (era) {
+    case "early-modern":
+    case "postwar":
+      return { level: 0.85, penumbra: 0.45 };
+    // paper-toned walls, low warm light for ink on silk
+    case "east-asian":
+      return { level: 0.7, penumbra: 0.5 };
+    // a print room is kept dim (works on paper fade)
+    case "print-room":
+      return { level: 0.75, penumbra: 0.45 };
+    // miniatures glow in tight, slightly brighter pools in a dim cabinet
+    case "court-miniature":
+      return { level: 1.1, penumbra: 0.32 };
+    default:
+      return { level: 1, penumbra: SPOT_PENUMBRA };
+  }
 }
 
 export interface ExhibitLights {
@@ -51,6 +64,7 @@ export function roomDims(layout: GalleryLayout, pl: Placement): HallDims {
     wallHeight: layout.wallHeight,
     roomZ0: screen ? screen.z + screen.thickness / 2 : room?.z0,
     roomZ1: room?.z1,
+    trackInset: layout.trackInset,
   };
 }
 

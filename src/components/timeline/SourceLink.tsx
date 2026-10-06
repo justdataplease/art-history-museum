@@ -1,5 +1,5 @@
 /** The project's public repository. */
-export const SOURCE_URL = "https://github.com/justdataplease/museum";
+export const SOURCE_URL = "https://github.com/justdataplease/art-history-museum";
 
 const LABEL = "View the source code on GitHub";
 

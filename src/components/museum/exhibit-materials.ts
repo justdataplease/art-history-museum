@@ -266,19 +266,32 @@ function woodGrainTexture(): THREE.DataTexture {
 // ------------------------------------------------------- frame materials
 
 /**
- * Per-vertex extras from frameGeometry: aFrame.x scales roughness (burnished
- * highs, matte recesses), aFrame.y gates the carved normal map to its bands.
+ * Per-vertex frame attributes (aFrame, from buildFrame): x scales roughness
+ * (burnished highs, matte recesses), y gates the carved normal map to its
+ * bands, z flags the mat. Mat vertices (a print's or miniature's mat, an East
+ * Asian silk mount) are drawn in `mat` (linear), matte and non-metallic,
+ * whatever the moulding's own material.
  */
-function patchFrameShader(m: THREE.MeshStandardMaterial, key: string) {
+function patchFrameShader(m: THREE.MeshStandardMaterial, key: string, mat: THREE.Color | null = null) {
+  const uMat = { value: mat ?? new THREE.Color(0, 0, 0) };
   m.onBeforeCompile = (sh) => {
+    sh.uniforms.uMat = uMat;
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nattribute vec2 aFrame;\nvarying vec2 vFrame;")
+      .replace("#include <common>", "#include <common>\nattribute vec3 aFrame;\nvarying vec3 vFrame;")
       .replace("#include <color_vertex>", "#include <color_vertex>\n\tvFrame = aFrame;");
     sh.fragmentShader = sh.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec2 vFrame;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vFrame;\nuniform vec3 uMat;")
+      .replace(
+        "#include <color_fragment>",
+        "#include <color_fragment>\n\tdiffuseColor.rgb = mix( diffuseColor.rgb, uMat * vColor.rgb, vFrame.z );",
+      )
+      .replace(
+        "#include <metalnessmap_fragment>",
+        "#include <metalnessmap_fragment>\n\tmetalnessFactor *= 1.0 - vFrame.z;",
+      )
       .replace(
         "#include <roughnessmap_fragment>",
-        "#include <roughnessmap_fragment>\n\troughnessFactor = clamp( roughnessFactor * vFrame.x, 0.06, 1.0 );",
+        "#include <roughnessmap_fragment>\n\troughnessFactor = mix( clamp( roughnessFactor * vFrame.x, 0.06, 1.0 ), 0.9, vFrame.z );",
       )
       .replace(
         "#include <normal_fragment_maps>",
@@ -303,15 +316,18 @@ export const GILT_ENV_INTENSITY = 1.0;
 const frameMats = new Map<string, THREE.MeshStandardMaterial>();
 
 export function isGilt(style: GalleryTheme["frame"]["style"]): boolean {
-  return style === "baroque" || style === "tabernacle" || style === "gilt-simple";
+  return style === "baroque" || style === "tabernacle" || style === "gilt-simple" || style === "miniature";
 }
 
 /** The shared material for a theme's frames (gilt, hardwood or floater tray). */
 export function frameMaterial(theme: GalleryTheme): THREE.MeshStandardMaterial {
   const f = theme.frame;
-  const key = `${f.style}|${f.color}|${f.roughness}|${f.metalness}`;
+  const key = `${f.style}|${f.color}|${f.roughness}|${f.metalness}|${f.mat ?? ""}|${f.mat ? theme.light.spot : ""}`;
   const hit = frameMats.get(key);
   if (hit) return hit;
+  // the mat reads white to an eye adapted to the warm light, as the canvas
+  // does (canvasWhiteBalance), only a little less
+  const mat = f.mat ? new THREE.Color(f.mat).multiply(canvasWhiteBalance(theme.light.spot, 0.6)) : null;
   let m: THREE.MeshStandardMaterial;
   if (isGilt(f.style)) {
     m = new THREE.MeshStandardMaterial({
@@ -325,8 +341,18 @@ export function frameMaterial(theme: GalleryTheme): THREE.MeshStandardMaterial {
       vertexColors: true,
       envMapIntensity: GILT_ENV_INTENSITY,
     });
-    patchFrameShader(m, "gilt");
-  } else if (f.style === "wood") {
+    patchFrameShader(m, "gilt", mat);
+  } else if (f.style === "print") {
+    // black lacquer: smooth, a soft sheen
+    m = new THREE.MeshStandardMaterial({
+      color: f.color,
+      metalness: 0,
+      roughness: f.roughness,
+      vertexColors: true,
+      envMapIntensity: 0.7,
+    });
+    patchFrameShader(m, "lacquer", mat);
+  } else if (f.style === "wood" || f.style === "mount") {
     m = new THREE.MeshStandardMaterial({
       color: new THREE.Color(f.color).multiplyScalar(1.12),
       metalness: 0,
@@ -335,7 +361,7 @@ export function frameMaterial(theme: GalleryTheme): THREE.MeshStandardMaterial {
       vertexColors: true,
       envMapIntensity: 0.6,
     });
-    patchFrameShader(m, "wood");
+    patchFrameShader(m, "wood", mat);
   } else {
     m = new THREE.MeshStandardMaterial({
       color: f.color,
@@ -403,6 +429,13 @@ export function canvasRoughness(era: EraKey): number {
       return 0.6;
     case "early-modern":
       return 0.62;
+    // ink and colour on silk or paper, unvarnished
+    case "east-asian":
+    case "print-room":
+      return 0.82;
+    // opaque watercolour and gold on burnished paper: a faint sheen
+    case "court-miniature":
+      return 0.7;
     default:
       return 0.78;
   }
@@ -427,9 +460,10 @@ export function canvasWhiteBalance(spotHex: string, amount = 0.8): THREE.Color {
   );
 }
 
-/** Sacred-era works are tempera on gessoed panel: no canvas weave. */
+/** Canvas weave only on canvas: sacred-era works are tempera on gessoed
+ *  panel, East Asian painting, prints and miniatures silk or paper. */
 export function hasWeave(era: EraKey): boolean {
-  return era !== "sacred";
+  return era !== "sacred" && era !== "east-asian" && era !== "print-room" && era !== "court-miniature";
 }
 
 // ------------------------------------------------------- track fixtures

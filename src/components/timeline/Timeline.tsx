@@ -476,7 +476,7 @@ export function Timeline({ data }: { data: TimelineData }) {
       let y = 0;
       // the band's title sits ~30px above it; the footer row below is out of bounds
       const lo = contentTop + 34;
-      const hi = h - footReserve - 6;
+      const hi = h - footReserve - (L.overflow > 0.5 ? PILL_H : 0) - 6;
       if (b && (b.top < lo || b.top + b.height > hi)) {
         // a band that has to move comes to the middle of the free space (its
         // top under the ruler when it is taller than that), not to an edge
@@ -777,14 +777,15 @@ export function Timeline({ data }: { data: TimelineData }) {
         inert={!!selected}
       />
 
-      {/* the footer row: note (left), hint (centre), source link (right);
-          stacked and centred on narrow screens. Its measured height is kept
-          free of content (--foot). */}
+      {/* the footer row: provenance (left), hint (centre), Wikipedia donation,
+          credits and source link (right); the hint above the two notes on
+          mid-size screens, one centred column on narrow ones. Its measured
+          height is kept free of content (--foot). */}
       <footer className="tl-foot" inert={!!selected}>
-        <p className="tl-note">
+        <p className="tl-note tl-note-l">
           <span className="tl-note-lead">Every artist and every work, together in one museum.</span>{" "}
           <span className="tl-note-src">
-            All content from{" "}
+            All credit goes to{" "}
             <a href="https://en.wikipedia.org/" target="_blank" rel="noopener noreferrer">
               Wikipedia
             </a>{" "}
@@ -798,8 +799,23 @@ export function Timeline({ data }: { data: TimelineData }) {
           </span>
           <span className="hint-touch">Pinch to travel through time · drag to pan · tap a period</span>
         </div>
-        <div className="tl-source-cell">
-          <SourceLink className="tl-source" />
+        <div className="tl-note tl-note-r">
+          <span className="tl-note-give">
+            Free knowledge keeps democracies strong.{" "}
+            <a href="https://donate.wikimedia.org/" target="_blank" rel="noopener noreferrer">
+              Donate to Wikipedia
+            </a>
+            .
+          </span>{" "}
+          <span className="tl-note-by">
+            <span>
+              Made with <span className="tl-heart" role="img" aria-label="love">♥</span> by{" "}
+              <a href="https://justdataplease.com" target="_blank" rel="noopener noreferrer">
+                justdataplease.com
+              </a>
+            </span>
+            <SourceLink className="tl-source" />
+          </span>
         </div>
       </footer>
 

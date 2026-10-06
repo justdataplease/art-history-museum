@@ -200,6 +200,8 @@ export interface HallDims {
   /** The work's room within a suite: its far / near wall faces (default: the whole hall). */
   roomZ0?: number;
   roomZ1?: number;
+  /** Rails' distance in from the side walls (layout.trackInset). */
+  trackInset?: number;
 }
 
 const ADAPTER = { w: 0.05, h: 0.036, l: 0.12 };
@@ -236,6 +238,7 @@ export function hallFromPlacement(pl: Placement, given?: Partial<HallDims>): Hal
     wallHeight: given?.wallHeight ?? 4.7,
     roomZ0: given?.roomZ0,
     roomZ1: given?.roomZ1,
+    trackInset: given?.trackInset ?? TRACK_INSET,
     lengthKnown: given?.hallLength !== undefined || lengthFromWall !== undefined,
   };
 }
@@ -268,23 +271,23 @@ export function planFixture(
   let mount: THREE.Vector3;
   let railAxis: "x" | "z";
   if (Math.abs(nx) > 0.5) {
-    const railX = Math.sign(pl.position[0] || -nx) * (hall.hallWidth / 2 - TRACK_INSET);
+    const railX = Math.sign(pl.position[0] || -nx) * (hall.hallWidth / 2 - (hall.trackInset ?? TRACK_INSET));
     // stay on the rail: it runs from the cross rail to just short of the entrance wall
     let z = railAt ?? pl.position[2];
     if (hall.lengthKnown !== false) {
       const L2 = hall.hallLength / 2;
       const z0 = hall.roomZ0 ?? -L2;
       const z1 = hall.roomZ1 ?? L2;
-      z = THREE.MathUtils.clamp(z, z0 + TRACK_INSET + 0.08, z1 - SIDE_RAIL_END_CLEAR - 0.08);
+      z = THREE.MathUtils.clamp(z, z0 + (hall.trackInset ?? TRACK_INSET) + 0.08, z1 - SIDE_RAIL_END_CLEAR - 0.08);
     }
     mount = new THREE.Vector3(railX, railY - RAIL_HALF_H - ADAPTER.h / 2 + 0.003, z);
     railAxis = "z";
   } else {
     const railZ =
       nz > 0
-        ? (hall.roomZ0 ?? -hall.hallLength / 2) + TRACK_INSET
-        : (hall.roomZ1 ?? hall.hallLength / 2) - TRACK_INSET;
-    const railX = hall.hallWidth / 2 - TRACK_INSET;
+        ? (hall.roomZ0 ?? -hall.hallLength / 2) + (hall.trackInset ?? TRACK_INSET)
+        : (hall.roomZ1 ?? hall.hallLength / 2) - (hall.trackInset ?? TRACK_INSET);
+    const railX = hall.hallWidth / 2 - (hall.trackInset ?? TRACK_INSET);
     const x = THREE.MathUtils.clamp(railAt ?? pl.position[0], -railX + 0.08, railX - 0.08);
     mount = new THREE.Vector3(x, railY - RAIL_HALF_H - ADAPTER.h / 2 + 0.003, railZ);
     railAxis = "x";

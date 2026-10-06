@@ -213,14 +213,15 @@ button {
   left: 0;
   right: 0;
   bottom: 0;
-  height: calc(var(--foot, 52px) + var(--pill, 0px) + 16px);
+  /* starts at the content's bottom edge, so the last row is never dimmed */
+  height: calc(var(--foot, 52px) + var(--pill, 0px) + 2px);
   z-index: 15;
   pointer-events: none;
-  background: linear-gradient(0deg, var(--wall) 0, var(--wall) calc(100% - 20px), rgba(231, 227, 224, 0));
+  background: linear-gradient(0deg, var(--wall) 0, var(--wall) calc(100% - 14px), rgba(231, 227, 224, 0));
 }
 
 .star-layer::before {
-  background: linear-gradient(0deg, #06070d 0, rgba(6, 7, 13, 0.94) calc(100% - 20px), rgba(6, 7, 13, 0));
+  background: linear-gradient(0deg, #06070d 0, rgba(6, 7, 13, 0.94) calc(100% - 14px), rgba(6, 7, 13, 0));
 }
 
 .star-layer::after {
@@ -1312,36 +1313,47 @@ button {
 
 /* ============================= FOOTER ROW ============================= */
 
-/* note (left) · hint (centre) · source link (right). Timeline measures its
-   height into --foot and keeps that strip free of content; the veil below
-   (.tl-layer::before) hides what scrolls under it. The two side cells share a
-   width so the hint stays centred on the screen. */
+/* provenance (left) · hint (centre) · donation, credits and the source link
+   (right). Timeline measures its height into --foot and keeps that strip free
+   of content; the veil below (.tl-layer::before) hides what scrolls under it.
+   The side cells share a width so the hint stays centred on the screen. */
 .tl-foot {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 30;
-  display: flex;
-  align-items: flex-end;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr) minmax(0, 340px);
+  grid-template-areas: "l hint r";
+  align-items: end;
+  column-gap: 24px;
+  row-gap: 6px;
   padding: 0 20px 12px 22px;
   pointer-events: none;
 }
 
-.tl-note,
-.tl-source-cell {
-  flex: 0 1 300px;
-  min-width: 0;
+.tl-note-l {
+  grid-area: l;
+  justify-self: start;
 }
 
-.tl-source-cell {
-  display: flex;
+.tl-note-r {
+  grid-area: r;
+  justify-self: end;
+  text-align: right;
+}
+
+.tl-note-by {
+  display: flex !important;
+  align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  column-gap: 6px;
 }
 
 .tl-hint {
-  flex: 1 1 0;
+  grid-area: hint;
   min-width: 0;
   padding-bottom: 2px;
   font-size: 10.5px;
@@ -1355,6 +1367,7 @@ button {
 
 .tl-note {
   margin: 0;
+  min-width: 0;
   font-family: var(--sans);
   font-size: 10.5px;
   line-height: 1.5;
@@ -1392,8 +1405,16 @@ button {
   border-radius: 2px;
 }
 
+.tl-heart {
+  color: #a8433a;
+}
+
 .view-stars .tl-note {
   color: rgba(233, 229, 226, 0.66);
+}
+
+.view-stars .tl-heart {
+  color: #d9776b;
 }
 
 .view-stars .tl-note-lead {
@@ -1405,8 +1426,8 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: -5px;
-  padding: 5px 10px;
+  margin-right: -10px;
+  padding: 3px 10px;
   border-radius: 999px;
   font-size: 9.5px;
   letter-spacing: 0.24em;
@@ -1415,6 +1436,12 @@ button {
   color: var(--ink-soft);
   text-decoration: none;
   transition: color 0.2s, background 0.2s;
+}
+
+/* it sits inside a note line: none of the notes' link underline */
+.tl-note .tl-source,
+.tl-note .tl-source:hover {
+  text-decoration: none;
 }
 
 .tl-source svg {
@@ -1447,29 +1474,44 @@ button {
   outline-color: var(--gold-soft);
 }
 
-/* narrow screens: one centred column, the hint over the note (its second
-   line only), the source link reduced to its mark in the corner */
+/* mid-size screens: the hint gets the full width, the two notes sit under it */
+@media (min-width: 900px) and (max-width: 1199px) {
+  .tl-foot {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "hint hint"
+      "l r";
+  }
+}
+
+/* narrow screens: one centred column - the hint, the Wikipedia credit (the
+   lead line is dropped), the donation line, then the credits with the
+   source link as a bare mark */
 @media (max-width: 899px) {
   .tl-foot {
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 0 52px 9px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "hint"
+      "l"
+      "r";
+    justify-items: center;
+    row-gap: 3px;
+    padding: 0 12px 10px;
   }
 
   .tl-hint {
-    flex: none;
     width: 100%;
     max-width: 560px;
-    padding: 0;
+    padding: 0 0 2px;
   }
 
-  .tl-note {
-    order: 2;
-    flex: none;
+  .tl-note-l,
+  .tl-note-r {
+    justify-self: center;
     max-width: 100%;
-    font-size: 10px;
+    font-size: 9.5px;
     line-height: 1.4;
+    letter-spacing: 0.02em;
     text-align: center;
     text-wrap: balance;
   }
@@ -1478,17 +1520,14 @@ button {
     display: none !important;
   }
 
-  .tl-source-cell {
-    position: absolute;
-    right: 8px;
-    bottom: 6px;
-    flex: none;
+  .tl-note-by {
+    justify-content: center;
   }
 
-  /* just the mark: a 32px round target */
+  /* just the mark: a 24px round target */
   .tl-source {
     margin: 0;
-    padding: 9px;
+    padding: 5px;
   }
 
   .tl-source .src-label {
@@ -2337,6 +2376,19 @@ button {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   opacity: 0.65;
+}
+
+.mus-click-to-start .mus-start-credit {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: max(22px, env(safe-area-inset-bottom, 0px));
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  line-height: 1.6;
+  text-align: center;
+  text-wrap: balance;
+  opacity: 0.55;
 }
 
 /* ============================= INSPECT PANEL ============================= */

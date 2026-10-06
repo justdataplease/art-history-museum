@@ -3,21 +3,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import gsap from "gsap";
-import type { Artist, Period } from "@/lib/types";
+import type { Artist, ImageCredit, Period } from "@/lib/types";
 import { wikiSrcSet } from "@/lib/img";
 import { artistYears } from "./artist-meta";
 
-/** Who made the portrait and under what licence (Wikimedia Commons). */
-interface PortraitCredit {
-  author: string | null;
-  license: string;
-  licenseUrl: string | null;
-  page: string;
-}
-
-/** The credit, when the data carries one (read defensively: older snapshots don't). */
-function portraitCredit(a: Artist): PortraitCredit | null {
-  const c = (a as Artist & { portraitCredit?: PortraitCredit | null }).portraitCredit;
+/** The portrait's credit, tidied (older snapshots carry none). */
+function portraitCredit(a: Artist): ImageCredit | null {
+  const c = a.portraitCredit;
   if (!c || typeof c !== "object" || typeof c.page !== "string" || !c.page) return null;
   return {
     author: typeof c.author === "string" && c.author.trim() ? c.author.trim() : null,
@@ -30,14 +22,14 @@ function portraitCredit(a: Artist): PortraitCredit | null {
 const isPublicDomain = (license: string) => /public\s*domain|^pd(\b|-)/i.test(license);
 
 /** "Portrait: {author} · {licence}", the author linked to the file page, the licence to its text. */
-function Credit({ c }: { c: PortraitCredit }) {
+function Credit({ c }: { c: ImageCredit }) {
   const pd = isPublicDomain(c.license);
   const license = pd ? "Public domain" : c.license || "see file page";
   return (
     <p className="card-credit">
       Portrait:{" "}
       <a href={c.page} target="_blank" rel="noopener noreferrer">
-        {c.author ?? "Wikimedia Commons"}
+        {c.author ?? (/commons\.wikimedia\.org/.test(c.page) ? "Wikimedia Commons" : "Wikipedia")}
       </a>
       {" · "}
       {!pd && c.licenseUrl ? (

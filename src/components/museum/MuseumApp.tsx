@@ -75,8 +75,8 @@ const FX_AUDIO = { duck: duckMusic, muted: musicMuted };
 const placardEl = () => document.querySelector(".mus-placard");
 
 export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
-  const layout = useMemo(() => buildLayout(artist.paintings), [artist]);
   const theme = useMemo(() => galleryTheme(artist.periodSlug), [artist.periodSlug]);
+  const layout = useMemo(() => buildLayout(artist.paintings, { works: theme.works }), [artist, theme.works]);
   // the flagship (a thumbnail, in a suite) and the entrance room's nearest works
   const gate = useMemo(() => entryGate(layout), [layout]);
   const rooms = layout.rooms.length;
@@ -419,6 +419,12 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
                 <b>Click</b> a painting to inspect
               </span>
               <span>
+                <b>Space</b> jump
+              </span>
+              <span>
+                <b>C</b> crouch
+              </span>
+              <span>
                 <b>M</b> music
               </span>
               {rooms > 1 && (
@@ -448,12 +454,16 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
           <p>
             {touch ? "Tap" : "Click"} to step inside · {artist.paintings.length} works
           </p>
+          <p className="mus-start-credit">
+            All credit goes to Wikipedia, Wikidata and Wikimedia Commons · for educational
+            purposes only
+          </p>
         </div>
       )}
 
       <InspectPanel placement={inspect} onClose={closeInspect} touch={touch} artistName={artist.name} />
 
-      <MuseumAudio era={theme.era} started={doorsOpen} inspecting={!!inspect} />
+      <MuseumAudio era={theme.era} period={artist.periodSlug} started={doorsOpen} inspecting={!!inspect} />
 
       <FxGate
         ready={doorsOpen && arrived}

@@ -514,8 +514,11 @@ export function computeStarLayout(inp: StarInput): StarLayout {
       const hw = (bb.x1 - bb.x0) / 2 + bw / 2 + 8;
       const hh = (bb.y1 - bb.y0) / 2 + bh / 2 + 8;
       let best: { b: Box; ld: StarLeader | null; score: number } | null = null;
-      for (let r = 0; r <= maxR && !best; r += 12) {
-        const steps = 24;
+      // (on a desktop screen the search goes on, further out, until the title is seated)
+      const limit = phone ? maxR : Math.max(maxR, w * 0.45);
+      for (let r = 0; r <= limit && !best; r += 12) {
+        // candidates no further apart than a third of the title's height around the ring
+        const steps = Math.max(24, Math.ceil((2 * Math.PI * (Math.max(hw, hh) + r)) / Math.max(8, bh / 3)));
         for (let i = 0; i < steps; i++) {
           const a = (i / steps) * Math.PI * 2;
           const cx = cx0 + Math.cos(a) * (hw + r);

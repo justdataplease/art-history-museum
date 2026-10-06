@@ -9,7 +9,7 @@ improvements are all welcome.
 Every artist bio, painting, image, date, story and fact is pulled from
 **English Wikipedia, Wikidata and Wikimedia Commons** by the ingest scripts.
 Nothing is written by hand and nothing is AI-generated. If it isn't on
-Wikipedia, it doesn't go in — so the way to add content is to improve the
+Wikipedia, it doesn't go in. The way to add content is to improve the
 ingest or the seed list, never to edit `data/cache/` by hand.
 
 - **Missing artist?** Add their English Wikipedia article title to the right
@@ -38,7 +38,7 @@ or network access to Wikipedia to work on the app. See the README for the
 ingest, the optional Postgres backend and deployment.
 
 If you run the ingest, set `WIKI_USER_AGENT` to your own contact (see
-[`.env.example`](.env.example)) — Wikimedia's API policy asks every client to
+[`.env.example`](.env.example)). Wikimedia's API policy asks every client to
 identify itself.
 
 ## Before you open a pull request
@@ -56,7 +56,7 @@ node scripts/perf-probe.mjs caravaggio http://localhost:3000 mine
   for rendering changes.
 - For visual changes, attach before/after screenshots
   (`node scripts/shot-museum.mjs <slug> <prefix>`).
-- This project uses Next.js 16 — APIs differ from older versions; check
+- This project uses Next.js 16, whose APIs differ from older versions; check
   `node_modules/next/dist/docs/` before using a Next API.
 - Match the style of the surrounding code; keep comments about *why*.
 

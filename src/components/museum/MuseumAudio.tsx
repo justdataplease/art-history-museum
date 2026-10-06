@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EraKey } from "./theme";
-import { ERA_MUSIC, licenseUrl, localAudioUrl, trackCredit, type Track } from "./music";
+import { licenseUrl, localAudioUrl, playlist, trackCredit, type Track } from "./music";
 import styles from "./MuseumAudio.module.css";
 
 const GALLERY_VOLUME = 0.32;
@@ -114,10 +114,13 @@ function isMuteKey(e: KeyboardEvent): boolean {
 
 export function MuseumAudio({
   era,
+  period,
   started,
   inspecting,
 }: {
   era: EraKey;
+  /** The gallery's period (a period may order the era's tracks its own way). */
+  period?: string;
   /** The visitor has arrived (the doors have opened). */
   started: boolean;
   /** A painting is open in the inspect view: duck the music. */
@@ -158,7 +161,7 @@ export function MuseumAudio({
 
   // Playback engine: one audio element per era (in practice per visit).
   useEffect(() => {
-    const tracks = ERA_MUSIC[era] ?? [];
+    const tracks = playlist(era, period);
     if (tracks.length === 0) return;
 
     const audio = new Audio();
@@ -439,7 +442,7 @@ export function MuseumAudio({
         release();
       }
     };
-  }, [era, showCredit]);
+  }, [era, period, showCredit]);
 
   // Mirror props for the engine and reconcile.
   useEffect(() => {
@@ -483,7 +486,7 @@ export function MuseumAudio({
     return () => window.removeEventListener("keydown", onKey);
   }, [activate]);
 
-  const tracks = ERA_MUSIC[era] ?? [];
+  const tracks = playlist(era, period);
   if (tracks.length === 0) return null;
 
   const track = current && tracks.includes(current) ? current : tracks[0];

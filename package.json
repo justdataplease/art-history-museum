@@ -4,13 +4,13 @@
   "private": true,
   "description": "An interactive 3D museum of art history in the browser: a zoomable timeline of 26 periods and walkable galleries of real paintings, all from Wikipedia.",
   "license": "MIT",
-  "homepage": "https://the-virtual-art-gallery.vercel.app",
+  "homepage": "https://art-history.artfrompixels.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/justdataplease/museum.git"
+    "url": "https://github.com/justdataplease/art-history-museum.git"
   },
   "bugs": {
-    "url": "https://github.com/justdataplease/museum/issues"
+    "url": "https://github.com/justdataplease/art-history-museum/issues"
   },
   "scripts": {
     "dev": "next dev",

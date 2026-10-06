@@ -11,7 +11,7 @@ import path from "node:path";
 // URL / contact, e.g. "MyMuseum/1.0 (https://example.org; me@example.org)".
 export const UA =
   process.env.WIKI_USER_AGENT ??
-  "TimelineMuseum/1.0 (https://github.com/justdataplease/museum) node-fetch";
+  "TimelineMuseum/1.0 (https://github.com/justdataplease/art-history-museum) node-fetch";
 
 export async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -194,8 +194,43 @@ export const PAINTING_CLASSES = [
   "Q99516640", // wall painting
   "Q219423", // mural
   "Q15727816", // painting series
-  "Q1404472", // group of paintings
-  "Q18573970", // group of paintings (variant)
+  "Q18573970", // group of paintings
+  // painting formats (labels checked on Wikidata, Oct 2026)
+  "Q55439", // panel painting
+  "Q56676227", // oil painting
+  "Q21281546", // gouache painting
+  "Q12043905", // pastel artwork (Degas)
+  "Q22970505", // painted crucifix
+  "Q132137", // icon
+  "Q282129", // miniature
+  "Q678664", // Persian miniature
+  "Q268639", // Ottoman miniature
+  "Q8362", // manuscript illumination
+  "Q7282803", // Ragamala painting
+  "Q4307822", // muraqqa (album of miniatures)
+  "Q28104579", // album leaf
+  "Q916651", // thangka
+  "Q10827799", // silk painting
+  "Q19969434", // scroll painting
+  "Q5647631", // handscroll
+  "Q1190781", // emakimono
+  "Q3125472", // makimono
+  "Q2188827", // hanging scroll
+  "Q277583", // kakemono
+  "Q50488927", // fan painting
+  "Q741226", // byōbu
+  "Q1144689", // folding screen
+  "Q126456658", // fusuma-e
+  "Q103929010", // shōhekiga
+];
+
+/** Prints: hung only for the ukiyo-e masters, whose works are woodblock prints. */
+export const PRINT_CLASSES = [
+  "Q28913685", // woodblock print
+  "Q18219090", // woodcut print
+  "Q1683337", // nishiki-e
+  "Q19960510", // series of prints
+  "Q1396354", // color woodcut
 ];
 
 /** Lead image of an article under any licence (`pilicense=any`): the
@@ -252,10 +287,12 @@ export async function nonFreeFiles(files: string[]): Promise<Set<string>> {
 // of them — followed by the best-known image-only works (Wikidata item with a
 // Commons image but no article), the fallback pool for thin galleries.
 export async function getPaintingsByArtist(
-  artistQid: string
+  artistQid: string,
+  opts: { prints?: boolean } = {}
 ): Promise<SparqlPainting[]> {
+  const classes = opts.prints ? [...PAINTING_CLASSES, ...PRINT_CLASSES] : PAINTING_CLASSES;
   const head = `
-  VALUES ?class { ${PAINTING_CLASSES.map((q) => `wd:${q}`).join(" ")} }
+  VALUES ?class { ${classes.map((q) => `wd:${q}`).join(" ")} }
   ?item wdt:P170 wd:${artistQid} .
   ?item wdt:P31 ?class .
   ?item wikibase:sitelinks ?sitelinks .
@@ -278,7 +315,7 @@ SELECT ?item ?itemLabel ?sitelinks ?inception ?incPrecision ?image WHERE {${head
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }
 ORDER BY DESC(?sitelinks) DESC(?incPrecision)
-LIMIT 60`;
+LIMIT 100`;
   const sparql = (q: string) =>
     fetchJson<any>("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(q));
   const rows: any[] = [
@@ -378,7 +415,7 @@ export function canonicalImageUrl(url: string | null): string | null {
 // ---- fun-fact extraction (verbatim sentences from the article body) ----
 
 const FACT_KEYWORDS =
-  /\b(stolen|theft|thief|recovered|auction|sold for|record|million|x-ray|x ray|infrared|restoration|restored|conservation|vandal|attacked|slashed|damaged|forgery|forger|fake|attributed|reattributed|discovered|rediscovered|hidden|underneath|beneath|overpainted|pentiment|commissioned|rejected|scandal|controvers|censor|banned|smuggl|looted|nazi|ransom|parod|referenced|inspired|most expensive|largest|acquired)\b/i;
+  /\b(stolen|theft|thief|recovered|auction|sold for|record|million|x-ray|x ray|infrared|restoration|restored|conservation|attacked|slashed|damaged|forgery|forger|fake|attributed|reattributed|discovered|rediscovered|hidden|underneath|beneath|overpainted|pentiment|commissioned|rejected|scandal|controvers|censor|banned|smuggl|looted|nazi|ransom|parod|referenced|inspired|most expensive|largest|acquired)\b/i;
 
 function splitSentences(text: string): string[] {
   return (

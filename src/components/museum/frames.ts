@@ -31,6 +31,8 @@ interface PP {
   band?: number;
   /** Bole (red clay under gilding) showing through on worn high points, 0..1. */
   bole?: number;
+  /** Part of the mat / silk mount (drawn in the theme's mat colour, matte). */
+  mat?: boolean;
 }
 
 interface Profile {
@@ -97,7 +99,8 @@ function join(...parts: (PP | PP[])[]): PP[] {
     const list = Array.isArray(part) ? part : [part];
     for (const p of list) {
       const last = out[out.length - 1];
-      if (last && Math.abs(last.d - p.d) < 1e-6 && Math.abs(last.z - p.z) < 1e-6) {
+      // (a mat / frame boundary keeps both: each side draws in its own material)
+      if (last && Math.abs(last.d - p.d) < 1e-6 && Math.abs(last.z - p.z) < 1e-6 && !!last.mat === !!p.mat) {
         // keep the crease / band of whichever says so
         last.sharp = last.sharp || p.sharp;
         if (p.band && !last.band) last.band = p.band;
@@ -237,12 +240,84 @@ const FLOATER: Profile = {
   ),
 };
 
+// ---- works on paper and silk: the mat (or silk mount) is part of the
+// profile, flagged so the frame material draws it in the theme's mat colour.
+const M = (d: number, z: number, ao = 1, extra: Partial<PP> = {}): PP => ({ d, z, ao, r: 1, mat: true, ...extra });
+
+// East Asian mounting: the work lies flush in a silk border, finished with
+// a thin dark-wood edge (a hanging scroll's or a screen's mount, simplified).
+const MOUNT: Profile = {
+  nominalWidth: 0.07,
+  canvasZ: 0.0088,
+  pts: join(
+    // the silk: dead flat (any slope would light each side differently and
+    // read as a bevelled frame)
+    M(-0.004, 0.0092, 0.9, { sharp: true }),
+    M(0.056, 0.0092, 0.96, { sharp: true }),
+    // thin dark-wood edge strip
+    P(0.056, 0.0092, 0.75, 1.1, { sharp: true }),
+    P(0.057, 0.0145, 0.9, 1.0),
+    arc(0.0635, 0.0145, 0.0065, 180, 0, 6, (t) => ({ ao: 0.92 + 0.08 * bump(t), r: 0.9 })),
+    P(0.07, 0.012, 0.85, 1.0),
+    P(0.07, 0.0, 0.6, 1.2, { sharp: true }),
+  ),
+};
+
+// Print room: a wide off-white mat with a bevelled window (its white core
+// catching the light), in a thin black-lacquer frame.
+const PRINT: Profile = {
+  nominalWidth: 0.06,
+  canvasZ: 0.012,
+  pts: join(
+    M(-0.004, 0.0115, 0.82, { sharp: true }),
+    // the 45° bevel of the window cut
+    M(-0.0012, 0.0152, 1.0, { sharp: true }),
+    M(0.044, 0.0154, 0.98),
+    M(0.046, 0.0154, 0.9, { sharp: true }),
+    // lacquer frame: sight edge, flat top, eased outer arris
+    P(0.046, 0.0154, 0.7, 1.0, { sharp: true }),
+    P(0.046, 0.025, 0.9, 1.0, { sharp: true }),
+    P(0.048, 0.0265, 1.0, 0.9),
+    P(0.056, 0.0265, 1.0, 0.85),
+    arc(0.056, 0.0235, 0.003, 90, 0, 3, (t) => ({ ao: 1, r: 0.85 })),
+    P(0.059, 0.0, 0.7, 1.1, { sharp: true }),
+  ),
+};
+
+// Court miniature: a thin gilt slip at the window, a wide cream mat, a slim
+// gilt outer moulding.
+const MINIATURE: Profile = {
+  nominalWidth: 0.07,
+  canvasZ: 0.012,
+  pts: join(
+    // gilt slip (fillet) round the painting
+    P(-0.004, 0.011, 0.75, 1.1, { sharp: true }),
+    P(-0.004, 0.0145, 0.85, 1.0, { sharp: true }),
+    arc(-0.0015, 0.0145, 0.0025, 180, 0, 5, hi),
+    P(0.001, 0.014, 0.75, 1.1, { sharp: true }),
+    P(0.0035, 0.0152, 0.8, 1.0, { sharp: true }),
+    // the mat
+    M(0.0035, 0.0152, 0.88, { sharp: true }),
+    M(0.03, 0.0155, 1.0),
+    M(0.054, 0.0155, 0.92, { sharp: true }),
+    // slim gilt moulding: a hollow up to a rounded crown
+    P(0.054, 0.0155, 0.7, 1.2, { sharp: true }),
+    curve(0.054, 0.0155, 0.061, 0.025, 6, (t) => t * t, (t) => ({ ao: 0.72 + 0.25 * t, r: 1.2 - 0.3 * t })),
+    arc(0.0645, 0.0245, 0.0045, 160, 10, 8, hi),
+    P(0.07, 0.022, 0.8, 1.0),
+    P(0.07, 0.0, 0.5, 1.2, { sharp: true }),
+  ),
+};
+
 const PROFILES: Record<FrameStyle, Profile> = {
   baroque: BAROQUE,
   tabernacle: TABERNACLE,
   "gilt-simple": GILT_SIMPLE,
   wood: WOOD,
   floater: FLOATER,
+  mount: MOUNT,
+  print: PRINT,
+  miniature: MINIATURE,
 };
 
 // --------------------------------------------------------------- geometry
@@ -384,7 +459,7 @@ export function buildFrame(style: FrameStyle, w: number, h: number, width: numbe
       p.ao * (1 + (BOLE[1] - 1) * b) * 0.985,
       p.ao * (1 + (BOLE[2] - 1) * b) * 0.96,
     );
-    attr.push(p.r, carve);
+    attr.push(p.r, carve, p.mat ? 1 : 0);
   };
 
   for (let s = 0; s < 4; s++) {
@@ -421,7 +496,7 @@ export function buildFrame(style: FrameStyle, w: number, h: number, width: numbe
   g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
   g.setAttribute("uv1", new THREE.Float32BufferAttribute(uv1, 2));
   g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  g.setAttribute("aFrame", new THREE.Float32BufferAttribute(attr, 2));
+  g.setAttribute("aFrame", new THREE.Float32BufferAttribute(attr, 3));
   g.computeBoundingSphere();
   g.computeBoundingBox();
 

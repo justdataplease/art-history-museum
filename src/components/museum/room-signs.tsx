@@ -19,6 +19,8 @@ import { setRoomWindow, type IndexRange } from "./room-geometry";
 import type { SuiteRuntime } from "./suite-runtime";
 
 const PROP_LAYER = 1;
+// surface effects may land on the signs
+const FX_TARGET = { fxTarget: true };
 /** Card proportions, size and texture row size. */
 const CARD_ASPECT = 4.2;
 const CARD_H = 0.22;
@@ -302,5 +304,5 @@ export function RoomSigns({ layout, runtime }: { layout: GalleryLayout; runtime:
   }, [layout, signs, geometry, material, runtime, invalidate]);
 
   if (!geometry) return null;
-  return <mesh geometry={geometry} material={material} matrixAutoUpdate={false} layers={PROP_LAYER} />;
+  return <mesh geometry={geometry} material={material} matrixAutoUpdate={false} layers={PROP_LAYER} userData={FX_TARGET} />;
 }

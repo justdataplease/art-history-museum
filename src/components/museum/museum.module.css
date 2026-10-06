@@ -32,8 +32,9 @@
   }
 }
 
-/* Controls hint: wrap instead of running off narrow screens. */
-@media (max-width: 880px) {
+/* Controls hint: wrap instead of running off narrower screens (eight
+   entries on desktop: ~1100 px on one line). */
+@media (max-width: 1180px) {
   .hint.hint {
     bottom: 16px;
     max-width: calc(100vw - 32px);

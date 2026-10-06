@@ -35,6 +35,20 @@ const TAP_SLOP = 9; // px a touch may wander and still count as a tap
 const TAP_MAX_MS = 450;
 const LOOK_SPEED = 0.0042; // rad per px of drag
 const MAX_PITCH = 1.25; // rad
+// Jump: a plain ballistic hop (~0.45 m peak, ~0.6 s in the air), no air
+// control beyond the momentum at take-off; a slight eye dip on landing.
+const GRAVITY = 9.8; // m/s²
+const JUMP_HEIGHT = 0.45; // m
+const JUMP_SPEED = Math.sqrt(2 * GRAVITY * JUMP_HEIGHT); // ~2.97 m/s
+const LAND_DIP = 0.05; // m, at full landing speed
+const LAND_DIP_TAU = 0.07; // s: the dip is deepest then, gone after ~6x
+// Crouch ("sit down"): the eye eases down to CROUCH_EYE, walking slows.
+// The lowest ceiling is a doorway head (>= 3 m) and nothing in the hall is
+// low enough to stand up into, so neither move can put the eye in geometry;
+// benches stay solid (confine) whatever the eye height.
+const CROUCH_EYE = 1.0; // m
+const CROUCH_S = 0.25; // s to go down or up
+const CROUCH_SPEED = 0.5; // walking speed factor, crouched
 
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
@@ -109,12 +123,76 @@ function flightSeconds(base: number, length: number): number {
   return base * THREE.MathUtils.clamp(Math.sqrt(length / 7), 1, 1.9);
 }
 
-/** Move the camera to (x, z) on the floor, kept inside the hall and off the benches. */
-function placeOnFloor(camera: THREE.Camera, x: number, z: number, layout: GalleryLayout) {
+/** Move the camera to (x, z) on the floor, kept inside the hall and off the
+ *  benches, the eye `eye` metres up. */
+function placeOnFloor(camera: THREE.Camera, x: number, z: number, layout: GalleryLayout, eye = EYE_HEIGHT) {
   _flat.x = x;
   _flat.z = z;
   confine(_flat, layout);
-  camera.position.set(_flat.x, EYE_HEIGHT, _flat.z);
+  camera.position.set(_flat.x, eye, _flat.z);
+}
+
+/** Keys typed into a field, or meant for a focused control, are not moves. */
+function isFieldOrControl(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el || typeof el.closest !== "function") return false;
+  return !!el.closest('input, textarea, select, button, a, [contenteditable=""], [contenteditable="true"], [role="option"]');
+}
+
+/** The eye's vertical state: crouch level, jump arc, landing dip. */
+interface Body {
+  /** Crouch toggled on. */
+  crouch: boolean;
+  /** 0 standing .. 1 crouched (linear in time; eased when applied). */
+  k: number;
+  /** Height above the eye's base (the jump) and its vertical speed. */
+  y: number;
+  vy: number;
+  airborne: boolean;
+  /** Landing dip: its depth, and the time since touchdown (-1: none). */
+  dip: number;
+  dipT: number;
+}
+
+const smooth = (t: number) => t * t * (3 - 2 * t);
+
+/** Advance the body by dt; returns whether the eye is still moving. */
+function stepBody(b: Body, dt: number): boolean {
+  let moving = false;
+  const goal = b.crouch ? 1 : 0;
+  if (b.k !== goal) {
+    const step = dt / CROUCH_S;
+    b.k = goal > b.k ? Math.min(goal, b.k + step) : Math.max(goal, b.k - step);
+    moving = true;
+  }
+  if (b.airborne) {
+    // exact for constant gravity, whatever the frame rate
+    b.y += b.vy * dt - 0.5 * GRAVITY * dt * dt;
+    b.vy -= GRAVITY * dt;
+    if (b.y <= 0) {
+      // touchdown: a dip in proportion to the landing speed
+      b.dip = LAND_DIP * Math.min(1, -b.vy / JUMP_SPEED);
+      b.dipT = 0;
+      b.y = 0;
+      b.vy = 0;
+      b.airborne = false;
+    }
+    moving = true;
+  } else if (b.dipT >= 0) {
+    b.dipT += dt;
+    if (b.dipT > 6 * LAND_DIP_TAU) b.dipT = -1;
+    moving = true;
+  }
+  return moving;
+}
+
+/** Eye height for the body's state. */
+function eyeOf(b: Body): number {
+  const base = THREE.MathUtils.lerp(EYE_HEIGHT, CROUCH_EYE, smooth(b.k));
+  // a critically damped dip: down fast, eased back up
+  const u = b.dipT >= 0 ? b.dipT / LAND_DIP_TAU : 0;
+  const dip = b.dipT >= 0 ? b.dip * u * Math.exp(1 - u) : 0;
+  return base + b.y - dip;
 }
 
 // ------------------------------------------------------------- EntryDolly
@@ -210,6 +288,7 @@ export function Player({
   useEffect(() => {
     walkRef.current = walkEnabled;
   }, [walkEnabled]);
+  const body = useRef<Body>({ crouch: false, k: 0, y: 0, vy: 0, airborne: false, dip: 0, dipT: -1 });
 
   const isLocked = () => {
     const el = controls.current?.domElement;
@@ -224,15 +303,66 @@ export function Player({
 
   // Keyboard. Keys are dropped whenever the window loses focus or the page is
   // hidden: the matching keyup goes to another app and would never arrive.
+  // Space jumps (or stands up from a crouch); C, or Ctrl pressed and
+  // released on its own (Ctrl+anything stays the browser's), toggles the
+  // crouch. Only while walking with the pointer locked, never from a field
+  // or a focused control.
   useEffect(() => {
+    let bareCtrl = false;
+    const active = (e: KeyboardEvent) => walkRef.current && isLocked() && !isFieldOrControl(e.target);
+    const toggleCrouch = () => {
+      const b = body.current;
+      if (b.airborne) return;
+      b.crouch = !b.crouch;
+      invalidate();
+    };
     const down = (e: KeyboardEvent) => {
+      if (e.key !== "Control") bareCtrl = false;
+      if (e.code === "Space") {
+        if (!active(e) || e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault(); // never scroll the page
+        if (e.repeat) return;
+        const b = body.current;
+        if (b.crouch) {
+          b.crouch = false; // stand up first
+        } else if (!b.airborne && b.k === 0) {
+          b.airborne = true;
+          b.vy = JUMP_SPEED;
+          b.dipT = -1;
+        }
+        invalidate();
+        return;
+      }
+      if (e.key === "Control") {
+        bareCtrl = !e.repeat && !e.shiftKey && !e.altKey && !e.metaKey;
+        return;
+      }
+      if (e.code === "KeyC" && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (!active(e)) return;
+        // Another handler may own C right now (it then prevents the
+        // default): decide once every listener has seen the key.
+        setTimeout(() => {
+          if (!e.defaultPrevented) toggleCrouch();
+        }, 0);
+        return;
+      }
       if (!KEYS[e.code] || e.ctrlKey || e.metaKey || e.altKey) return;
       pressed.current.add(e.code);
       invalidate();
     };
     const up = (e: KeyboardEvent) => {
+      if (e.key === "Control") {
+        if (bareCtrl && active(e)) toggleCrouch();
+        bareCtrl = false;
+        return;
+      }
       if (pressed.current.delete(e.code)) invalidate();
     };
+    // Ctrl+click is not a crouch either
+    const pointer = () => {
+      bareCtrl = false;
+    };
+    window.addEventListener("pointerdown", pointer, true);
     const onVis = () => {
       if (document.hidden) halt();
     };
@@ -243,6 +373,7 @@ export function Player({
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("pointerdown", pointer, true);
       window.removeEventListener("blur", halt);
       document.removeEventListener("visibilitychange", onVis);
       halt();
@@ -306,9 +437,18 @@ export function Player({
   }, [camera, layout, onSelect, ray, registry]);
 
   useFrame((_, rawDt) => {
-    const ctl = controls.current;
-    if (!ctl?.isLocked || !walkRef.current) return;
+    if (!walkRef.current) return; // inspecting: the inspect camera has the eye
     const dt = Math.min(rawDt, MAX_DT);
+    // The eye's height (crouch, jump, landing) settles even if the lock is
+    // released mid-jump; frames are asked for only while it changes.
+    const b = body.current;
+    const rising = stepBody(b, dt);
+    const ctl = controls.current;
+    if (!ctl?.isLocked) {
+      camera.position.y = eyeOf(b);
+      if (rising) invalidate();
+      return;
+    }
 
     let mx = 0;
     let mz = 0;
@@ -325,17 +465,23 @@ export function Player({
     _fwd.normalize();
     _right.crossVectors(_fwd, _UP);
     _dir.set(0, 0, 0).addScaledVector(_fwd, -mz).addScaledVector(_right, mx);
-    if (_dir.lengthSq() > 0) _dir.normalize().multiplyScalar(WALK_SPEED);
-    vel.current.lerp(_dir, 1 - Math.exp(-10 * dt));
+    if (_dir.lengthSq() > 0) {
+      _dir.normalize().multiplyScalar(WALK_SPEED * THREE.MathUtils.lerp(1, CROUCH_SPEED, smooth(b.k)));
+    }
+    // in the air: the take-off's momentum, no steering
+    if (!b.airborne) vel.current.lerp(_dir, 1 - Math.exp(-10 * dt));
 
     const walking = pressed.current.size > 0;
-    if (walking || vel.current.lengthSq() > 1e-4) {
+    const eye = eyeOf(b);
+    if (walking || b.airborne || vel.current.lengthSq() > 1e-4) {
       const p = camera.position;
-      placeOnFloor(camera, p.x + vel.current.x * dt, p.z + vel.current.z * dt, layout);
+      placeOnFloor(camera, p.x + vel.current.x * dt, p.z + vel.current.z * dt, layout, eye);
       invalidate();
     } else {
       vel.current.set(0, 0, 0);
+      camera.position.y = eye;
     }
+    if (rising) invalidate();
     setMoving(walking);
 
     // crosshair aim: only when the view actually changed

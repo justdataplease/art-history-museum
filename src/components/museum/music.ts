@@ -48,7 +48,7 @@ const C = "https://commons.wikimedia.org/wiki/File:";
 const U = "https://upload.wikimedia.org/wikipedia/commons/";
 const T = "https://upload.wikimedia.org/wikipedia/commons/transcoded/";
 
-const PLAYLISTS: Record<Exclude<EraKey, "northern" | "victorian" | "secession">, Track[]> = {
+const PLAYLISTS: Record<Exclude<EraKey, "northern" | "victorian" | "secession" | "print-room">, Track[]> = {
   // Medieval / Gothic, Early + Northern Renaissance
   sacred: [
     {
@@ -364,18 +364,141 @@ const PLAYLISTS: Record<Exclude<EraKey, "northern" | "victorian" | "secession">,
       duration: 102,
     },
   ],
+
+  // Chinese and Japanese painting: the qin, the scholar's instrument painted
+  // into so many landscapes, and the shakuhachi of the Edo period.
+  "east-asian": [
+    {
+      title: "Pingsha Luoyan (Wild Geese Descending on the Sandbank)",
+      composer: "Traditional (Jiao'an Qinpu, 1868)",
+      performer: "Charlie Huang, guqin",
+      license: "CC BY 2.5",
+      page: C + "Pingsha_Luoyan.ogg",
+      original: U + "5/5a/Pingsha_Luoyan.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "5/5a/Pingsha_Luoyan.ogg/Pingsha_Luoyan.ogg.mp3",
+      duration: 434,
+    },
+    {
+      // Victor 13029, recorded 1925-37; PD-Japan-audio on Commons
+      title: "Shika no Tōne (The Distant Cry of the Deer)",
+      composer: "Traditional honkyoku",
+      performer: "Araki Kodō III, shakuhachi",
+      license: "Public domain",
+      page: C + "Shikanotoone.ogg",
+      original: U + "3/3e/Shikanotoone.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "3/3e/Shikanotoone.ogg/Shikanotoone.ogg.mp3",
+      duration: 375,
+    },
+    {
+      title: "Liu Shui (Flowing Water)",
+      composer: "Traditional (Tianwen Ge Qinpu, 1876)",
+      performer: "Charlie Huang, guqin",
+      license: "CC BY 2.5",
+      page: C + "Liu_Shui.ogg",
+      original: U + "e/e0/Liu_Shui.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "e/e0/Liu_Shui.ogg/Liu_Shui.ogg.mp3",
+      duration: 493,
+    },
+    {
+      title: "Yangguan Sandie (Three Refrains on the Yang Pass Theme)",
+      composer: "Traditional (Qinxue Rumen, 1867)",
+      performer: "Charlie Huang, guqin",
+      license: "CC BY-SA 3.0",
+      page: C + "Guqin-Yangguan_Sandie.ogg",
+      original: U + "6/60/Guqin-Yangguan_Sandie.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "6/60/Guqin-Yangguan_Sandie.ogg/Guqin-Yangguan_Sandie.ogg.mp3",
+      duration: 350,
+    },
+  ],
+
+  // Indian and Persian court painting: a Hindustani raga on the sitar, and
+  // Persian classical music on the santur and the setar.
+  "court-miniature": [
+    {
+      // recorded 1904 (PD-old-100-record-expired on Commons)
+      title: "Raga Sohini",
+      composer: "Hindustani raga",
+      performer: "Imdad Khan, sitar (1904)",
+      license: "Public domain",
+      page: C + "Sohini_Qawwali.ogg",
+      original: U + "9/9a/Sohini_Qawwali.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "9/9a/Sohini_Qawwali.ogg/Sohini_Qawwali.ogg.mp3",
+      duration: 171,
+    },
+    {
+      // 1930s Iranian recording (Gallica; PD-Iran on Commons)
+      title: "Mahur: Abulchap (poem by Saadi)",
+      composer: "Persian classical (dastgah Mahur)",
+      performer: "Parvaneh, voice; Habib Samaei, santur",
+      license: "Public domain",
+      page: C + "Mahoor_Paravaneh.ogg",
+      original: U + "3/35/Mahoor_Paravaneh.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "3/35/Mahoor_Paravaneh.ogg/Mahoor_Paravaneh.ogg.mp3",
+      duration: 225,
+    },
+    {
+      // performance: GFDL, relicensed to CC BY-SA 3.0 (2009 licence migration)
+      title: "Raga Kaushi Kanra",
+      composer: "Hindustani raga",
+      performer: "Ranjit Makkuni, sitar; Akram Khan, tabla",
+      license: "CC BY-SA 3.0",
+      page: C + "RanjitMakkuniRagaKaushiKanra.ogg",
+      original: U + "2/24/RanjitMakkuniRagaKaushiKanra.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "2/24/RanjitMakkuniRagaKaushiKanra.ogg/RanjitMakkuniRagaKaushiKanra.ogg.mp3",
+      duration: 191,
+    },
+    {
+      title: "Improvisation on the setar",
+      composer: "Persian classical",
+      performer: "Salman Mohammadi, setar",
+      license: "CC BY-SA 4.0",
+      page: C + "Salman_mohammadi_tar.ogg",
+      original: U + "c/c4/Salman_mohammadi_tar.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "c/c4/Salman_mohammadi_tar.ogg/Salman_mohammadi_tar.ogg.mp3",
+      duration: 396,
+    },
+  ],
 };
 
 // Rooms with their own decor share the playlist of the musical era they
 // belong to: the Dutch Golden Age is Baroque music, the Pre-Raphaelites and
 // the academic Salon are the Romantic century, fin-de-siècle Vienna and the
 // Symbolists are Debussy's world.
+// The print room (ukiyo-e) has no properly licensed shamisen or koto
+// recording of its own yet (the 1931 Hornbostel nagauta, hauta and shinnai
+// discs on Commons are tagged only PD-traditional, which covers the songs,
+// not the recordings): it plays the East Asian list, the Edo-period
+// shakuhachi first.
 export const ERA_MUSIC: Record<EraKey, Track[]> = {
   ...PLAYLISTS,
   northern: PLAYLISTS["old-master"],
   victorian: PLAYLISTS.nineteenth,
   secession: PLAYLISTS.impressionist,
+  "print-room": [PLAYLISTS["east-asian"][1], PLAYLISTS["east-asian"][0], ...PLAYLISTS["east-asian"].slice(2)],
 };
+
+// A period sharing an era's room can open with its own music: the Persian
+// cabinet with Persian classical music, the Indian one with a raga (the same
+// recordings, reordered).
+const court = PLAYLISTS["court-miniature"];
+const [sohini, mahur, kaushiKanra, setar] = court;
+const PERIOD_MUSIC: Record<string, Track[]> = {
+  "persian-miniature": [mahur, setar, sohini, kaushiKanra],
+  "indian-painting": [sohini, kaushiKanra, mahur, setar],
+};
+
+/** The playlist for a gallery: its period's own order, else its era's. */
+export function playlist(era: EraKey, period?: string): Track[] {
+  return (period && PERIOD_MUSIC[period]) || ERA_MUSIC[era] || [];
+}
 
 /** File name of the local mirror in public/audio/ (scripts/fetch-music.ts):
  *  the Commons file name, slugified, as AAC. */

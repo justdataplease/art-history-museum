@@ -75,6 +75,8 @@ const CAST_SHADOW = 0.62;
 
 // Layer 1: seen by the main camera, skipped by the floor reflection.
 const PROP_LAYER = 1;
+// props that surface effects may land on (the soft shadows stay out)
+const FX_TARGET = { fxTarget: true };
 
 export interface PaintingExhibitProps {
   placement: Placement;
@@ -203,7 +205,8 @@ function ExhibitBody({
   useEffect(() => () => shadowMat.dispose(), [shadowMat]);
   const shadowGeo = useMemo(() => {
     const fr = { cx: 0, cy: 0, hw: w / 2 + frame.outer, hh: h / 2 + frame.outer, depth: frame.depth };
-    const cd = { cx: card.x, cy: card.y, hw: PLACARD_W / 2, hh: PLACARD_H / 2, depth: PLACARD_T };
+    const k = placement.label ?? 1;
+    const cd = { cx: card.x, cy: card.y, hw: (PLACARD_W * k) / 2, hh: (PLACARD_H * k) / 2, depth: PLACARD_T };
     const local = lights.local;
     const drop = (frame.depth * (local.y - fr.cy)) / Math.max(0.3, local.z + WALL_GAP - frame.depth);
     const u = shadowMat.uniforms;
@@ -215,7 +218,7 @@ function ExhibitBody({
     u.uCard.value.set(cd.cx, cd.cy, cd.hw, cd.hh);
     u.uCardDepth.value = PLACARD_T;
     return shadowQuad(fr, cd, Math.max(0, drop) + 0.05);
-  }, [w, h, frame, card, lights, shadowMat]);
+  }, [w, h, frame, card, lights, shadowMat, placement.label]);
   useEffect(() => () => shadowGeo.dispose(), [shadowGeo]);
 
   // ---- portal culling: the runtime hides the exhibit while no doorway shows it
@@ -262,7 +265,7 @@ function ExhibitBody({
           artistName={artistName}
         />
         {full && (
-          <Placard artistName={artistName} title={painting.title} year={painting.year} copyrighted={painting.copyrighted === true} position={[card.x, card.y, card.z]} />
+          <Placard artistName={artistName} title={painting.title} year={painting.year} copyrighted={painting.copyrighted === true} position={[card.x, card.y, card.z]} scale={placement.label ?? 1} />
         )}
         {full && (
           <mesh geometry={shadowGeo} material={shadowMat} position-z={-WALL_GAP + 0.0012} layers={PROP_LAYER} renderOrder={1} />
@@ -270,7 +273,7 @@ function ExhibitBody({
       </group>
 
       {/* track heads: adapter on the rail, stem, knuckle, can aimed at the work */}
-      {full && <mesh geometry={fixtureGeo} material={fixtureMat} position={fixtureOrigin} layers={PROP_LAYER} />}
+      {full && <mesh geometry={fixtureGeo} material={fixtureMat} position={fixtureOrigin} layers={PROP_LAYER} userData={FX_TARGET} />}
     </group>
   );
 }
@@ -524,12 +527,15 @@ function Placard({
   year,
   copyrighted,
   position,
+  scale = 1,
 }: {
   artistName: string;
   title: string;
   year: number | null;
   copyrighted: boolean;
   position: [number, number, number];
+  /** A smaller card beside prints and miniatures (the layout's label scale). */
+  scale?: number;
 }) {
   const invalidate = useThree((s) => s.invalidate);
   const geometry = useMemo(() => placardGeometry(PLACARD_W, PLACARD_H, PLACARD_T), []);
@@ -568,5 +574,5 @@ function Placard({
     };
   }, [artistName, title, year, copyrighted, material, invalidate]);
 
-  return <mesh geometry={geometry} material={material} position={position} layers={PROP_LAYER} />;
+  return <mesh geometry={geometry} material={material} position={position} scale={[scale, scale, 1]} layers={PROP_LAYER} userData={FX_TARGET} />;
 }

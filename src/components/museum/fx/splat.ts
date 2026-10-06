@@ -755,6 +755,8 @@ function paintDrip(r: Rng, x: number, y: number, w: number, R: number, amount: n
 
 export interface EggThrow {
   seed: number;
+  /** size of this egg and how hard it lands (1 = typical) */
+  scale?: number;
   dirX: number;
   dirY: number;
   oblique: number;
@@ -775,7 +777,8 @@ export function buildEggSplat(p: EggThrow): SplatPlan {
   const theta = Math.atan2(p.dirY, p.dirX);
   const ca = Math.cos(theta);
   const sa = Math.sin(theta);
-  const R = 0.05 + 0.022 * r();
+  const S = p.scale ?? 1;
+  const R = (0.05 + 0.022 * r()) * S;
   const shapes: Shape[] = [];
 
   // egg white: a viscous, lobed pool with a few fat fingers
@@ -829,7 +832,7 @@ export function buildEggSplat(p: EggThrow): SplatPlan {
   const yx = body.cx + ca * R * 0.18 * (0.5 + e) + gauss(r) * R * 0.15;
   const yy = body.cy + sa * R * 0.18 * (0.5 + e) + gauss(r) * R * 0.15;
   const broken = r() < 0.62;
-  const yr = broken ? 0.016 + 0.006 * r() : 0.0135 + 0.0025 * r();
+  const yr = (broken ? 0.016 + 0.006 * r() : 0.0135 + 0.0025 * r()) * Math.sqrt(S);
 
   // thick white hugging the yolk
   shapes.push({
@@ -1047,6 +1050,8 @@ export interface BallHit {
   color: RGB;
   /** the gelatin shell */
   shell: RGB;
+  /** burst size (1 = typical): a clean break vs. a half-burst or a blow-out */
+  scale?: number;
 }
 
 /**
@@ -1058,7 +1063,7 @@ export function buildPaintballSplat(p: BallHit): SplatPlan {
   const r = rng(p.seed);
   const e = clamp(p.oblique, 0, 0.9);
   const theta = Math.atan2(p.dirY, p.dirX);
-  const R = 0.016 + 0.008 * r();
+  const R = (0.016 + 0.008 * r()) * (p.scale ?? 1);
   const prims: Prim[] = [];
   const { table, rmax } = bodyTable(r, R, { from: 3, to: 34, amp: 0.035, fall: 0.6 }, { n: 2, amp: 0.06, width: 0.2 }, { n: 1, amp: 0.05, width: 0.25 });
   const body: BodyPrim = {

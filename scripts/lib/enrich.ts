@@ -32,6 +32,8 @@ export interface EnrichablePainting {
   qid?: string | null;
   imageBytes?: number | null;
   imageCredit?: ImageCredit | null;
+  /** The lead (only read to recognise a portrait miniature). */
+  story?: string;
 }
 
 export interface EnrichableArtist {
@@ -91,6 +93,7 @@ const WD_API = "https://www.wikidata.org/w/api.php";
 const WDQS = "https://query.wikidata.org/sparql";
 const PAGEVIEWS = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia/all-access/user";
 
+const MM = "Q174789";
 // Wikidata unit item -> centimetres per unit.
 const UNIT_TO_CM: Record<string, number> = {
   Q174728: 1, // centimetre
@@ -295,7 +298,10 @@ const NOT_THE_PAINTING = new Set([
   "Q1424051", // frame (generic)
 ]);
 
-function quantityCm(claims: Claims, prop: string): { cm: number | null; note?: string } {
+function quantityCm(
+  claims: Claims,
+  prop: string
+): { cm: number | null; note?: string; unit?: string; amount?: number } {
   const statements = bestStatements(claims, prop)
     // Statements qualified "applies to part: frame" describe the frame.
     .filter((c) => !(c.qualifiers?.P518 ?? []).some((q) => NOT_THE_PAINTING.has(q.datavalue?.value?.id)));
@@ -311,8 +317,11 @@ function quantityCm(claims: Claims, prop: string): { cm: number | null; note?: s
     const factor = UNIT_TO_CM[unit];
     if (!factor) return { cm: null, note: `${prop} unit ${unit || "none"} unsupported` };
     const cm = Math.round(parseFloat(v.amount) * factor * 10) / 10;
+    // a millimetre value below MIN_CM may still be a unit slip (34.3 "mm" for a 34.3 cm panel)
+    const amount = parseFloat(v.amount);
+    if (unit === MM && Number.isFinite(cm) && cm * 10 >= MIN_CM && cm < MIN_CM) return { cm, unit, amount };
     if (!Number.isFinite(cm) || cm < MIN_CM || cm > MAX_CM) return { cm: null, note: `${prop}=${cm}cm out of range` };
-    return { cm };
+    return { cm, unit, amount };
   }
   return { cm: null };
 }
@@ -365,6 +374,22 @@ export function dimensions(claims: Claims, p: EnrichablePainting): Dimensions {
   let widthCm = w.cm;
   let heightCm = h.cm;
   const notes = [w.note, h.note].filter(Boolean) as string[];
+  // Recorded in millimetres yet under 5 cm: for anything but a portrait
+  // miniature that is a centimetre value entered with the wrong unit.
+  if (
+    widthCm != null &&
+    heightCm != null &&
+    w.unit === MM &&
+    h.unit === MM &&
+    Math.max(widthCm, heightCm) < 5 &&
+    !/miniature/i.test(`${p.title} ${p.story ?? ""}`)
+  ) {
+    notes.push(`unit slip: Wikidata ${w.amount} x ${h.amount} mm read as cm`);
+    widthCm = round1(w.amount!);
+    heightCm = round1(h.amount!);
+  }
+  if (widthCm != null && widthCm < MIN_CM) widthCm = null;
+  if (heightCm != null && heightCm < MIN_CM) heightCm = null;
   if (widthCm == null && heightCm == null) {
     // Tondi are recorded by diameter only.
     const d = quantityCm(claims, "P2386");

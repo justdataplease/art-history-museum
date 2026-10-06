@@ -13,6 +13,42 @@ export interface SeedPeriod {
 
 export const PERIODS: SeedPeriod[] = [
   {
+    slug: "chinese-painting",
+    name: "Chinese Painting",
+    wikiTitle: "Chinese painting",
+    startYear: 950,
+    endYear: 1950,
+    color: "#3b5b4b",
+    artists: [
+      "Shen Zhou",
+      "Shitao",
+      "Tang Yin",
+      "Emperor Huizong of Song",
+      "Dong Qichang",
+      "Wen Zhengming",
+      "Guo Xi",
+      "Bada Shanren",
+      "Wang Yuanqi",
+      "Wang Meng (painter)",
+      "Ni Zan",
+      "Wu Changshuo",
+      "Wang Shimin",
+      "Fan Kuan",
+      "Ma Yuan (painter)",
+      "Qian Xuan",
+      "Xu Beihong",
+      "Huang Gongwang",
+      "Juran (painter)",
+      "Li Cheng (painter)",
+      "Cui Bai",
+      "Wang Hui (Qing dynasty)",
+      "Qiu Ying",
+      "Zhao Mengfu",
+      "Yun Shouping",
+      "Chen Hongshou"
+    ]
+  },
+  {
     slug: "medieval-gothic",
     name: "Medieval & Gothic",
     wikiTitle: "Gothic art",
@@ -24,7 +60,25 @@ export const PERIODS: SeedPeriod[] = [
       "Cimabue",
       "Duccio",
       "Simone Martini",
-      "Gentile da Fabriano"
+      "Gentile da Fabriano",
+      "Pietro Lorenzetti",
+      "Pisanello",
+      "Ambrogio Lorenzetti",
+      "Andrei Rublev",
+      "Dionisius"
+    ]
+  },
+  {
+    slug: "persian-miniature",
+    name: "Persian Miniature",
+    wikiTitle: "Persian miniature",
+    startYear: 1300,
+    endYear: 1700,
+    color: "#2a8c8c",
+    artists: [
+      "Reza Abbasi",
+      "Sultan Mohammed",
+      "Aqa Mirak"
     ]
   },
   {
@@ -52,7 +106,38 @@ export const PERIODS: SeedPeriod[] = [
       "Pinturicchio",
       "Luca Signorelli",
       "Vittore Carpaccio",
-      "Piero di Cosimo"
+      "Piero di Cosimo",
+      "Carlo Crivelli",
+      "Domenico Ghirlandaio",
+      "Benozzo Gozzoli",
+      "Nuno Gonçalves"
+    ]
+  },
+  {
+    slug: "japanese-painting",
+    name: "Japanese Painting",
+    wikiTitle: "Japanese painting",
+    startYear: 1400,
+    endYear: 1900,
+    color: "#9c2f4f",
+    artists: [
+      "Sesshū Tōyō",
+      "Yosa Buson",
+      "Maruyama Ōkyo",
+      "Ogata Kōrin",
+      "Tawaraya Sōtatsu",
+      "Kanō Tan'yū",
+      "Hashimoto Gahō",
+      "Shibata Zeshin",
+      "Ike no Taiga",
+      "Kanō Eitoku",
+      "Watanabe Kazan",
+      "Hakuin Ekaku",
+      "Yamamoto Baiitsu",
+      "Tomioka Tessai",
+      "Tenshō Shūbun",
+      "Itō Jakuchū",
+      "Sakai Hōitsu"
     ]
   },
   {
@@ -76,7 +161,30 @@ export const PERIODS: SeedPeriod[] = [
       "Quentin Matsys",
       "Albrecht Altdorfer",
       "Hans Baldung",
-      "Matthias Grünewald"
+      "Matthias Grünewald",
+      "Robert Campin",
+      "Hugo van der Goes",
+      "Dieric Bouts",
+      "Geertgen tot Sint Jans",
+      "Stefan Lochner",
+      "Joachim Patinir",
+      "Karel van Mander"
+    ]
+  },
+  {
+    slug: "cretan-school",
+    name: "Cretan School",
+    wikiTitle: "Cretan school",
+    startYear: 1450,
+    endYear: 1700,
+    color: "#9a7b2c",
+    artists: [
+      "Michael Damaskinos",
+      "Theodore Poulakis",
+      "Georgios Klontzas",
+      "Andreas Ritzos",
+      "Angelos Akotantos",
+      "Emmanuel Tzanes"
     ]
   },
   {
@@ -96,7 +204,12 @@ export const PERIODS: SeedPeriod[] = [
       "Andrea del Sarto",
       "Lorenzo Lotto",
       "Sebastiano del Piombo",
-      "Giulio Romano"
+      "Giulio Romano",
+      "Cima da Conegliano",
+      "Moretto da Brescia",
+      "Palma Vecchio",
+      "Fra Bartolomeo",
+      "Alonso Berruguete"
     ]
   },
   {
@@ -115,7 +228,43 @@ export const PERIODS: SeedPeriod[] = [
       "Tintoretto",
       "Paolo Veronese",
       "El Greco",
-      "Rosso Fiorentino"
+      "Rosso Fiorentino",
+      "Domenico Beccafumi",
+      "Giorgio Vasari",
+      "Federico Barocci",
+      "Lavinia Fontana"
+    ]
+  },
+  {
+    slug: "indian-painting",
+    name: "Indian Painting",
+    wikiTitle: "Indian painting",
+    startYear: 1550,
+    endYear: 1950,
+    color: "#e0a526",
+    artists: [
+      "Abanindranath Tagore",
+      "Mir Sayyid Ali",
+      "Ustad Mansur",
+      "Nainsukh",
+      "Basawan",
+      "Manaku of Guler",
+      "Govardhan (artist)",
+      "Abu'l-Hasan (artist)",
+      "Nihâl Chand"
+    ]
+  },
+  {
+    slug: "cusco-school",
+    name: "Cusco School",
+    wikiTitle: "Cusco school",
+    startYear: 1550,
+    endYear: 1800,
+    color: "#8e5a9e",
+    artists: [
+      "Miguel Cabrera (painter)",
+      "Cristóbal de Villalpando",
+      "Juan Correa"
     ]
   },
   {
@@ -145,7 +294,25 @@ export const PERIODS: SeedPeriod[] = [
       "Jacob Jordaens",
       "Jan Brueghel the Elder",
       "Luca Giordano",
-      "Godfrey Kneller"
+      "Godfrey Kneller",
+      "Mattia Preti",
+      "Orazio Gentileschi",
+      "Salvator Rosa",
+      "Pietro da Cortona",
+      "Agostino Carracci",
+      "Domenichino",
+      "Ludovico Carracci",
+      "Frans Snyders",
+      "John Michael Wright",
+      "Juan de Valdés Leal",
+      "Alonso Cano",
+      "Claudio Coello",
+      "Juan Carreño de Miranda",
+      "Juan Sánchez Cotán",
+      "Francisco Herrera the Elder",
+      "Francisco Pacheco",
+      "Pieter Brueghel the Younger",
+      "Adriaen Brouwer"
     ]
   },
   {
@@ -164,7 +331,37 @@ export const PERIODS: SeedPeriod[] = [
       "Pieter de Hooch",
       "Jacob van Ruisdael",
       "Gerard ter Borch",
-      "Gerrit Dou"
+      "Gerrit Dou",
+      "Gerard van Honthorst",
+      "Gabriël Metsu",
+      "Aelbert Cuyp",
+      "Carel Fabritius",
+      "Willem Claesz. Heda",
+      "Rachel Ruysch",
+      "Clara Peeters",
+      "Hendrick Avercamp",
+      "Meindert Hobbema",
+      "Paulus Potter",
+      "Emanuel de Witte",
+      "Ambrosius Bosschaert"
+    ]
+  },
+  {
+    slug: "ukiyo-e",
+    name: "Ukiyo-e",
+    wikiTitle: "Ukiyo-e",
+    startYear: 1670,
+    endYear: 1900,
+    color: "#1f3f6e",
+    artists: [
+      "Hokusai",
+      "Hiroshige",
+      "Utamaro",
+      "Suzuki Harunobu",
+      "Utagawa Kuniyoshi",
+      "Tsukioka Yoshitoshi",
+      "Sharaku",
+      "Kunisada"
     ]
   },
   {
@@ -187,7 +384,18 @@ export const PERIODS: SeedPeriod[] = [
       "Joshua Reynolds",
       "Bernardo Bellotto",
       "Claude-Joseph Vernet",
-      "John Singleton Copley"
+      "John Singleton Copley",
+      "Jean-Baptiste Greuze",
+      "Pompeo Batoni",
+      "George Stubbs",
+      "Francesco Guardi",
+      "Giovanni Paolo Panini",
+      "Rosalba Carriera",
+      "Pietro Longhi",
+      "Richard Wilson (painter)",
+      "George Romney (painter)",
+      "Allan Ramsay (artist)",
+      "Paul Sandby"
     ]
   },
   {
@@ -202,7 +410,16 @@ export const PERIODS: SeedPeriod[] = [
       "Jean-Auguste-Dominique Ingres",
       "Élisabeth Vigée Le Brun",
       "Angelica Kauffman",
-      "Antoine-Jean Gros"
+      "Antoine-Jean Gros",
+      "Benjamin West",
+      "François Gérard",
+      "Gilbert Stuart",
+      "Anne-Louis Girodet de Roussy-Trioson",
+      "Anton Raphael Mengs",
+      "Marie-Guillemine Benoist",
+      "Henry Raeburn",
+      "Thomas Rowlandson",
+      "Christoffer Wilhelm Eckersberg"
     ]
   },
   {
@@ -229,7 +446,22 @@ export const PERIODS: SeedPeriod[] = [
       "Horace Vernet",
       "William Etty",
       "Gustave Doré",
-      "Carl Spitzweg"
+      "Carl Spitzweg",
+      "David Wilkie (artist)",
+      "Edwin Landseer",
+      "Théodore Chassériau",
+      "John Martin (painter)",
+      "Johan Christian Dahl",
+      "Richard Parkes Bonington",
+      "Samuel Palmer",
+      "David Roberts (painter)",
+      "Daniel Maclise",
+      "John Sell Cotman",
+      "Wilhelm Marstrand",
+      "Martinus Rørbye",
+      "Constantin Hansen",
+      "Christen Købke",
+      "Raden Saleh"
     ]
   },
   {
@@ -242,7 +474,8 @@ export const PERIODS: SeedPeriod[] = [
     artists: [
       "Thomas Cole",
       "Frederic Edwin Church",
-      "Albert Bierstadt"
+      "Albert Bierstadt",
+      "Thomas Moran"
     ]
   },
   {
@@ -264,7 +497,27 @@ export const PERIODS: SeedPeriod[] = [
       "Ernest Meissonier",
       "Lawrence Alma-Tadema",
       "James Tissot",
-      "Osman Hamdi Bey"
+      "Osman Hamdi Bey",
+      "William Powell Frith",
+      "Henryk Siemiradzki",
+      "Juan Luna",
+      "Hans Makart",
+      "Theodoros Vryzakis",
+      "Edward Lear",
+      "Vasily Polenov",
+      "Vasily Vereshchagin",
+      "Konstantin Makovsky",
+      "Alexei Savrasov",
+      "Vasily Perov",
+      "Konstantin Savitsky",
+      "Victor Meirelles",
+      "Pedro Américo",
+      "José María Velasco Gómez",
+      "Cornelius Krieghoff",
+      "Konstantinos Volanakis",
+      "Nikolaos Gyzis",
+      "Nicolae Grigorescu",
+      "Mihály Munkácsy"
     ]
   },
   {
@@ -288,7 +541,29 @@ export const PERIODS: SeedPeriod[] = [
       "John Singer Sargent",
       "Adolph Menzel",
       "Isaac Levitan",
-      "Albert Edelfelt"
+      "Albert Edelfelt",
+      "Arkhip Kuindzhi",
+      "Henry Ossawa Tanner",
+      "Rosa Bonheur",
+      "Jules Bastien-Lepage",
+      "Wilhelm Leibl",
+      "George Caleb Bingham",
+      "Jacek Malczewski",
+      "Viktor Vasnetsov",
+      "Vasily Surikov",
+      "Almeida Júnior",
+      "Jozef Israëls",
+      "Anton Mauve",
+      "Jacob Maris",
+      "Willem de Zwart",
+      "Carl Larsson",
+      "Anna Ancher",
+      "Michael Ancher",
+      "Christian Krohg",
+      "Kamal-ol-molk",
+      "Rodolfo Amoedo",
+      "Tivadar Csontváry Kosztka",
+      "Józef Chełmoński"
     ]
   },
   {
@@ -304,7 +579,10 @@ export const PERIODS: SeedPeriod[] = [
       "Edward Burne-Jones",
       "John William Waterhouse",
       "Ford Madox Brown",
-      "William Holman Hunt"
+      "William Holman Hunt",
+      "Evelyn De Morgan",
+      "John Atkinson Grimshaw",
+      "Arthur Hughes (artist)"
     ]
   },
   {
@@ -328,7 +606,29 @@ export const PERIODS: SeedPeriod[] = [
       "Henri Fantin-Latour",
       "Giovanni Boldini",
       "Peder Severin Krøyer",
-      "Joaquín Sorolla"
+      "Joaquín Sorolla",
+      "Childe Hassam",
+      "Max Liebermann",
+      "William Merritt Chase",
+      "Anders Zorn",
+      "Tom Roberts",
+      "Arthur Streeton",
+      "Valentin Serov",
+      "Walter Sickert",
+      "Stanisław Wyspiański",
+      "Mikhail Nesterov",
+      "Léon Bakst",
+      "Marie Bashkirtseff",
+      "Niko Pirosmani",
+      "Isaac Israëls",
+      "George Hendrik Breitner",
+      "Johan Jongkind",
+      "Helene Schjerfbeck",
+      "Frits Thaulow",
+      "Pedro Figari",
+      "Frederick McCubbin",
+      "Charles Conder",
+      "Olga Boznańska"
     ]
   },
   {
@@ -346,7 +646,11 @@ export const PERIODS: SeedPeriod[] = [
       "Paul Signac",
       "Henri de Toulouse-Lautrec",
       "Henri Rousseau",
-      "Pierre Bonnard"
+      "Pierre Bonnard",
+      "Théo van Rysselberghe",
+      "Suzanne Valadon",
+      "Émile Bernard",
+      "Édouard Vuillard"
     ]
   },
   {
@@ -360,7 +664,26 @@ export const PERIODS: SeedPeriod[] = [
       "Gustave Moreau",
       "Arnold Böcklin",
       "Mikhail Vrubel",
-      "Gustav Klimt"
+      "Gustav Klimt",
+      "James Ensor",
+      "George Frederic Watts",
+      "Pierre Puvis de Chavannes",
+      "Akseli Gallen-Kallela",
+      "Vilhelm Hammershøi",
+      "Alphonse Mucha",
+      "Odilon Redon",
+      "Ferdinand Hodler",
+      "Maurice Denis",
+      "William Orpen",
+      "Gwen John",
+      "Harold Gilman",
+      "Spencer Gore (artist)",
+      "Nicholas Roerich",
+      "Boris Kustodiev",
+      "Kuzma Petrov-Vodkin",
+      "Mikalojus Konstantinas Čiurlionis",
+      "Jan Toorop",
+      "Hugo Simberg"
     ]
   },
   {
@@ -372,7 +695,8 @@ export const PERIODS: SeedPeriod[] = [
     color: "#d0603a",
     artists: [
       "Henri Matisse",
-      "André Derain"
+      "André Derain",
+      "Raoul Dufy"
     ]
   },
   {
@@ -394,7 +718,19 @@ export const PERIODS: SeedPeriod[] = [
       "Lovis Corinth",
       "August Macke",
       "George Grosz",
-      "Amrita Sher-Gil"
+      "Amrita Sher-Gil",
+      "Emil Nolde",
+      "Paula Modersohn-Becker",
+      "Alexej von Jawlensky",
+      "Stanisław Ignacy Witkiewicz",
+      "Natalia Goncharova",
+      "El Lissitzky",
+      "Pavel Filonov",
+      "Chaïm Soutine",
+      "Josef Čapek",
+      "Sonia Delaunay",
+      "John Bauer (illustrator)",
+      "Kurt Schwitters"
     ]
   },
   {
@@ -411,7 +747,12 @@ export const PERIODS: SeedPeriod[] = [
       "Fernand Léger",
       "Marcel Duchamp",
       "Robert Delaunay",
-      "Umberto Boccioni"
+      "Umberto Boccioni",
+      "Jean Metzinger",
+      "Albert Gleizes",
+      "Francis Picabia",
+      "Giacomo Balla",
+      "Tamara de Lempicka"
     ]
   },
   {
@@ -425,7 +766,8 @@ export const PERIODS: SeedPeriod[] = [
       "Wassily Kandinsky",
       "Kazimir Malevich",
       "Piet Mondrian",
-      "Paul Klee"
+      "Paul Klee",
+      "Theo van Doesburg"
     ]
   },
   {
@@ -442,7 +784,9 @@ export const PERIODS: SeedPeriod[] = [
       "Max Ernst",
       "Joan Miró",
       "Frida Kahlo",
-      "Paul Delvaux"
+      "Paul Delvaux",
+      "Leonora Carrington",
+      "László Moholy-Nagy"
     ]
   },
   {
@@ -458,7 +802,39 @@ export const PERIODS: SeedPeriod[] = [
       "Norman Rockwell",
       "Grant Wood",
       "Andrew Wyeth",
-      "Grandma Moses"
+      "Grandma Moses",
+      "Thomas Hart Benton (painter)",
+      "George Bellows",
+      "Charles Demuth"
+    ]
+  },
+  {
+    slug: "group-of-seven",
+    name: "Group of Seven",
+    wikiTitle: "Group of Seven (artists)",
+    startYear: 1913,
+    endYear: 1935,
+    color: "#4f7a3a",
+    artists: [
+      "Emily Carr",
+      "Tom Thomson",
+      "A. Y. Jackson",
+      "Frank Johnston (artist)",
+      "Frederick Varley"
+    ]
+  },
+  {
+    slug: "mexican-muralism",
+    name: "Mexican Muralism",
+    wikiTitle: "Mexican muralism",
+    startYear: 1920,
+    endYear: 1970,
+    color: "#a35f2d",
+    artists: [
+      "Diego Rivera",
+      "David Alfaro Siqueiros",
+      "Rufino Tamayo",
+      "José Clemente Orozco"
     ]
   },
   {
@@ -472,7 +848,8 @@ export const PERIODS: SeedPeriod[] = [
       "Jackson Pollock",
       "Mark Rothko",
       "Willem de Kooning",
-      "Barnett Newman"
+      "Barnett Newman",
+      "Joan Mitchell"
     ]
   },
   {
@@ -502,7 +879,8 @@ export const PERIODS: SeedPeriod[] = [
       "Jean-Michel Basquiat",
       "Keith Haring",
       "Banksy",
-      "Gerhard Richter"
+      "Gerhard Richter",
+      "Jean Dubuffet"
     ]
   }
 ];

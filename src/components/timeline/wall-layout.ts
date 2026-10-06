@@ -212,7 +212,12 @@ export function computeWallLayout(inp: WallInput): WallLayout {
   const railRows = railH >= 2 * RAIL_ROW_H + 4 ? 2 : 1;
 
   // the period being dived into (I.f > 0) grows its rows toward full size
-  const pitch = (I: PInfo, R: number) => R + I.f * Math.max(0, FOCUS_R - R);
+  // ...but never past the size at which its whole band (wall text included)
+  // fits between the ruler, with its title above it, and the footer
+  const bandRoom = bottom - top - 40;
+  const focusR = (I: PInfo) =>
+    clamp((bandRoom - TEXT_H - PAD_T - PAD_B) / Math.max(1, I.n), 26, FOCUS_R);
+  const pitch = (I: PInfo, R: number) => R + I.f * Math.max(0, focusR(I) - R);
   const laneContent = (L: number, R: number, textOn: number) => {
     let m = 0;
     for (const p of laneP[L]) {
@@ -377,7 +382,9 @@ export function computeWallLayout(inp: WallInput): WallLayout {
         mode === "full"
           ? label > 0 && datesW <= room
           : label > 0 && R >= 17 && nameW + 8 + datesW <= room;
-      const onScreen = le > -30 && ls < w + 30 && rowY + R > top - 30 && rowY < h + 10;
+      // a row that has scrolled under the footer row's veil is as good as off
+      // screen: not drawn, and keyboard focus on it brings it up into view
+      const onScreen = le > -30 && ls < w + 30 && rowY + R > top - 30 && rowY < bottom + 4;
       if (onScreen) {
         const e = rowExtent.get(p.slug);
         const a0 = Math.max(ls, 0);

@@ -8,14 +8,6 @@ import { wikiFilePage } from "@/lib/img";
 import type { Painting } from "@/lib/types";
 import styles from "./museum.module.css";
 
-/** Attribution of the image Wikipedia shows (Wikimedia Commons file page data). */
-interface ImageCredit {
-  author: string | null;
-  license: string;
-  licenseUrl: string | null;
-  page: string;
-}
-
 const TEXT_LICENSE_URL = "https://creativecommons.org/licenses/by-sa/4.0/";
 const ext = { target: "_blank", rel: "noopener noreferrer" } as const;
 
@@ -33,7 +25,7 @@ function sourceName(page: string): string {
 /** Image and text attribution under the story: who made the photograph or
  *  scan and under what licence, and the licence of Wikipedia's text. */
 function Credits({ painting: p }: { painting: Painting }) {
-  const credit = (p as Painting & { imageCredit?: ImageCredit | null }).imageCredit ?? null;
+  const credit = p.imageCredit ?? null;
   const page = credit?.page || (p.imageUrl ? wikiFilePage(p.imageUrl) : null);
   let image: ReactNode = null;
   if (p.imageUrl && p.copyrighted) {

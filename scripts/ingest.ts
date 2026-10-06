@@ -58,6 +58,17 @@ const BATCH = 8;
 // A series article sometimes leads with a montage of every version rather
 // than one painting; such an image can't hang as a single canvas.
 const MONTAGE = /collage|montage|compilation|comparison|all[ _]versions|mosaic[ _]of|grid/i;
+// A Commons-only work (no article) is hung from its Wikidata image alone, so
+// that image must be the whole work: not a detail, a preparatory sketch, the
+// back, a technical image or a photo of the room it hangs in.
+// Chinese and Japanese works on Commons are often split into sections of a
+// scroll, close-ups, seals, colophons or calligraphy-only sheets: for those
+// galleries a Commons-only image must name none of these.
+const EAST_ASIAN = new Set(["chinese-painting", "japanese-painting", "ukiyo-e"]);
+const EAST_ASIAN_SKIP =
+  /\b(seals?|calligraph\w*|colophons?|inscriptions?|poems?|part|parts|section|sections|segment|fragment|cropped|crop|close-?up|enlarged|zoom)\b|部分|局部|書/i;
+const COMMONS_ONLY_SKIP =
+  /\b(details?|ausschnitt|particolare|d[ée]tail|sketch|esquisse|skizze|study for|frame[ds]?|rahmen|verso|reverse|x-ray|infrared|exhibition|ausstellung|installation|in situ)\b/i;
 
 export interface PaintingOut {
   slug: string;
@@ -134,7 +145,7 @@ async function commonsFileInfo(filePathUrl: string): Promise<{
   if (!info?.url) return null;
   const desc = info.extmetadata?.ImageDescription?.value;
   return {
-    url: info.url,
+    url: canonicalImageUrl(info.url),
     width: info.width,
     height: info.height,
     description: desc ? stripHtml(desc) : "",
@@ -244,13 +255,30 @@ export async function ingestArtist(
     inCopyright,
   };
   if (qid) {
-    const candidates = await sparqlLimit(() => getPaintingsByArtist(qid));
+    // the ukiyo-e masters' works are woodblock prints; everyone else hangs paintings only
+    const candidates = await sparqlLimit(() => getPaintingsByArtist(qid, { prints: periodSlug === "ukiyo-e" }));
     const withArticle = candidates.filter((c) => c.article);
     const imageOnly = candidates.filter((c) => !c.article && c.image);
 
     const fetchCandidate = async (cand: (typeof withArticle)[number]): Promise<PaintingOut | null> => {
       const ps = await wikiLimit(() => getSummary(cand.article!));
       if (!ps) return null;
+      // The item is a painting, but its article can redirect elsewhere (the
+      // artist's own biography, a sitter, a building): vet what we landed on.
+      if (ps.title === summary.title || (ps.wikibase_item && ps.wikibase_item !== cand.qid)) {
+        const why = notAnArtwork({
+          title: ps.title,
+          lead: ps.extract,
+          qid: ps.wikibase_item ?? null,
+          classes: await itemClasses(ps.wikibase_item),
+          artistTitle: summary.title,
+          artistQid: qid,
+        });
+        if (why) {
+          console.log(`     skip "${ps.title}" (from ${cand.qid}): ${why}`);
+          return null;
+        }
+      }
       const img = ps.originalimage;
       let imageUrl = img?.source ?? null;
       let w = img?.width ?? null;
@@ -349,11 +377,20 @@ export async function ingestArtist(
 
     // Top up with Commons-only paintings (image + the Commons description when
     // it is English prose — not a caption, a template or another language).
+    // Only whole works: no details, sketches, montages, frames or gallery views.
     if (paintings.length < MIN_PAINTINGS) {
+      const haveSlug = new Set(paintings.map((p) => p.slug));
+      const haveImage = new Set(paintings.map((p) => p.imageUrl));
       for (const cand of imageOnly) {
         if (paintings.length >= MIN_PAINTINGS + 2) break;
+        const file = decodeURIComponent(cand.image!.split("/").pop() ?? "");
+        if (COMMONS_ONLY_SKIP.test(`${file} ${cand.label}`) || MONTAGE.test(file)) continue;
+        if (EAST_ASIAN.has(periodSlug) && EAST_ASIAN_SKIP.test(`${file} ${cand.label}`)) continue;
+        if (haveSlug.has(slugify(cand.label))) continue;
         const ci = await commonsFileInfo(cand.image!);
-        if (!ci || ci.width < 600) continue;
+        if (!ci || ci.width < 600 || haveImage.has(ci.url)) continue;
+        haveSlug.add(slugify(cand.label));
+        haveImage.add(ci.url);
         paintings.push({
           slug: slugify(cand.label),
           title: cand.label,

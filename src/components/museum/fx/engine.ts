@@ -50,6 +50,24 @@ const MARKER_RATE = 8;
 const REFILL_S = 0.9;
 /** Paintball speed (m/s): fast, but a few frames in the air across a room. */
 const BALL_SPEED = 30;
+
+/** Per-hit size factor: [min, max] spread and the typical impact speed (m/s). */
+const SHOT_SIZE: Record<ProjectileKind, { min: number; max: number; speed: number }> = {
+  paint: { min: 0.5, max: 1.7, speed: 9 },
+  egg: { min: 0.7, max: 1.4, speed: 9 },
+  ball: { min: 0.55, max: 1.8, speed: BALL_SPEED },
+};
+
+function shotScale(seed: number, kind: ProjectileKind, speed: number): number {
+  const { min, max, speed: v0 } = SHOT_SIZE[kind];
+  // two independent draws from the seed, averaged: a bell around the middle
+  const h = Math.imul(seed ^ 0x9e3779b9, 0x85ebca6b) >>> 0;
+  const u = ((h & 0xffff) / 0xffff + (h >>> 16) / 0xffff) / 2;
+  // skew towards the smaller sizes so big bursts stay rare
+  const t = Math.pow(u, 1.35);
+  const hard = Math.min(1.25, Math.max(0.85, Math.sqrt(speed / v0)));
+  return (min + (max - min) * t) * hard;
+}
 /** How far the blade reaches from the eye (m). */
 const SWORD_REACH = 1.75;
 /** The conservator: each item's dissolve, and the most the whole sequence may take. */
@@ -257,6 +275,11 @@ function ignored(o: THREE.Object3D | null): boolean {
     if (!p.visible || p.userData.fxIgnore) return true;
   }
   return false;
+}
+
+/** On the main layer, or a prop (sign, label, fixture) that opts in with userData.fxTarget. */
+function reachable(o: THREE.Object3D): boolean {
+  return o.layers.isEnabled(0) || o.userData.fxTarget === true;
 }
 
 function materialOk(m: THREE.Material | THREE.Material[]): boolean {
@@ -499,12 +522,13 @@ export class FxEngine {
     camera.updateMatrixWorld();
     _ray.setFromCamera(ndc, camera);
     _ray.layers.set(0);
+    _ray.layers.enable(PROP_LAYER);
     _ray.far = 60;
     _hits.length = 0;
     _ray.intersectObjects(scene.children, true, _hits);
     for (const h of _hits) {
       const obj = h.object as THREE.Mesh;
-      if (!obj.isMesh || ignored(obj) || !materialOk(obj.material)) continue;
+      if (!obj.isMesh || !reachable(obj) || ignored(obj) || !materialOk(obj.material)) continue;
       if ((obj as unknown as THREE.InstancedMesh).isInstancedMesh) continue;
       const canvas = this.canvases.get(obj) ?? null;
       const n = h.face ? h.face.normal.clone().transformDirection(obj.matrixWorld) : new THREE.Vector3(0, 0, 1);
@@ -583,12 +607,14 @@ export class FxEngine {
     const dirY = vt.dot(frame.down) / tl;
     const oblique = smoothstep(0.3, 0.97, sinI) * 0.85;
 
+    // no two hits the same size: a skewed spread (mostly near typical, the odd
+    // small break or big burst) times how hard it lands
+    const size = shotScale(seed, kind, speed);
     let plan: SplatPlan;
     if (kind === "paint") {
-      const r = ((seed >>> 8) % 1000) / 1000;
       plan = buildPaintSplat({
         seed,
-        radius: 0.1 + 0.06 * r,
+        radius: 0.12 * size,
         dirX,
         dirY,
         oblique,
@@ -597,9 +623,9 @@ export class FxEngine {
         amount: 0.65 + 0.35 * (((seed >>> 4) % 997) / 997),
       });
     } else if (kind === "ball") {
-      plan = buildPaintballSplat({ seed, dirX, dirY, oblique, vertical, color: hexRgb(colorHex), shell: hexRgb(shellHex ?? colorHex) });
+      plan = buildPaintballSplat({ seed, dirX, dirY, oblique, vertical, color: hexRgb(colorHex), shell: hexRgb(shellHex ?? colorHex), scale: size });
     } else {
-      plan = buildEggSplat({ seed, dirX, dirY, oblique, vertical });
+      plan = buildEggSplat({ seed, dirX, dirY, oblique, vertical, scale: size });
     }
 
     const receivers = this.receivers(frame, plan.extent, hit, kind === "ball");
@@ -771,11 +797,10 @@ export class FxEngine {
       }
     }
     const out: THREE.Mesh[] = [];
-    _ray.layers.set(0);
     this.o.scene.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh || (m as unknown as THREE.InstancedMesh).isInstancedMesh) return;
-      if (!m.layers.test(_ray.layers) || this.canvases.has(m) || ignored(m) || !materialOk(m.material)) return;
+      if (!reachable(m) || this.canvases.has(m) || ignored(m) || !materialOk(m.material)) return;
       const g = m.geometry;
       if (!g.getAttribute("position")) return;
       if (!g.boundingBox) g.computeBoundingBox();

@@ -7,7 +7,7 @@
 
 import type { ArtistOut, PaintingOut } from "../ingest";
 import { fetchFileMeta, wikiFileOf, type FileMeta, type ImageCredit } from "./credits";
-import { fetchJson, sleep } from "./wiki";
+import { canonicalImageUrl, fetchJson, sleep } from "./wiki";
 import {
   IMAGE_REVIEW,
   artistInCopyright,
@@ -123,7 +123,8 @@ export async function commonsImageInfo(files: string[]): Promise<Map<string, Rep
     const pages = new Map((data?.query?.pages ?? []).map((p) => [p.title, p]));
     for (const f of batch) {
       const ii = pages.get(norm.get(`File:${f}`) ?? `File:${f}`)?.imageinfo?.[0];
-      if (ii?.url) out.set(f, { url: ii.url, width: ii.width, height: ii.height, bytes: ii.size ?? null });
+      // imageinfo URLs carry tracking parameters (?utm_source=…): keep the plain file URL
+      if (ii?.url) out.set(f, { url: canonicalImageUrl(ii.url), width: ii.width, height: ii.height, bytes: ii.size ?? null });
     }
   }
   return out;
@@ -205,6 +206,64 @@ export function reviewImages(
     });
   }
   return { changes, unreviewed };
+}
+
+// ---------- 2b. book covers, calligraphy, seals ----------
+
+// Manuscript and scroll traditions: Commons often has the binding, a lacquer
+// board, a text-only folio, a whole codex, a seal or colophon section or a box
+// lid instead of the painting itself.
+const BOOK_ART = new Set(["indian-painting", "persian-miniature"]);
+const EAST_ASIAN_ART = new Set(["chinese-painting", "japanese-painting", "ukiyo-e"]);
+const NOT_A_FOLIO =
+  /\b(covers?|book ?covers?|bindings?|bookbinding|binding board|lacquer(?:ed)? (?:boards?|covers?)|doublures?|spine|codex|calligraph\w*|text (?:page|folio|only)|folio of text|endpapers?|box lid|lid)\b/i;
+const NOT_A_FOLIO_CATEGORY = /^(Book covers|Bookbindings?|Lacquer|.*calligraphy|Islamic calligraphy|Codices)\b/i;
+const NOT_A_SCROLL_PAINTING =
+  /\b(colophons?|seal impressions?|seals? only|seal script|calligraph\w*|box lid|lid|inscription only)\b|題跋|款識/i;
+const NOT_A_SCROLL_CATEGORY = /^(Colophons|Seals|Chinese seals|Japanese seals|.*calligraphy)\b/i;
+
+/**
+ * Drop (or, in copyright, blank) images that show a cover, binding, text
+ * page, codex, seal, colophon or box lid instead of the painting. Returns the
+ * changes and the number rejected per period.
+ */
+export function rejectNonPaintingImages(
+  artists: ArtistOut[],
+  meta: Map<string, FileMeta>
+): { changes: string[]; perPeriod: Record<string, number> } {
+  const changes: string[] = [];
+  const perPeriod: Record<string, number> = {};
+  for (const a of artists) {
+    const book = BOOK_ART.has(a.periodSlug);
+    const scroll = EAST_ASIAN_ART.has(a.periodSlug);
+    if (!book && !scroll) continue;
+    const copyrighted = artistInCopyright(a.birthYear, a.deathYear);
+    a.paintings = a.paintings.filter((p) => {
+      if (!p.imageUrl) return true;
+      if (IMAGE_REVIEW[key(a, p)] === "ok") return true;
+      const m = meta.get(p.imageUrl);
+      const text = `${fileNameOf(p.imageUrl)} ${m?.objectName ?? ""}`;
+      const cats = m?.categories ?? [];
+      const hit = book
+        ? NOT_A_FOLIO.test(text) || cats.some((c) => NOT_A_FOLIO_CATEGORY.test(c))
+        : NOT_A_SCROLL_PAINTING.test(text) || cats.some((c) => NOT_A_SCROLL_CATEGORY.test(c));
+      if (!hit) return true;
+      perPeriod[a.periodSlug] = (perPeriod[a.periodSlug] ?? 0) + 1;
+      const was = fileNameOf(p.imageUrl);
+      if (copyrighted || p.copyrighted) {
+        p.imageUrl = null;
+        p.imageWidth = null;
+        p.imageHeight = null;
+        p.imageBytes = null;
+        p.copyrighted = true;
+        changes.push(`${key(a, p)}: image removed, not the painting ("${was}")`);
+        return true;
+      }
+      changes.push(`${key(a, p)} "${p.title}": dropped, its image is not the painting ("${was}")`);
+      return false;
+    });
+  }
+  return { changes, perPeriod };
 }
 
 // ---------- 3. copyright labels ----------
@@ -327,6 +386,9 @@ export async function vetCollection(artistsOut: ArtistOut[], problems: string[])
   meta = new Map([...meta, ...replacementMeta]);
   for (const r of review.changes) problems.push(`image: ${r}`);
   for (const r of review.unreviewed) problems.push(`image check: ${r}`);
+  const covers = rejectNonPaintingImages(artistsOut, meta);
+  for (const r of covers.changes) problems.push(`image: ${r}`);
+  for (const [period, n] of Object.entries(covers.perPeriod)) problems.push(`image filter: ${period} ${n} covers / text pages / seals rejected`);
   for (const r of labelCopyright(artistsOut)) problems.push(`©: ${r}`);
   for (const r of cleanCommonsStories(artistsOut)) problems.push(`commons story: ${r}`);
   for (const r of fixPagedImages(artistsOut)) problems.push(`paged image: ${r}`);

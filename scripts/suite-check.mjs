@@ -179,6 +179,15 @@ const work = await page.evaluate((last) => {
   const pitch = Math.atan2(work.y - 1.65, 3);
   await place(page, sx, work.z, yaw, pitch);
   await page.waitForTimeout(500);
+  // collision may have nudged the visitor (a bench, a doorway jamb): aim again
+  // from where they actually stand, so a small work isn't missed by a frame edge
+  {
+    const at = await cam(page);
+    const dx = work.x - at.x;
+    const dz = work.z - at.z;
+    await place(page, at.x, at.z, Math.atan2(-dx, -dz), Math.atan2(work.y - 1.65, Math.hypot(dx, dz)));
+    await page.waitForTimeout(300);
+  }
   await page.mouse.click(800, 450);
   await page.waitForTimeout(2600);
   const s = await cam(page);

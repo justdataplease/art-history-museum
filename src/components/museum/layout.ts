@@ -1,4 +1,5 @@
 import type { Painting } from "@/lib/types";
+import type { WorkScale } from "./theme";
 
 export interface Placement {
   painting: Painting;
@@ -8,6 +9,8 @@ export interface Placement {
   h: number; // canvas height in meters
   /** Room of the suite the work hangs in (0 = the entrance room). */
   room: number;
+  /** Wall-label scale (1: the standard card; smaller beside prints and miniatures). */
+  label?: number;
 }
 
 export interface Bench {
@@ -63,6 +66,9 @@ export interface GalleryLayout {
   doorways: Doorway[];
   /** The flagship's screen in the entrance room (long suites only). */
   screen: Screen | null;
+  /** Lighting rails' distance in from the side walls (TRACK_INSET in a hall,
+   *  less in a low cabinet so the spots keep their ~30° aim). */
+  trackInset: number;
 }
 
 /** Centre line for small and mid-sized works (museum standard ~1.45-1.60 m). */
@@ -103,8 +109,6 @@ const BASE_WALL_HEIGHT = 4.7;
 const CABINET_WALL_HEIGHT = 4.2;
 const MIN_HALL_LENGTH = 15;
 const CABINET_HALL_LENGTH = 12;
-/** Clear wall between one work's footprint (frame + label) and the next. */
-const AIR = 1.2;
 /** Near (entrance) wall to the first footprint along the side walls. */
 const ENTRY_CLEAR = 1.7;
 /** Last side-wall footprint to the far wall. */
@@ -137,21 +141,80 @@ const SCREEN_PASSAGE = 1.7;
 export const CROSS_WALL_THICKNESS = 0.4;
 
 /** Moulding width the layout budgets for: the widest era frame (0.13 m)
- *  with a margin, growing for monumental canvases whose frames scale up. */
+ *  with a margin, growing for monumental canvases whose frames scale up,
+ *  and less for small works, whose frames scale down (frameScale). */
 export function frameAllowance(w: number, h: number): number {
-  return Math.max(0.16, 0.03 * Math.max(w, h));
+  const side = Math.max(w, h);
+  return Math.max(Math.min(0.16, 0.05 + 0.12 * side), 0.03 * side);
 }
 
 /** Space a work needs on its label side, beyond the canvas edge. */
-function labelReach(w: number, h: number): number {
-  return frameAllowance(w, h) + PLACARD_GAP + PLACARD_W;
+function labelReach(w: number, h: number, label = 1): number {
+  return frameAllowance(w, h) + PLACARD_GAP * label + PLACARD_W * label;
+}
+
+/**
+ * How a room of a given kind of work is hung. Works on paper (prints,
+ * miniatures) hang at their real size, so a room holds more of them, closer
+ * together, with a smaller wall label; a sheet whose size is not recorded is
+ * given its format's typical size instead of an easel painting's.
+ */
+interface Hanging {
+  /** Most works one room holds. */
+  roomMax: number;
+  /** Clear wall between one work's footprint (frame + label) and the next. */
+  air: number;
+  /** Wall-label scale. */
+  label: number;
+  /** Smallest long side a work is shown at (m). */
+  minSide: number;
+  /** Small works hang in cabinets, as print rooms and miniature galleries
+   *  do: a narrower, lower, shorter room, works centred a little lower
+   *  (visitors lean in), a narrower doorway, the track closer to the walls. */
+  cabinet?: Cabinet;
+}
+
+interface Cabinet {
+  width: number;
+  height: number;
+  /** Shortest room (a cabinet of two works). */
+  minLength: number;
+  entryClear: number;
+  farClear: number;
+  /** Centre height of the works. */
+  eye: number;
+  trackInset: number;
+  /** Half the doorway's clear width. */
+  doorHalf: number;
+}
+const HANGING: Record<WorkScale, Hanging> = {
+  painting: { roomMax: 12, air: 1.2, label: 1, minSide: 0.25 },
+  scroll: { roomMax: 12, air: 1.1, label: 1, minSide: 0.2 },
+  // a print room: a lighter cabinet, prints hung in rows (14 to a room: a
+  // suite draws three rooms of works at once, so this keeps a 300-print
+  // suite near a painting suite's per-frame cost)
+  print: {
+    roomMax: 14, air: 0.6, label: 0.58, minSide: 0.15,
+    cabinet: { width: 6.4, height: 3.8, minLength: 7, entryClear: 1.3, farClear: 1.1, eye: 1.45, trackInset: 1.35, doorHalf: 0.95 },
+  },
+  // a miniature cabinet: about ten works to a room of 7 to 8 m
+  miniature: {
+    roomMax: 12, air: 0.5, label: 0.58, minSide: 0.12,
+    cabinet: { width: 5.4, height: 3.4, minLength: 6, entryClear: 1.2, farClear: 1.0, eye: 1.45, trackInset: 1.1, doorHalf: 0.8 },
+  },
+  icon: { roomMax: 12, air: 1.0, label: 0.85, minSide: 0.2 },
+};
+
+export interface LayoutOptions {
+  /** What the gallery hangs (the theme's `works`); paintings by default. */
+  works?: WorkScale;
 }
 
 /** Physical canvas size in metres. Prefers Wikidata's measured size
  *  (keeping the image's own aspect so the scan is never distorted); with
  *  only one side measured, the other follows from the image's proportions;
  *  with neither, a pixel-aspect heuristic. */
-export function canvasSize(p: Painting): { w: number; h: number } {
+export function canvasSize(p: Painting, works: WorkScale = "painting"): { w: number; h: number } {
   const pxAspect =
     p.imageWidth && p.imageHeight && p.imageWidth > 0 && p.imageHeight > 0
       ? p.imageWidth / p.imageHeight
@@ -178,9 +241,10 @@ export function canvasSize(p: Painting): { w: number; h: number } {
     const shrink = Math.min(1, 12 / w, 7.5 / h);
     w *= shrink;
     h *= shrink;
-    const grow = Math.max(1, 0.25 / Math.max(w, h));
+    const grow = Math.max(1, HANGING[works].minSide / Math.max(w, h));
     return { w: w * grow, h: h * grow };
   }
+  if (works !== "painting") return typicalSize(works, pxAspect);
   if (!pxAspect) return unknownSize(p.slug);
   const aspect = pxAspect;
   if (aspect >= 1.4) {
@@ -210,9 +274,33 @@ function unknownSize(slug: string): { w: number; h: number } {
   return { w, h };
 }
 
-/** Height of a work's centre above the floor. */
-export function hangHeight(h: number): number {
-  return Math.max(EYE, h / 2 + MIN_BOTTOM);
+/**
+ * A work on paper or silk of unknown size, from its format and the image's
+ * proportions: an oban print (~26 x 38 cm), an album or manuscript page
+ * (~20 x 30 cm), an icon panel (~50 x 65 cm); for East Asian painting, a hanging scroll (tall), a
+ * handscroll (a long strip ~32 cm high), a folding screen (~1.6 m high) or
+ * an album leaf.
+ */
+function typicalSize(works: WorkScale, pxAspect: number): { w: number; h: number } {
+  const byLong = (long: number, aspect: number) =>
+    aspect >= 1 ? { w: long, h: long / aspect } : { w: long * aspect, h: long };
+  if (works === "print") return byLong(0.38, pxAspect || 0.69);
+  if (works === "miniature") return byLong(0.3, pxAspect || 0.68);
+  if (works === "icon") return byLong(0.65, pxAspect || 0.78);
+  const a = pxAspect || 0.45;
+  if (a < 0.6) return { w: 1.4 * a, h: 1.4 }; // hanging scroll
+  if (a > 2.8) {
+    // handscroll: ~32 cm high, as long as the image (within a wall's reach)
+    const w = Math.min(6, 0.32 * a);
+    return { w, h: w / a };
+  }
+  if (a >= 1.6) return { w: 1.5 * a, h: 1.5 }; // folding screen
+  return byLong(0.6, a); // album leaf or fan
+}
+
+/** Height of a work's centre above the floor (`eye`: the centre line). */
+export function hangHeight(h: number, eye = EYE): number {
+  return Math.max(eye, h / 2 + MIN_BOTTOM);
 }
 
 /** The flagship: most-viewed article over the last year, else the first
@@ -246,7 +334,11 @@ interface Sized {
   far: number;
 }
 
-export function buildLayout(paintings: Painting[]): GalleryLayout {
+export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): GalleryLayout {
+  const works = opts.works ?? "painting";
+  const hanging = HANGING[works];
+  const size = (p: Painting) => canvasSize(p, works);
+  const reach = (w: number, h: number) => labelReach(w, h, hanging.label);
   if (paintings.length === 0) {
     return {
       hallWidth: BASE_HALL_WIDTH,
@@ -257,8 +349,13 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
       rooms: [{ index: 0, z0: -MIN_HALL_LENGTH / 2, z1: MIN_HALL_LENGTH / 2, years: null }],
       doorways: [],
       screen: null,
+      trackInset: TRACK_INSET,
     };
   }
+  const cab = hanging.cabinet;
+  const entryClear = cab?.entryClear ?? ENTRY_CLEAR;
+  const farClear = cab?.farClear ?? FAR_CLEAR;
+  const eye = cab?.eye ?? EYE;
 
   const anchorIdx = pickAnchor(paintings);
   const anchor = paintings[anchorIdx];
@@ -270,7 +367,7 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
   // A big collection becomes a suite: chronological chapters of at most
   // ROOM_MAX works in rooms along one axis. The flagship closes the last
   // room, or, in a suite longer than VISTA_ROOMS, opens the first.
-  const roomSizes = splitRooms(paintings.length);
+  const roomSizes = splitRooms(paintings.length, hanging.roomMax);
   const nRooms = roomSizes.length;
   const overture = nRooms > VISTA_ROOMS;
   const anchorRoom = overture ? 0 : nRooms - 1;
@@ -290,9 +387,9 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
     const left: Sized[] = [];
     const right: Sized[] = [];
     works.forEach((p, i) => {
-      const { w, h } = canvasSize(p);
+      const { w, h } = size(p);
       const plain = w / 2 + frameAllowance(w, h);
-      const label = w / 2 + labelReach(w, h);
+      const label = w / 2 + reach(w, h);
       if (i % 2 === 0) left.push({ painting: p, w, h, near: plain, far: label });
       else right.push({ painting: p, w, h, near: label, far: plain });
     });
@@ -302,40 +399,40 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
   // 0 for a room of cabinet pictures (largest side <= 0.9 m), 1 from ~2.1 m up.
   const largest = Math.max(
     ...[anchor, ...rest].map((p) => {
-      const s = canvasSize(p);
+      const s = size(p);
       return Math.max(s.w, s.h);
     })
   );
   const grand = Math.min(1, Math.max(0, (largest - 0.9) / 1.2));
-  const baseWidth = CABINET_HALL_WIDTH + (BASE_HALL_WIDTH - CABINET_HALL_WIDTH) * grand;
-  const baseHeight = CABINET_WALL_HEIGHT + (BASE_WALL_HEIGHT - CABINET_WALL_HEIGHT) * grand;
-  const minLength = CABINET_HALL_LENGTH + (MIN_HALL_LENGTH - CABINET_HALL_LENGTH) * grand;
+  const baseWidth = cab?.width ?? CABINET_HALL_WIDTH + (BASE_HALL_WIDTH - CABINET_HALL_WIDTH) * grand;
+  const baseHeight = cab?.height ?? CABINET_WALL_HEIGHT + (BASE_WALL_HEIGHT - CABINET_WALL_HEIGHT) * grand;
+  const minLength = cab?.minLength ?? CABINET_HALL_LENGTH + (MIN_HALL_LENGTH - CABINET_HALL_LENGTH) * grand;
 
   const run = (ws: Sized[]) =>
-    ws.reduce((s, x) => s + x.near + x.far, 0) + AIR * Math.max(0, ws.length - 1);
+    ws.reduce((s, x) => s + x.near + x.far, 0) + hanging.air * Math.max(0, ws.length - 1);
   // Each room is as long as its own works need (the same rule as one hall);
   // an overture room leaves the flagship's screen a good viewing distance.
   const roomLengths = walls.map(({ left, right }, r) =>
     Math.max(
       Math.ceil(minLength * 10) / 10,
-      Math.ceil((ENTRY_CLEAR + Math.max(run(left), run(right)) + FAR_CLEAR) * 10) / 10,
-      overture && r === 0 ? Math.ceil((SCREEN_BACK + 15) * 10) / 10 : 0
+      Math.ceil((entryClear + Math.max(run(left), run(right)) + farClear) * 10) / 10,
+      overture && r === 0 ? Math.ceil((SCREEN_BACK + (cab ? 9 : 15)) * 10) / 10 : 0
     )
   );
   const hallLength =
     roomLengths.reduce((s, l) => s + l, 0) + CROSS_WALL_THICKNESS * (nRooms - 1);
 
-  const a = canvasSize(anchor);
-  const sideMax = Math.max(0, ...rest.map((p) => canvasSize(p).w));
+  const a = size(anchor);
+  const sideMax = Math.max(0, ...rest.map((p) => size(p).w));
   // the flagship's screen: the work and its label with a margin
-  const screenHalf = a.w / 2 + labelReach(a.w, a.h) + 0.45;
+  const screenHalf = a.w / 2 + reach(a.w, a.h) + 0.45;
   // one width for the whole suite, so the doorways line up on one axis
   const hallWidth = Math.min(
     MAX_HALL_WIDTH,
     Math.ceil(10 * Math.max(
       baseWidth,
       // the flagship + its label, with a metre of wall either side
-      2 * (a.w / 2 + labelReach(a.w, a.h) + 1.0),
+      2 * (a.w / 2 + reach(a.w, a.h) + 1.0),
       // big side-wall canvases want a longer viewing distance
       sideMax * 1.1 + 2.6,
       // walk-round passages either side of the flagship's screen
@@ -362,21 +459,22 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
     painting: anchor,
     position: [
       0,
-      hangHeight(a.h),
+      hangHeight(a.h, eye),
       overture ? screenZ + SCREEN_THICKNESS / 2 + WALL_GAP : -hallLength / 2 + WALL_GAP,
     ],
     rotationY: 0,
     w: a.w,
     h: a.h,
     room: anchorRoom,
+    label: hanging.label,
   });
 
   walls.forEach(({ left, right }, r) => {
     const { z0, z1 } = spans[r];
     // Both walls span the same run (justified spacing), so a wall with fewer
     // or narrower works gets more air instead of ending early.
-    const zNear = z1 - ENTRY_CLEAR;
-    const span = z1 - z0 - ENTRY_CLEAR - FAR_CLEAR;
+    const zNear = z1 - entryClear;
+    const span = z1 - z0 - entryClear - farClear;
     const hang = (ws: Sized[], side: -1 | 1): Placement[] => {
       const total = ws.reduce((s, x) => s + x.near + x.far, 0);
       const gap = ws.length > 1 ? (span - total) / (ws.length - 1) : 0;
@@ -386,11 +484,12 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
         cursor = z - x.far - gap;
         return {
           painting: x.painting,
-          position: [side * (hallWidth / 2 - WALL_GAP), hangHeight(x.h), z],
+          position: [side * (hallWidth / 2 - WALL_GAP), hangHeight(x.h, eye), z],
           rotationY: side === -1 ? Math.PI / 2 : -Math.PI / 2,
           w: x.w,
           h: x.h,
           room: r,
+          label: hanging.label,
         };
       });
     };
@@ -449,7 +548,7 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
 
   // Doorways scale a little with the wall: ~3.4 m clear in a 4.7 m room.
   const doorHeight = Math.min(4, Math.max(3, wallHeight - 1.3));
-  const doorHalf = Math.min(2.8, Math.max(2.4, doorHeight * 0.76)) / 2;
+  const doorHalf = cab?.doorHalf ?? Math.min(2.8, Math.max(2.4, doorHeight * 0.76)) / 2;
   const doorways: Doorway[] = spans.slice(0, -1).map(({ z0 }) => ({
     z: z0 - CROSS_WALL_THICKNESS / 2,
     thickness: CROSS_WALL_THICKNESS,
@@ -463,17 +562,18 @@ export function buildLayout(paintings: Painting[]): GalleryLayout {
         z: screenZ,
         thickness: SCREEN_THICKNESS,
         halfWidth: screenHalf,
-        height: Math.min(wallHeight - 0.75, Math.max(3.4, hangHeight(a.h) + a.h / 2 + frameAllowance(a.w, a.h) + 0.45)),
+        // (a print or a miniature gets a lower one: a cabinet screen)
+        height: Math.min(wallHeight - 0.75, Math.max(cab ? 2.4 : 3.4, hangHeight(a.h, eye) + a.h / 2 + frameAllowance(a.w, a.h) + 0.45)),
       }
     : null;
 
-  return { hallWidth, hallLength, wallHeight, placements, benches, rooms, doorways, screen };
+  return { hallWidth, hallLength, wallHeight, placements, benches, rooms, doorways, screen, trackInset: cab?.trackInset ?? TRACK_INSET };
 }
 
 /** Works per room for a collection of `n`: chronological chapters of at
  *  most ROOM_MAX, as even as possible (30 → 10/10/10, 26 → 9/9/8). */
-export function splitRooms(n: number): number[] {
-  const rooms = Math.min(MAX_ROOMS, Math.max(1, Math.ceil(n / ROOM_MAX)));
+export function splitRooms(n: number, roomMax = ROOM_MAX): number[] {
+  const rooms = Math.min(MAX_ROOMS, Math.max(1, Math.ceil(n / roomMax)));
   const base = Math.floor(n / rooms);
   const extra = n % rooms;
   return Array.from({ length: rooms }, (_, i) => base + (i < extra ? 1 : 0));
@@ -795,8 +895,9 @@ export function roomYears(room: SuiteRoom, dash = " – "): string {
 /** Placard centre in the placement's local frame (x right, y up, origin at
  *  the canvas centre), given the actual frame moulding width. */
 export function placardLocal(pl: Placement, frameWidth: number): { x: number; y: number } {
-  const x = pl.w / 2 + frameWidth + PLACARD_GAP + PLACARD_W / 2;
-  const half = Math.max(0, pl.h / 2 - PLACARD_H / 2);
+  const k = pl.label ?? 1;
+  const x = pl.w / 2 + frameWidth + (PLACARD_GAP + PLACARD_W / 2) * k;
+  const half = Math.max(0, pl.h / 2 - (PLACARD_H * k) / 2);
   const y = Math.min(half, Math.max(-half, PLACARD_Y - pl.position[1]));
   return { x, y };
 }

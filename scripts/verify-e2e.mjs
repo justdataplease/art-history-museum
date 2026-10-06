@@ -457,7 +457,7 @@ const footerState = (p) =>
     const foot = document.querySelector(".tl-foot").getBoundingClientRect();
     const box = (s) => document.querySelector(s)?.getBoundingClientRect();
     const hit = (a, b) => a && b && a.width && b.width && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-    const parts = [".tl-hint", ".tl-note", ".tl-source", ".tl-scrollhint"].map((s) => [s, box(s)]);
+    const parts = [".tl-hint", ".tl-note-l", ".tl-note-give", ".tl-note-by > span", ".tl-source", ".tl-scrollhint"].map((s) => [s, box(s)]);
     const clashes = [];
     for (let i = 0; i < parts.length; i++)
       for (let j = i + 1; j < parts.length; j++) if (hit(parts[i][1], parts[j][1])) clashes.push(`${parts[i][0]}/${parts[j][0]}`);

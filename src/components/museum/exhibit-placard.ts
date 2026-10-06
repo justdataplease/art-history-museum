@@ -91,8 +91,8 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
 /**
  * Wikipedia article titles carry disambiguators — "The Fortune Teller
  * (Caravaggio)", "Sunflowers (Van Gogh series)". A wall label names the work
- * only, so drop a trailing parenthetical that names the artist or says
- * "painting"; any other parenthetical is part of the title and stays.
+ * only, so drop a trailing parenthetical that names the artist or the medium
+ * ("painting", "pair of paintings", "mural"); any other stays in the title.
  */
 export function displayTitle(title: string, artist: string): string {
   const m = /^(.*\S)\s*\(([^()]*)\)\s*$/.exec(title);
@@ -103,7 +103,9 @@ export function displayTitle(title: string, artist: string): string {
     .split(/[\s-]+/)
     .filter((w) => w.length > 2 && !["van", "von", "der", "del", "della", "de", "the"].includes(w));
   const namesArtist = names.some((n) => inner.includes(n));
-  return namesArtist || /\b(painting|series|artwork|picture)\b/.test(inner) ? m[1] : title;
+  return namesArtist || /\b(paintings?|series|artworks?|pictures?|murals?|frescos|frescoes|fresco)\b/.test(inner)
+    ? m[1]
+    : title;
 }
 
 /** Draw the label. Call after placardFontsReady(). A work still in

@@ -272,12 +272,19 @@ export interface CeilingSpec {
 }
 
 /** The ceiling of one room spanning z0..z1 (far and near wall faces). */
-function roomCeilingSpec(W: number, H: number, z0: number, z1: number, theme: GalleryTheme): CeilingSpec {
-  const railX = W / 2 - TRACK_INSET;
+function roomCeilingSpec(
+  W: number,
+  H: number,
+  z0: number,
+  z1: number,
+  theme: GalleryTheme,
+  inset = TRACK_INSET,
+): CeilingSpec {
+  const railX = W / 2 - inset;
   if (theme.room.ceiling === "laylight") {
     const wellX = Math.min(railX - 0.42, W / 2 - 1.6);
-    const wellZ0 = z0 + TRACK_INSET + 0.75;
-    const wellZ1 = z1 - TRACK_INSET - 0.75;
+    const wellZ0 = z0 + inset + 0.75;
+    const wellZ1 = z1 - inset - 0.75;
     const len = wellZ1 - wellZ0;
     const n = Math.max(2, Math.round(len / 3.5));
     const beamW = 0.22;
@@ -302,9 +309,10 @@ function roomCeilingSpec(W: number, H: number, z0: number, z1: number, theme: Ga
     };
   }
   // lightbox: one long shallow diffuser down the middle of a flat ceiling
-  const wellX = 0.75;
-  const wellZ0 = z0 + TRACK_INSET + 0.6;
-  const wellZ1 = z1 - TRACK_INSET - 0.6;
+  // (a cabinet's: a slim slot, the spots do the lighting)
+  const wellX = theme.room.diffuserHalfWidth ?? 0.75;
+  const wellZ0 = z0 + inset + 0.6;
+  const wellZ1 = z1 - inset - 0.6;
   const len = wellZ1 - wellZ0;
   const n = Math.max(2, Math.round(len / 2.4));
   const bays: { z0: number; z1: number }[] = [];
@@ -330,7 +338,9 @@ function roomCeilingSpec(W: number, H: number, z0: number, z1: number, theme: Ga
 
 /** One ceiling (laylight well or lightbox) per room of the suite, entrance first. */
 export function ceilingSpecs(layout: GalleryLayout, theme: GalleryTheme): CeilingSpec[] {
-  return layout.rooms.map((r) => roomCeilingSpec(layout.hallWidth, layout.wallHeight, r.z0, r.z1, theme));
+  return layout.rooms.map((r) =>
+    roomCeilingSpec(layout.hallWidth, layout.wallHeight, r.z0, r.z1, theme, layout.trackInset),
+  );
 }
 
 /** The entrance room's ceiling (the whole hall's, for a single room). */
@@ -739,8 +749,8 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
   specs.forEach((sp, ri) => {
     const { track } = at(ri);
     const yR = H - TRACK_DROP;
-    const railX = W / 2 - TRACK_INSET;
-    const zCross = sp.z0 + TRACK_INSET;
+    const railX = W / 2 - layout.trackInset;
+    const zCross = sp.z0 + layout.trackInset;
     const zEnd = sp.z1 - 0.9;
     const RW = 0.034; // rail width
     const RH = 0.026; // rail height
@@ -766,7 +776,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     const nCross = Math.max(1, Math.ceil((2 * railX) / 2.4));
     for (let i = 1; i < nCross; i++) rod(-railX + (2 * railX * i) / nCross, zCross);
     if (ri === 0 && screen) {
-      const zs = screen.z + screen.thickness / 2 + TRACK_INSET;
+      const zs = screen.z + screen.thickness / 2 + layout.trackInset;
       track.roundedBox(2 * railX + RW, RH, RW, 0, yR, zs, 0.004, 1);
       for (let i = 1; i < nCross; i++) rod(-railX + (2 * railX * i) / nCross, zs);
     }
