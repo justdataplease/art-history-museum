@@ -33,6 +33,32 @@ An interactive 3D museum of art history that runs in the browser.
   - Click a painting to glide into an inspect view with the story and verbatim
     fun facts; the high-resolution scan loads only then.
 
+## Demo
+
+[**demo/museum-demo.mp4**](demo/museum-demo.mp4) (2 min, 1600×900, with sound):
+the Gallery Wall and Star Map, the Explore filter, Caravaggio's placard, then
+walking his Baroque hall and inspecting *The Crucifixion of Saint Peter*, Monet's
+Impressionist room and Rothko's white cube. Recorded from a production build with
+`npm run build` + `node scripts/record-demo.mjs <url> demo/museum-demo.mp4`
+(needs an ffmpeg with libx264 via `FFMPEG=`; set `DEMO_AUDIO_DIR` to mix in each
+room's music).
+
+Soundtrack — the first track of each room's playlist, as the app plays it, from
+Wikimedia Commons:
+
+- Giovanni Pierluigi da Palestrina, *Kyrie* from *Missa Sicut lilium inter
+  spinas* — The Tudor Consort,
+  [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)
+  ([source](https://commons.wikimedia.org/wiki/File:The_Tudor_Consort_-_02_-_Palestrina_-_Kyrie_-_Missa_Sicut_lilium_inter_spinas.ogg))
+- Claude Debussy, *Clair de lune* — Laurens Goedhart,
+  [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)
+  ([source](https://commons.wikimedia.org/wiki/File:Clair_de_lune_(Claude_Debussy)_Suite_bergamasque.ogg))
+- Chris Zabriskie, *Prelude No. 10* — Chris Zabriskie,
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+  ([source](https://commons.wikimedia.org/wiki/File:Chris_Zabriskie_-_10_-_Prelude_No_10.ogg))
+
+Excerpts are trimmed and faded at the start and end of each room visit.
+
 ## Data — all from Wikipedia
 
 Every period description, artist bio, portrait, painting image, date, story and fun

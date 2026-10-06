@@ -11,3 +11,4 @@ dev-server.log
 data/cache/artists
 data/cache/report.json
 data/cache/enrich-report.json
+demo
