@@ -933,15 +933,17 @@ button {
 
 /* ============================= FILTER DROPDOWN ============================= */
 
+/* the only part of the header row that gives way: a long selection ellipsizes */
 .filter-wrap {
   position: relative;
+  min-width: 0;
 }
 
 .filter-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  max-width: 280px;
+  max-width: min(280px, 100%);
   padding: 9px 18px 9px 20px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1152,6 +1154,28 @@ button {
   }
 }
 
+/* the full-size row needs ~805px (~960px with a long selection): tighten it */
+@media (min-width: 721px) and (max-width: 960px) {
+  .tl-header {
+    gap: 12px;
+    padding: 18px 20px;
+  }
+
+  .tl-title {
+    font-size: 15px;
+    letter-spacing: 0.24em;
+  }
+
+  .tl-title small {
+    font-size: 9px;
+    letter-spacing: 0.32em;
+  }
+
+  .tl-switch {
+    padding: 7px 14px;
+  }
+}
+
 @media (max-width: 720px) {
   .tl-header {
     flex-wrap: wrap;
@@ -1183,7 +1207,7 @@ button {
   }
 
   .filter-btn {
-    max-width: 170px;
+    max-width: min(170px, 100%);
     padding: 7px 12px 7px 14px;
     font-size: 10.5px;
     letter-spacing: 0.14em;

@@ -1,6 +1,5 @@
 import type { Artist, Period } from "@/lib/types";
 import { wikiSrcSet } from "@/lib/img";
-import { cleanArtistName, decodeEntities } from "@/lib/text";
 import { activeRange, lifeRange } from "./timeline-math";
 import { shortName } from "./text-measure";
 
@@ -16,17 +15,6 @@ export interface ArtistMeta {
   thumb: string | null;
   srcSet: string | undefined;
   initial: string;
-}
-
-export { decodeEntities };
-
-/** Display form of an artist: entities decoded, Wikipedia disambiguators dropped
- *  (the data layer already does this; kept for data loaded before that). */
-export function cleanArtist(a: Artist): Artist {
-  const name = cleanArtistName(a.name);
-  const tagline = decodeEntities(a.tagline);
-  const bio = decodeEntities(a.bio);
-  return name === a.name && tagline === a.tagline && bio === a.bio ? a : { ...a, name, tagline, bio };
 }
 
 export function artistYears(a: Artist): string {

@@ -26,7 +26,10 @@ const FACES: Record<Face, FontSpec> = {
 let ctx: CanvasRenderingContext2D | null = null;
 let families: { serif: string; sans: string } | null = null;
 let ready = false;
+/** face|text → width at REF px; sizes scale it (advances and tracking are linear in size) */
 const cache = new Map<string, number>();
+const REF = 100;
+const CACHE_MAX = 4000;
 
 function getCtx(): CanvasRenderingContext2D | null {
   if (typeof document === "undefined") return null;
@@ -41,24 +44,28 @@ function getCtx(): CanvasRenderingContext2D | null {
   return ctx;
 }
 
-/** Width in px of `text` set in `face` at `size` px (including letter-spacing). */
+/**
+ * Width in px of `text` set in `face` at `size` px (including letter-spacing).
+ * Each string is measured once at a reference size and scaled, so callers may
+ * pass continuous, zoom-driven sizes without growing the cache every frame.
+ */
 export function textWidth(text: string, face: Face, size: number): number {
   const spec = FACES[face];
   const s = spec.caps ? text.toUpperCase() : text;
-  const key = `${face}|${size}|${s}`;
-  const hit = cache.get(key);
-  if (hit !== undefined) return hit;
-  const c = ready ? getCtx() : null;
-  let w: number;
-  if (c && families) {
-    c.font = `${spec.italic ? "italic " : ""}${spec.weight} ${size}px ${families[spec.family]}`;
-    w = c.measureText(s).width + s.length * spec.track * size;
-  } else {
-    w = s.length * (spec.est + spec.track) * size;
+  const key = `${face}|${s}`;
+  let w = cache.get(key);
+  if (w === undefined) {
+    const c = ready ? getCtx() : null;
+    if (c && families) {
+      c.font = `${spec.italic ? "italic " : ""}${spec.weight} ${REF}px ${families[spec.family]}`;
+      w = c.measureText(s).width + s.length * spec.track * REF;
+    } else {
+      w = s.length * (spec.est + spec.track) * REF;
+    }
+    if (cache.size >= CACHE_MAX) cache.clear();
+    cache.set(key, w);
   }
-  w = Math.ceil(w) + 1;
-  cache.set(key, w);
-  return w;
+  return Math.ceil((w * size) / REF) + 1;
 }
 
 /** Resolve once the page fonts are usable; switches to exact measurement. */

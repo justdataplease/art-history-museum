@@ -1,9 +1,9 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import type { Artist } from "@/lib/types";
 import type { ArtistMeta } from "./artist-meta";
-import { jitter, Transform } from "./timeline-math";
+import { jitter, pxPerYear, Transform, yearAt } from "./timeline-math";
 import type { StarLayout, StarNode } from "./star-layout";
 import { GridLines, ViewCommon } from "./WallView";
 
@@ -40,22 +40,46 @@ const LAYERS = [
 ];
 
 export function Starfield({ w, h, t }: { w: number; h: number; t: Transform }) {
+  const layers = useRef<(HTMLDivElement | null)[]>([]);
+  // Parallax follows panning only: the travel of the centre year in screen px,
+  // accumulated per commit. (The raw t.x jumps by thousands of px on one
+  // cursor-anchored wheel notch at depth, which would whip the field sideways.)
+  const pan = useRef<{ x: number; c: number } | null>(null);
+  useLayoutEffect(() => {
+    const c = yearAt(w / 2, w, t);
+    const p = pan.current;
+    if (!p) pan.current = { x: t.x, c };
+    else {
+      p.x += (p.c - c) * pxPerYear(w, t.k);
+      p.c = c;
+    }
+    const px = pan.current!.x;
+    LAYERS.forEach((L, i) => {
+      const el = layers.current[i];
+      if (!el) return;
+      const s = 1 + L.zoom * Math.log(t.k);
+      const tw = TILE_W * s;
+      const off = (((-px * L.par) % tw) + tw) % tw;
+      el.style.transform = `translate3d(${(-off).toFixed(1)}px,0,0) scale(${s.toFixed(4)})`;
+    });
+  }, [w, t]);
   return (
     <div className="starfield" aria-hidden>
       {LAYERS.map((L, i) => {
         const s = 1 + L.zoom * Math.log(t.k);
         const tw = TILE_W * s;
-        const off = (((-t.x * L.par) % tw) + tw) % tw;
         return (
           <div
             key={i}
+            ref={(el) => {
+              layers.current[i] = el;
+            }}
             className={`sf-layer${L.cls}`}
             style={{
               backgroundImage: L.img,
               backgroundSize: `${TILE_W}px ${TILE_H}px`,
               width: Math.ceil((w + tw) / s) + 2,
               height: Math.ceil(h / s) + 2,
-              transform: `translate3d(${(-off).toFixed(1)}px,0,0) scale(${s.toFixed(4)})`,
             }}
           />
         );

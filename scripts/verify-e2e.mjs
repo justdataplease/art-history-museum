@@ -205,6 +205,63 @@ if (reached) {
   await page.waitForTimeout(700);
 }
 
+/** The focused element: its slug/period, and whether it is drawn inside the viewport. */
+const focusState = () =>
+  page.evaluate(() => {
+    const a = document.activeElement;
+    const r = a.getBoundingClientRect();
+    return {
+      id: a.dataset?.slug ?? a.dataset?.period ?? a.tagName,
+      off: !!a.closest(".offscreen"),
+      inView: !a.closest(".offscreen") && r.left >= 0 && r.right <= innerWidth && r.top > 100 && r.bottom <= innerHeight - 40,
+    };
+  });
+
+// ---------------------------------------------------------------- 6b. focus survives a pan
+log("keyboard: arrow keys keep panning while the focused artist leaves the screen");
+await page.locator(".tl-canvas").focus();
+await page.keyboard.press("Home");
+await page.waitForTimeout(1400);
+await page.locator('.rail-label[data-period="baroque"]').click();
+await page.waitForTimeout(1700);
+await page.waitForTimeout(700); // focus right after a pointer press is not panned to
+await page.evaluate(() => document.querySelector('.artist-node[data-slug="rembrandt"]')?.focus());
+await page.waitForTimeout(800);
+const panTrail = [];
+for (let i = 0; i < 6; i++) {
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(450);
+  panTrail.push({ ...(await focusState()), center: (await axisState())?.center ?? NaN });
+}
+check(
+  panTrail.every((p) => p.id === "rembrandt"),
+  `focus stays on the artist through the pan (${panTrail.map((p) => p.id + (p.off ? "(off)" : "")).join(", ")})`
+);
+check(panTrail.some((p) => p.off), "the focused artist's row did leave the screen during the pan");
+check(
+  panTrail.every((p, i) => i === 0 || p.center > panTrail[i - 1].center + 1),
+  `every arrow press kept panning (centre ${panTrail.map((p) => p.center.toFixed(0)).join(" → ")})`
+);
+
+// ---------------------------------------------------------------- 6c. Tab at depth
+log("keyboard: Tab at deep zoom brings each off-screen artist into view");
+for (let i = 0; i < 4; i++) {
+  await page.keyboard.press("+");
+  await page.waitForTimeout(450);
+}
+await page.evaluate(() => document.querySelector('.rail-label[data-period="baroque"]')?.focus());
+await page.waitForTimeout(1300);
+const tabbed = [];
+for (let i = 0; i < 4; i++) {
+  await page.keyboard.press("Tab");
+  await page.waitForTimeout(1300);
+  tabbed.push(await focusState());
+}
+check(
+  tabbed.every((f) => f.inView),
+  `each Tab lands on a visible artist (${tabbed.map((f) => f.id + (f.inView ? "" : " NOT IN VIEW")).join(", ")})`
+);
+
 // ---------------------------------------------------------------- 7. star map
 log("star map");
 await page.locator(".tl-canvas").focus();
@@ -235,6 +292,18 @@ ov = await labelOverlaps();
 check(ov.bad.length === 0, `no overlapping star-map labels zoomed (${ov.n}) ${ov.bad.slice(0, 3).join(" | ")}`);
 await page.screenshot({ path: `${OUT}/5-star-map-zoomed.png` });
 
+// a star is drawn at the middle of the artist's working years: focus must fly there
+const starFocus = [];
+for (const s of ["caravaggio", "claude-monet"]) {
+  await page.evaluate((s) => document.querySelector(`.star[data-slug="${s}"]`)?.focus(), s);
+  await page.waitForTimeout(1300);
+  starFocus.push(await focusState());
+}
+check(
+  starFocus.every((f) => f.inView),
+  `focusing an off-screen star brings it into view (${starFocus.map((f) => f.id + (f.inView ? "" : " NOT IN VIEW")).join(", ")})`
+);
+
 // ---------------------------------------------------------------- 8. explore dropdown
 log("explore dropdown");
 await page.getByRole("button", { name: "Explore" }).click();
@@ -260,6 +329,7 @@ const vermeer = await page.evaluate(() => {
   return { inView: r.left >= 0 && r.right <= innerWidth && r.top > 100 && r.bottom < innerHeight, focused: document.activeElement === el };
 });
 check(vermeer?.inView, `flew to the selected artist (in view: ${vermeer?.inView}, focused: ${vermeer?.focused})`);
+check(vermeer?.focused, "the selected artist has keyboard focus after the flight");
 await page.screenshot({ path: `${OUT}/7-filter-artist.png` });
 
 // ---------------------------------------------------------------- 9. into the museum
@@ -289,6 +359,34 @@ await page.waitForTimeout(1500);
 const hasCanvas = await page.locator("canvas").count();
 check(hasCanvas > 0, `webgl canvas count: ${hasCanvas}`);
 await page.screenshot({ path: `${OUT}/9-museum-gallery.png` });
+
+// ---------------------------------------------------------------- 10. explore → artist, short screen
+// the wall is taller than a short screen: the fly-to must also bring the row up
+log("explore → artist on a short screen (rows below the fold of the wall)");
+await page.setViewportSize({ width: 1280, height: 760 });
+await page.goto(BASE, { waitUntil: "networkidle" });
+await page.waitForTimeout(1500);
+for (const [slug, name, mid] of [
+  ["jean-michel-basquiat", "Jean-Michel Basquiat", 1974],
+  ["keith-haring", "Keith Haring", 1973.5],
+]) {
+  await page.locator(".filter-btn").click();
+  await page.waitForTimeout(600);
+  await page.locator(".filter-tab", { hasText: "Artists" }).click();
+  await page.waitForTimeout(500);
+  const item = page.locator(".filter-item", { hasText: name }).first();
+  await item.scrollIntoViewIfNeeded();
+  await item.click();
+  await page.waitForTimeout(2200);
+  const ax = await axisState();
+  const f = await focusState();
+  check(
+    f.id === slug && f.inView,
+    `Explore → ${name}: lands on the artist (focused: ${f.id}, in view: ${f.inView})`
+  );
+  check(ax && Math.abs(ax.center - mid) < 6, `Explore → ${name}: framed on the life (centre ${ax?.center.toFixed(1)} vs ${mid})`);
+}
+await page.screenshot({ path: `${OUT}/10-filter-artist-short-screen.png` });
 
 // ---------------------------------------------------------------- report
 const wikiFails = failedRequests.filter((r) => r.includes("wikimedia"));

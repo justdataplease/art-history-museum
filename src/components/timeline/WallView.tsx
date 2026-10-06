@@ -111,10 +111,13 @@ const ArtistRow = memo(function ArtistRow(r: RowProps) {
   const a = meta.a;
   const name = r.label === 2 ? a.name : r.label === 1 ? meta.short : "";
   const open = (e: React.MouseEvent<HTMLButtonElement>) => r.onArtist(a, e.currentTarget);
+  // the button is keyed in both branches so React keeps its DOM node (and the
+  // keyboard focus on it) when the row crosses the screen edge
   if (r.off) {
     return (
       <div className="wall-row offscreen" style={{ transform: OFF }}>
         <button
+          key="node"
           type="button"
           className="artist-node"
           data-slug={a.slug}
@@ -139,11 +142,12 @@ const ArtistRow = memo(function ArtistRow(r: RowProps) {
         ["--c" as string]: r.c,
       }}
     >
-      <span className={`life${r.clip}`} style={{ top: r.lineTop }} />
+      <span key="life" className={`life${r.clip}`} style={{ top: r.lineTop }} />
       {r.inW > 1 && (
-        <span className="life-in" style={{ top: r.lineTop, left: r.in0, width: r.inW }} />
+        <span key="in" className="life-in" style={{ top: r.lineTop, left: r.in0, width: r.inW }} />
       )}
       <button
+        key="node"
         type="button"
         className={`artist-node${r.dimmed ? " dimmed" : ""}`}
         data-slug={a.slug}

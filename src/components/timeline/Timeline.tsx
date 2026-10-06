@@ -27,7 +27,7 @@ import {
   YEAR_SPAN,
   yearAt,
 } from "./timeline-math";
-import { buildArtistMeta, buildPeriodStyles, cleanArtist } from "./artist-meta";
+import { buildArtistMeta, buildPeriodStyles } from "./artist-meta";
 import { whenFontsReady } from "./text-measure";
 import { computeWallLayout } from "./wall-layout";
 import { computeStarLayout } from "./star-layout";
@@ -98,11 +98,13 @@ export function Timeline({ data }: { data: TimelineData }) {
     () => [...data.periods].sort((a, b) => a.startYear - b.startYear || a.endYear - b.endYear),
     [data.periods]
   );
-  const artists = useMemo(() => data.artists.map(cleanArtist), [data.artists]);
+  // already in display form: data.ts decodes entities and drops disambiguators
+  const artists = data.artists;
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<ViewName>("wall");
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const [headerH, setHeaderH] = useState(0);
   const wRef = useRef(0);
   const hRef = useRef(0);
   const tRef = useRef<Transform>({ k: 1, x: 0, y: 0 });
@@ -150,10 +152,13 @@ export function Timeline({ data }: { data: TimelineData }) {
   useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
   // ---- size: measured before first paint, rescaled + re-clamped on resize
+  // (the header too: it wraps on narrow screens, and the content starts below it)
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return;
+    const header = el.querySelector<HTMLElement>(".tl-header");
     const measure = () => {
+      if (header) setHeaderH(header.offsetHeight);
       const nw = el.clientWidth;
       const nh = el.clientHeight;
       const ow = wRef.current;
@@ -172,24 +177,28 @@ export function Timeline({ data }: { data: TimelineData }) {
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
+    if (header) ro.observe(header);
     return () => ro.disconnect();
   }, []);
 
   useEffect(() => whenFontsReady(() => setFontsTick((n) => n + 1)), []);
 
   // ---- animated moves (log-zoom + linear centre so fly-tos feel like travel)
+  // `overflowY`: how far the target may scroll down when it is known to differ
+  // from the current view's (the wall's height depends on what is on screen)
   const flyTo = useCallback(
-    (target: Transform, duration = 1.15, onDone?: () => void) => {
+    (target: Transform, duration = 1.15, onDone?: () => void, overflowY?: number) => {
       tweenRef.current?.kill();
       const w = wRef.current || 1;
       if (reducedMotion() || duration <= 0) {
+        if (overflowY !== undefined) overflowRef.current = Math.max(overflowRef.current, overflowY);
         apply(target, true);
         onDone?.();
         return;
       }
       const from = { ...tRef.current };
       const c0 = yearAt(w / 2, w, from);
-      const to = clampTransform(target, w, overflowRef.current);
+      const to = clampTransform(target, w, overflowY ?? overflowRef.current);
       const c1 = yearAt(w / 2, w, to);
       const lk0 = Math.log(from.k);
       const lk1 = Math.log(to.k);
@@ -237,11 +246,16 @@ export function Timeline({ data }: { data: TimelineData }) {
 
   // ---- wheel: native non-passive listener so ctrl/pinch zoom only the timeline
   const hasData = periods.length > 0;
+  /** pointers down on the canvas (see "pointers" below) */
+  const pts = useRef(new Map<number, { x: number; y: number }>());
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
+    // desktop Safari reports a trackpad pinch as WebKit GestureEvents, not ctrl+wheel
+    let g0: { k: number; x: number; cx: number } | null = null;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (g0 && e.ctrlKey) return;
       tweenRef.current?.kill();
       const u = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
       let dx = e.deltaX * u;
@@ -259,19 +273,38 @@ export function Timeline({ data }: { data: TimelineData }) {
       const mx = e.clientX;
       apply({ k, x: mx - ((mx - cur.x) * k) / cur.k, y: cur.y });
     };
-    const block = (e: Event) => e.preventDefault();
+    type Gesture = Event & { scale: number; clientX: number };
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      tweenRef.current?.kill();
+      const cx = (e as Gesture).clientX;
+      const c = tRef.current;
+      g0 = { k: c.k, x: c.x, cx: Number.isFinite(cx) ? cx : wRef.current / 2 };
+    };
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      // iOS fires these for a touch pinch too, which the pointer path already handles
+      if (!g0 || pts.current.size) return;
+      const k = clamp(g0.k * (e as Gesture).scale, K_MIN, K_MAX);
+      apply({ k, x: g0.cx - ((g0.cx - g0.x) * k) / g0.k, y: tRef.current.y });
+    };
+    const onGestureEnd = (e: Event) => {
+      e.preventDefault();
+      g0 = null;
+    };
     el.addEventListener("wheel", onWheel, { passive: false });
-    el.addEventListener("gesturestart", block);
-    el.addEventListener("gesturechange", block);
+    el.addEventListener("gesturestart", onGestureStart);
+    el.addEventListener("gesturechange", onGestureChange);
+    el.addEventListener("gestureend", onGestureEnd);
     return () => {
       el.removeEventListener("wheel", onWheel);
-      el.removeEventListener("gesturestart", block);
-      el.removeEventListener("gesturechange", block);
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+      el.removeEventListener("gestureend", onGestureEnd);
     };
   }, [apply, hasData]);
 
   // ---- pointers: drag-to-pan with a slop, pinch-zoom, never a click after a drag
-  const pts = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ d: number; mx: number; my: number; t: Transform } | null>(null);
   const downAt = useRef({ x: 0, y: 0 });
   const moved = useRef(false);
@@ -300,10 +333,29 @@ export function Timeline({ data }: { data: TimelineData }) {
     }
   }, []);
 
+  const onPointerEnd = useCallback((e: React.PointerEvent) => {
+    if (!pts.current.has(e.pointerId)) return;
+    pts.current.delete(e.pointerId);
+    if (pts.current.size < 2) pinch.current = null;
+    if (!pts.current.size) {
+      canvasRef.current?.classList.remove("dragging");
+      if (moved.current) {
+        suppressClick.current = true;
+        setTimeout(() => (suppressClick.current = false), 0);
+      }
+    }
+  }, []);
+
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
       const p = pts.current.get(e.pointerId);
       if (!p) return;
+      // the release was missed (it landed outside the canvas before capture,
+      // or the window lost it): a hover must never pan
+      if (e.pointerType !== "touch" && e.buttons === 0) {
+        onPointerEnd(e);
+        return;
+      }
       const px = p.x;
       const py = p.y;
       p.x = e.clientX;
@@ -331,21 +383,8 @@ export function Timeline({ data }: { data: TimelineData }) {
         y: g0.t.y + (g.my - g0.my),
       });
     },
-    [apply]
+    [apply, onPointerEnd]
   );
-
-  const onPointerEnd = useCallback((e: React.PointerEvent) => {
-    if (!pts.current.has(e.pointerId)) return;
-    pts.current.delete(e.pointerId);
-    if (pts.current.size < 2) pinch.current = null;
-    if (!pts.current.size) {
-      canvasRef.current?.classList.remove("dragging");
-      if (moved.current) {
-        suppressClick.current = true;
-        setTimeout(() => (suppressClick.current = false), 0);
-      }
-    }
-  }, []);
 
   const onClickCapture = useCallback((e: React.MouseEvent) => {
     if (suppressClick.current) {
@@ -356,7 +395,44 @@ export function Timeline({ data }: { data: TimelineData }) {
   }, []);
 
   // ---- keyboard: arrows pan, +/- zoom, 0/Home overview; focus pans into view
-  const contentTop = size && size.w <= 720 ? 158 : 122;
+  // the content (and the axis above it) starts below the header, however it wraps
+  const contentTop = Math.max(size && size.w <= 720 ? 158 : 122, headerH + 44);
+
+  /** The Gallery Wall at transform `tt` (pure and cheap: used to aim fly-tos at a row). */
+  const wallAt = useCallback(
+    (tt: Transform, w = wRef.current, h = hRef.current) =>
+      computeWallLayout({
+        periods,
+        byPeriod,
+        meta,
+        lanes: lanesInfo.lanes,
+        laneCount: lanesInfo.laneCount,
+        w,
+        h,
+        t: tt,
+        top: contentTop,
+        bottom: h - 46,
+      }),
+    [periods, byPeriod, meta, lanesInfo, contentTop]
+  );
+
+  /**
+   * Keep `target`'s zoom and x, and pan vertically so that `slug`'s Gallery
+   * Wall row is on screen there; also returns how far the wall can scroll there.
+   */
+  const aimAtRow = useCallback(
+    (target: Transform, slug: string) => {
+      const h = hRef.current;
+      const tt = clampTransform(target, wRef.current || 1, Infinity);
+      const L = wallAt(tt);
+      const r = L.rows.find((q) => q.a.slug === slug);
+      let y = tt.y;
+      if (r && r.y < contentTop + 10) y += contentTop + 10 - r.y;
+      else if (r && r.y + L.rowH > h - 60) y -= r.y + L.rowH - (h - 60);
+      return { target: { ...tt, y: clamp(y, -L.overflow, 0) }, overflow: L.overflow };
+    },
+    [wallAt, contentTop]
+  );
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -417,7 +493,8 @@ export function Timeline({ data }: { data: TimelineData }) {
       if (performance.now() - lastPointer.current < 600) return;
       const el = e.target as HTMLElement;
       if (el === canvasRef.current) return;
-      if (!el.classList.contains("offscreen")) {
+      // stars and titles carry .offscreen themselves, wall rows on their wrapper
+      if (!el.closest(".offscreen")) {
         revealEl(el);
         return;
       }
@@ -425,23 +502,43 @@ export function Timeline({ data }: { data: TimelineData }) {
       const c = tRef.current;
       const slug = el.dataset.slug;
       const ps = el.dataset.period;
-      let year: number | null = null;
-      if (slug) year = meta.get(slug)?.life.start ?? null;
-      else if (ps) {
+      const xFor = (year: number, at: number) => w * at - ((year - YEAR_MIN) / YEAR_SPAN) * w * c.k;
+      let target: Transform | null = null;
+      let overflowY: number | undefined;
+      if (slug && view === "wall") {
+        // a row hidden sideways brings its line start to 0.3w; one only
+        // scrolled out of the wall keeps x. Either way the row comes up into view.
+        const r = wallAt(c).rows.find((q) => q.a.slug === slug);
+        const m = meta.get(slug);
+        let x = c.x;
+        if (r) {
+          if (r.le < 40 || r.ls > w - 120) x += w * 0.3 - r.ls;
+        } else if (m) x = xFor(m.life.start, 0.3);
+        const aim = aimAtRow({ ...c, x }, slug);
+        target = aim.target;
+        overflowY = aim.overflow;
+      } else if (slug) {
+        // a star sits at the middle of the artist's working years
+        const m = meta.get(slug);
+        if (m) target = { ...c, x: xFor(m.active.mid, 0.5) };
+      } else if (ps) {
         const p = periods.find((q) => q.slug === ps);
-        if (p) year = (p.startYear + p.endYear) / 2;
+        if (p) target = { ...c, x: xFor((p.startYear + p.endYear) / 2, 0.5) };
       }
-      if (year === null) return;
-      const k = c.k;
-      const target = { k, x: w * (slug ? 0.3 : 0.5) - ((year - YEAR_MIN) / YEAR_SPAN) * w * k, y: c.y };
-      flyTo(target, 0.5, () => {
-        const again = canvasRef.current?.querySelector<HTMLElement>(
-          slug ? `[data-slug="${slug}"]` : `[data-period="${ps}"]`
-        );
-        if (again && !again.classList.contains("offscreen")) revealEl(again);
-      });
+      if (!target) return;
+      flyTo(
+        target,
+        0.5,
+        () => {
+          const again = canvasRef.current?.querySelector<HTMLElement>(
+            slug ? `[data-slug="${slug}"]` : `[data-period="${ps}"]`
+          );
+          if (again && !again.closest(".offscreen")) revealEl(again);
+        },
+        overflowY
+      );
     },
-    [flyTo, meta, periods, revealEl]
+    [flyTo, meta, periods, revealEl, view, wallAt, aimAtRow]
   );
 
   // ---- filter: dim the rest, fly to the selection
@@ -458,15 +555,24 @@ export function Timeline({ data }: { data: TimelineData }) {
       } else {
         const m = meta.get(f.slug);
         if (m) {
-          zoomToYears(m.life.start - 14, m.life.end + 14, () => {
-            canvasRef.current
-              ?.querySelector<HTMLElement>(`.artist-node[data-slug="${f.slug}"]`)
-              ?.focus({ preventScroll: true });
-          });
+          let target = frameYears(m.life.start - 14, m.life.end + 14, wRef.current || 1);
+          let overflowY: number | undefined;
+          // on a short screen the artist's row may sit below the fold of the wall
+          if (view === "wall") ({ target, overflow: overflowY } = aimAtRow(target, f.slug));
+          flyTo(
+            target,
+            1.15,
+            () => {
+              canvasRef.current
+                ?.querySelector<HTMLElement>(`.artist-node[data-slug="${f.slug}"]`)
+                ?.focus({ preventScroll: true });
+            },
+            overflowY
+          );
         }
       }
     },
-    [periods, meta, diveInto, flyTo, zoomToYears]
+    [periods, meta, diveInto, flyTo, view, aimAtRow]
   );
 
   const ownerPeriod =
@@ -505,21 +611,7 @@ export function Timeline({ data }: { data: TimelineData }) {
   const h = size?.h ?? 0;
   const bottom = h - 46;
   const ticks = size ? axisTicks(w, t) : null;
-  const wall =
-    size && view === "wall"
-      ? computeWallLayout({
-          periods,
-          byPeriod,
-          meta,
-          lanes: lanesInfo.lanes,
-          laneCount: lanesInfo.laneCount,
-          w,
-          h,
-          t,
-          top: contentTop,
-          bottom,
-        })
-      : null;
+  const wall = size && view === "wall" ? wallAt(t, w, h) : null;
   const stars =
     size && view === "stars"
       ? computeStarLayout({
