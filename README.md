@@ -2,6 +2,8 @@
 
 An interactive 3D museum of art history that runs in the browser.
 
+**Live:** https://the-virtual-art-gallery.vercel.app
+
 - **The Timeline** — a zoomable, infinite-canvas timeline of 18 art-history periods
   (Medieval & Gothic → Contemporary) with 72 artists placed at the dates they
   actually worked. Two switchable views: **Gallery Wall** (period bands with each
@@ -100,6 +102,23 @@ the old collection or the new one in full. Existing galleries pick up reloaded
 data within the hour, but only prerendered slugs are served, so an artist that is
 new to the database gets a gallery at the next build or deploy (`load-db` lists
 new and removed slugs).
+
+## Deploy (Vercel)
+
+Production runs on Vercel: team **JustDataPlease**, project
+**virtual-art-gallery**, domain `the-virtual-art-gallery.vercel.app`. Without
+`DATABASE_URL` it serves the bundled Wikipedia cache; add `DATABASE_URL` in the
+project's environment variables to read from Neon instead.
+
+On the Hobby plan Vercel blocks a CLI deploy whose latest commit author isn't the
+Vercel account owner, so deploy a clean export of `main` (no git metadata):
+
+```bash
+mkdir ../vag-deploy && git archive HEAD | tar -x -C ../vag-deploy
+cd ../vag-deploy
+npx vercel link --yes --scope just-data-please --project virtual-art-gallery
+npx vercel deploy --prod --scope just-data-please
+```
 
 ## Controls
 
