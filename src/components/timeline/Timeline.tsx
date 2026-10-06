@@ -783,13 +783,20 @@ export function Timeline({ data }: { data: TimelineData }) {
           height is kept free of content (--foot). */}
       <footer className="tl-foot" inert={!!selected}>
         <p className="tl-note tl-note-l">
-          <span className="tl-note-lead">Every artist and every work, together in one museum.</span>{" "}
+          <span className="tl-note-lead">Every artist, every work, under one roof.</span>{" "}
           <span className="tl-note-src">
             All credit goes to{" "}
             <a href="https://en.wikipedia.org/" target="_blank" rel="noopener noreferrer">
               Wikipedia
             </a>{" "}
             · for educational purposes only.
+          </span>{" "}
+          <span className="tl-note-give">
+            Free knowledge keeps democracies strong.{" "}
+            <a href="https://donate.wikimedia.org/" target="_blank" rel="noopener noreferrer">
+              Donate to Wikipedia
+            </a>
+            .
           </span>
         </p>
         <div className="tl-hint" id="tl-hint">
@@ -800,13 +807,6 @@ export function Timeline({ data }: { data: TimelineData }) {
           <span className="hint-touch">Pinch to travel through time · drag to pan · tap a period</span>
         </div>
         <div className="tl-note tl-note-r">
-          <span className="tl-note-give">
-            Free knowledge keeps democracies strong.{" "}
-            <a href="https://donate.wikimedia.org/" target="_blank" rel="noopener noreferrer">
-              Donate to Wikipedia
-            </a>
-            .
-          </span>{" "}
           <span className="tl-note-by">
             <span>
               Made with <span className="tl-heart" role="img" aria-label="love">♥</span> by{" "}
