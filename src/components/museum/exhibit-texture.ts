@@ -189,6 +189,16 @@ function scheduleRelease(url: string, entry: Entry) {
   }, RELEASE_DELAY_MS);
 }
 
+/**
+ * Free the cached paintings' GPU copies once no exhibit is left (exhibit-shared.ts):
+ * each renderer's dispose listener goes with them, so a texture reused by the
+ * next gallery doesn't pin the last one's renderer. Bitmaps stay open and the
+ * release timers run as before; a texture picked up again just uploads anew.
+ */
+export function disposeCachedTextures(): void {
+  for (const e of entries.values()) if (e.refs === 0) e.texture?.dispose();
+}
+
 export function releaseTexture(url: string): void {
   const entry = entries.get(url);
   if (!entry) return;
@@ -247,4 +257,9 @@ export function placeholderTexture(): THREE.DataTexture {
   t.needsUpdate = true;
   placeholder = t;
   return t;
+}
+
+/** Free the placeholder from every renderer that uploaded it (exhibit-shared.ts); it stays usable. */
+export function disposePlaceholderTexture(): void {
+  placeholder?.dispose();
 }

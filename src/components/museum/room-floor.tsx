@@ -38,17 +38,21 @@ interface FloorProps {
   L: number;
   H: number;
   theme: GalleryTheme;
+  /** A wooden floor's grain, owned by the caller (the benches share it). */
+  grain?: THREE.Texture;
 }
 
 function createFloorMaterial(
-  { W, L, H, theme }: FloorProps,
+  { W, L, H, theme, grain }: FloorProps,
   tReflect: THREE.Texture,
   tReflectBlur: THREE.Texture,
   textureMatrix: THREE.Matrix4
 ) {
   const kind = theme.floor.kind;
   const wood = kind !== "concrete";
-  const map = wood ? woodGrainTexture(kind) : concreteTexture();
+  // only a map made here is disposed with the floor
+  let ownMap: THREE.Texture | null = null;
+  const map = wood && grain ? grain : (ownMap = wood ? woodGrainTexture(kind) : concreteTexture());
   const mat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(theme.floor.tint),
     map,
@@ -189,7 +193,7 @@ float floorJoint = 1.0;
       .replace("#include <aomap_fragment>", `#include <aomap_fragment>\n${ROOM_AO_APPLY}`);
   };
   mat.customProgramCacheKey = () => `room-floor:${wood ? "wood" : "concrete"}`;
-  return { mat, map, uniforms };
+  return { mat, ownMap, uniforms };
 }
 
 export function ReflectiveFloor(props: FloorProps) {
@@ -229,10 +233,10 @@ export function ReflectiveFloor(props: FloorProps) {
     // Blur offsets are in UV units (1/width, 1/height), independent of resolution;
     // stronger along screen-y gives the streaky look of a satin floor.
     const blur = new BlurPass({ gl, resolution: RESOLUTION, width: 360, height: 110 });
-    const { mat, map, uniforms } = createFloorMaterial(props, fbo1.texture, fbo2.texture, tmp.textureMatrix);
-    return { fbo1, fbo2, blur, mat, map, uniforms };
+    const { mat, ownMap, uniforms } = createFloorMaterial(props, fbo1.texture, fbo2.texture, tmp.textureMatrix);
+    return { fbo1, fbo2, blur, mat, ownMap, uniforms };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gl, props.W, props.L, props.H, props.theme, tmp]);
+  }, [gl, props.W, props.L, props.H, props.theme, props.grain, tmp]);
 
   useEffect(() => {
     const entry = { uniforms: res.uniforms, mix: res.uniforms.uReflectMix.value };
@@ -246,7 +250,7 @@ export function ReflectiveFloor(props: FloorProps) {
       res.blur.convolutionMaterial.dispose();
       res.blur.screen.geometry.dispose();
       res.mat.dispose();
-      res.map.dispose();
+      res.ownMap?.dispose();
     };
   }, [res]);
 
@@ -255,6 +259,11 @@ export function ReflectiveFloor(props: FloorProps) {
   const beforeRender = () => {
     const parent = meshRef.current;
     if (!parent) return false;
+    // three refreshes the camera's matrixWorld only inside the main render,
+    // after every useFrame: a pose set by a DOM handler (mouse-look, drag,
+    // zoom) before this frame would otherwise be mirrored one frame late —
+    // and the last frame before the canvas idles would keep that error
+    camera.updateMatrixWorld();
     const t = tmp;
     t.reflectorWorldPosition.setFromMatrixPosition(parent.matrixWorld);
     t.cameraWorldPosition.setFromMatrixPosition(camera.matrixWorld);

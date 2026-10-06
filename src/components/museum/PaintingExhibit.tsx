@@ -34,6 +34,7 @@ import {
   type HallDims,
 } from "./exhibit-geometry";
 import { createShadowMaterial, shadowQuad } from "./exhibit-shadow";
+import { retainExhibitResources } from "./exhibit-shared";
 
 // ------------------------------------------------------------------ tuning
 
@@ -98,6 +99,9 @@ export function PaintingExhibit(props: PaintingExhibitProps) {
     settled.current = true;
     onSettledRef.current?.(slug);
   }, [slug]);
+  // shared frames, maps and placeholders: released when the last exhibit leaves
+  const gl = useThree((s) => s.gl);
+  useEffect(() => retainExhibitResources(gl), [gl]);
 
   return (
     <ExhibitBoundary onError={settle} fallback={<ExhibitFallback placement={props.placement} />}>
@@ -353,6 +357,10 @@ function useStreamedTexture(
       if (timer) clearTimeout(timer);
       if (retry) clearTimeout(retry);
       releaseTexture(url);
+      // Forget the texture with the reference: once released the cache may
+      // dispose it (and close its bitmap), so coming back to this url must
+      // wait for a fresh acquire rather than re-binding a dead texture.
+      setState((s) => (s && s.url === url ? null : s));
     };
   }, [url, track, gl, invalidate, attempt]);
 

@@ -353,6 +353,23 @@ export function frameMaterial(theme: GalleryTheme): THREE.MeshStandardMaterial {
   return m;
 }
 
+/** The cached frame materials (exhibit-shared.ts reads renderer state off them). */
+export function sharedFrameMaterials(): THREE.MeshStandardMaterial[] {
+  return [...frameMats.values()];
+}
+
+/**
+ * Free the shared maps and frame materials from every renderer that used
+ * them (exhibit-shared.ts). The maps stay valid and upload again on their
+ * next use; the frame materials are dropped, so the next gallery builds
+ * fresh ones rather than inheriting the last one's probe binding.
+ */
+export function disposeSharedMaterials(): void {
+  for (const m of frameMats.values()) m.dispose();
+  frameMats.clear();
+  for (const t of [weaveTex, carveTex, patinaTex, giltRoughTex, grainTex]) t?.dispose();
+}
+
 /**
  * Bind the gallery's reflection probe explicitly (r184: a material with
  * envMap === null samples scene.environment at scene.environmentIntensity and

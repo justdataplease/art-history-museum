@@ -1,7 +1,7 @@
 // A tiny external store saying whether the visitor is moving continuously
 // (walking keys held, tap-to-walk in progress). With frameloop="demand" the
-// canvas only renders while something changes, so frame-rate sampling (drei's
-// PerformanceMonitor) is only meaningful while this is true.
+// canvas only renders while something changes, so frame-rate sampling (the
+// gallery's adaptive resolution) is only meaningful while this is true.
 
 import { useSyncExternalStore } from "react";
 
@@ -23,6 +23,9 @@ function subscribe(cb: () => void): () => void {
 
 const get = () => moving;
 const getServer = () => false;
+
+/** Current value, for per-frame readers (no React subscription). */
+export const isMoving = get;
 
 export function useMoving(): boolean {
   return useSyncExternalStore(subscribe, get, getServer);

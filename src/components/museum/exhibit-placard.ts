@@ -187,3 +187,8 @@ export function blankPlacardTexture(): THREE.DataTexture {
   blank.needsUpdate = true;
   return blank;
 }
+
+/** Free the blank card from every renderer that uploaded it (exhibit-shared.ts); it stays usable. */
+export function disposeBlankPlacardTexture(): void {
+  blank?.dispose();
+}

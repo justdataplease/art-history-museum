@@ -347,6 +347,9 @@ export function TouchPlayer({
       setMoving(false);
     }
   }, [walkEnabled, active]);
+  // The flag is module state: leaving mid-walk must not carry it into the
+  // next gallery (adaptive resolution would sample its idle frames).
+  useEffect(() => () => setMoving(false), []);
 
   useEffect(() => {
     const el = (gl.domElement.parentElement ?? gl.domElement) as HTMLElement;
@@ -474,6 +477,12 @@ export function TouchPlayer({
 
 // ---------------------------------------------------------- InspectCamera
 
+/** Inspect zoom range: leaning out stops short of the opposite wall (not at
+ *  all when the framing distance was already capped there). */
+function clampZoom(f: { base: number; maxDist: number }, zoom: number): number {
+  return THREE.MathUtils.clamp(zoom, 0.28, Math.min(1.15, f.maxDist / f.base));
+}
+
 /** Fly to a painting (framed in the part of the screen the inspect panel
  *  leaves free), zoom with wheel / pinch, and fly back on close. */
 export function InspectCamera({
@@ -495,13 +504,18 @@ export function InspectCamera({
   const prog = useRef({ p: 0 });
   /** How far the view offset (panel compensation) is applied, 0..1. */
   const offsetK = useRef(0);
-  /** Settled inspect framing: target point, unit view direction, base distance, zoom factor. */
+  /** Settled inspect framing: target point, unit view direction, base
+   *  distance, zoom factor, and the furthest the camera may stand from the
+   *  work before leaving the hall. */
   const frame = useRef<{
     target: THREE.Vector3;
     normal: THREE.Vector3;
     base: number;
     zoom: number;
+    maxDist: number;
   } | null>(null);
+  /** End pose of the running fly-in; a resize mid-flight retargets it. */
+  const flyEnd = useRef<{ pos: THREE.Vector3; quat: THREE.Quaternion } | null>(null);
   const onReturnedRef = useRef(onReturned);
   useEffect(() => {
     onReturnedRef.current = onReturned;
@@ -523,34 +537,38 @@ export function InspectCamera({
   const computeFrame = (pl: Placement) => {
     const { width, height } = sizeRef.current;
     const inset = inspectPanelInset(width, height);
+    const maxDist = inspectMaxDist(pl, layout);
     const pose = inspectPose(pl, camera.fov, (width - inset.right) / height, {
       heightFrac: (height - inset.bottom) / height,
-      maxDist: inspectMaxDist(pl, layout),
+      maxDist,
     });
     const target = new THREE.Vector3(...pose.lookAt);
     const pos = new THREE.Vector3(...pose.position);
     const normal = pos.clone().sub(target);
     const base = normal.length();
     normal.normalize();
-    return { target, normal, base, pos };
+    // Matrix4.lookAt uses the camera convention (−z toward the target).
+    const quat = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(pos, target, camera.up)
+    );
+    return { target, normal, base, maxDist, pos, quat };
   };
 
   // Fly in / fly back.
   useEffect(() => {
     tween.current?.kill();
     tween.current = null;
+    flyEnd.current = null;
     if (inspect) {
       if (!saved.current) {
         saved.current = { pos: camera.position.clone(), quat: camera.quaternion.clone() };
       }
       const f = computeFrame(inspect);
-      frame.current = { target: f.target, normal: f.normal, base: f.base, zoom: 1 };
+      frame.current = { target: f.target, normal: f.normal, base: f.base, zoom: 1, maxDist: f.maxDist };
+      const end = { pos: f.pos, quat: f.quat };
+      flyEnd.current = end;
       const startPos = camera.position.clone();
       const startQuat = camera.quaternion.clone();
-      // Matrix4.lookAt uses the camera convention (−z toward the target).
-      const endQuat = new THREE.Quaternion().setFromRotationMatrix(
-        new THREE.Matrix4().lookAt(f.pos, f.target, camera.up)
-      );
       const startK = offsetK.current;
       tween.current = gsap.fromTo(
         prog.current,
@@ -561,13 +579,14 @@ export function InspectCamera({
           ease: "power3.inOut",
           onUpdate: () => {
             const p = prog.current.p;
-            camera.position.lerpVectors(startPos, f.pos, p);
-            camera.quaternion.slerpQuaternions(startQuat, endQuat, p);
+            camera.position.lerpVectors(startPos, end.pos, p);
+            camera.quaternion.slerpQuaternions(startQuat, end.quat, p);
             applyOffset(startK + (1 - startK) * p);
             invalidate();
           },
           onComplete: () => {
             tween.current = null;
+            if (flyEnd.current === end) flyEnd.current = null;
           },
         }
       );
@@ -614,14 +633,23 @@ export function InspectCamera({
 
   // Resize while inspecting: re-frame for the new viewport and panel size.
   // (R3F's own resize handling only updates aspect, leaving a stale offset.)
+  // Mid fly-in, the running tween is retargeted so it lands on the new framing.
   useEffect(() => {
     sizeRef.current = size;
     if (offsetK.current > 0) applyOffset(offsetK.current);
     const f = frame.current;
-    if (inspect && f && !tween.current) {
+    const end = flyEnd.current;
+    if (inspect && f && (!tween.current || end)) {
       const n = computeFrame(inspect);
       f.base = n.base;
-      camera.position.copy(f.target).addScaledVector(f.normal, f.base * f.zoom);
+      f.maxDist = n.maxDist;
+      f.zoom = clampZoom(f, f.zoom);
+      if (tween.current && end) {
+        end.pos.copy(n.pos);
+        end.quat.copy(n.quat);
+      } else {
+        camera.position.copy(f.target).addScaledVector(f.normal, f.base * f.zoom);
+      }
     }
     invalidate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -634,7 +662,7 @@ export function InspectCamera({
     const zoomBy = (factor: number) => {
       const f = frame.current;
       if (!f || tween.current) return;
-      f.zoom = THREE.MathUtils.clamp(f.zoom * factor, 0.28, 1.15);
+      f.zoom = clampZoom(f, f.zoom * factor);
       camera.position.copy(f.target).addScaledVector(f.normal, f.base * f.zoom);
       invalidate();
     };

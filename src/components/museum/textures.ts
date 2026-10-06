@@ -2,6 +2,13 @@
 // glass and museum placards. Generated at runtime so the gallery needs no
 // texture assets. Every surface texture tiles seamlessly in both directions
 // (all noise is periodic, every shape is drawn with wrap copies).
+//
+// The drawing is deferred. A texture wraps its full-size canvas at once,
+// filled flat with the map's mean colour, so materials and programs are final
+// from the first frame; the per-pixel loops (~30 ms per map) then run in idle
+// time, in slices of a few ms, and the textures re-upload in place. The first
+// gallery mount therefore never waits on them: neither its first frame nor
+// the painting fetches its effects start.
 
 import * as THREE from "three";
 
@@ -85,28 +92,96 @@ function tabulate(fn: (u: number, v: number) => number, gw: number, gh: number) 
   };
 }
 
-function finishTexture(
-  c: HTMLCanvasElement,
-  { srgb, anisotropy = 8 }: { srgb: boolean; anisotropy?: number }
-): THREE.CanvasTexture {
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  t.anisotropy = anisotropy;
-  return t;
-}
-
 // The source canvases are cached (they are pure functions of their seed), but
 // every caller gets its OWN texture object so it can set repeat and dispose it
 // independently of other rooms.
-const canvasCache = new Map<string, HTMLCanvasElement>();
-function cachedCanvas(key: string, draw: () => HTMLCanvasElement): HTMLCanvasElement {
-  let c = canvasCache.get(key);
-  if (!c) {
-    c = draw();
-    canvasCache.set(key, c);
+interface CachedCanvas {
+  canvas: HTMLCanvasElement;
+  drawn: boolean;
+  /** Textures made before the drawing landed: re-uploaded when it does. */
+  waiting: THREE.Texture[];
+}
+/** Draws into the canvas (lazily: a generator); every `yield` may end a slice. */
+type Draw = (ctx: CanvasRenderingContext2D) => Generator<void, void, void>;
+
+const canvasCache = new Map<string, CachedCanvas>();
+const queue: { entry: CachedCanvas; steps: Generator<void, void, void> }[] = [];
+const listeners = new Set<() => void>();
+
+function cachedCanvas(key: string, w: number, h: number, mean: string, draw: Draw): CachedCanvas {
+  let entry = canvasCache.get(key);
+  if (!entry) {
+    const { c, ctx } = makeCanvas(w, h);
+    ctx.fillStyle = mean;
+    ctx.fillRect(0, 0, w, h);
+    const e: CachedCanvas = { canvas: c, drawn: false, waiting: [] };
+    // FIFO: a canvas that draws another (the damask mask) is queued before it
+    queue.push({ entry: e, steps: draw(ctx) });
+    canvasCache.set(key, e);
+    schedule();
+    entry = e;
   }
-  return c;
+  return entry;
+}
+
+let scheduled = false;
+function schedule() {
+  if (scheduled || queue.length === 0) return;
+  scheduled = true;
+  if (typeof requestIdleCallback === "function") requestIdleCallback(pump, { timeout: 150 });
+  else setTimeout(pump, 16);
+}
+
+function pump(deadline?: IdleDeadline) {
+  scheduled = false;
+  const t0 = performance.now();
+  // a real idle period may be used up to about a frame; a timed-out or
+  // setTimeout call gets a short slice
+  const budget = deadline && !deadline.didTimeout ? Math.min(Math.max(deadline.timeRemaining(), 4), 16) : 6;
+  let landed = false;
+  while (queue.length > 0 && performance.now() - t0 < budget) {
+    const job = queue[0];
+    let done = true;
+    try {
+      done = !!job.steps.next().done;
+    } catch (err) {
+      // keep the flat placeholder rather than stall the queue
+      console.error("procedural texture failed", err);
+    }
+    if (!done) continue;
+    queue.shift();
+    job.entry.drawn = true;
+    job.entry.waiting.forEach((t) => (t.needsUpdate = true));
+    job.entry.waiting.length = 0;
+    landed = true;
+  }
+  schedule();
+  if (landed) listeners.forEach((l) => l());
+}
+
+/** Called whenever deferred textures have been drawn (the scene needs a frame). */
+export function subscribeProceduralTextures(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
+/** True while any procedural canvas is still waiting to be drawn. */
+export function proceduralTexturesPending(): boolean {
+  return queue.length > 0;
+}
+
+function finishTexture(
+  entry: CachedCanvas,
+  { srgb, anisotropy = 8 }: { srgb: boolean; anisotropy?: number }
+): THREE.CanvasTexture {
+  const t = new THREE.CanvasTexture(entry.canvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.anisotropy = anisotropy;
+  if (!entry.drawn) entry.waiting.push(t);
+  return t;
 }
 
 // ------------------------------------------------------------------ plaster
@@ -114,12 +189,12 @@ function cachedCanvas(key: string, draw: () => HTMLCanvasElement): HTMLCanvasEle
 /**
  * Lime-plaster / painted-wall albedo (near-white, multiplied by the wall
  * colour) and a matching height map for the bump. Very low contrast: the
- * eye should read "paint on a real wall", not "texture".
+ * eye should read "paint on a real wall", not "texture". Painted walls use
+ * only the height map.
  */
-export function plasterTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } {
+export function plasterAlbedoTexture(): THREE.CanvasTexture {
   const S = 512;
-  const albedo = cachedCanvas("plaster-albedo", () => {
-    const { c, ctx } = makeCanvas(S, S);
+  const albedo = cachedCanvas("plaster-albedo", S, S, "rgb(243,242,239)", function* (ctx) {
     const img = ctx.createImageData(S, S);
     const broad = periodicFbm(11, 4, 4, 0.55);
     const fine = periodicNoise(12, 128);
@@ -134,12 +209,17 @@ export function plasterTextures(): { map: THREE.CanvasTexture; bump: THREE.Canva
         img.data[i + 2] = Math.round(255 * Math.min(1, l * 0.985));
         img.data[i + 3] = 255;
       }
+      if ((y & 15) === 15) yield;
     }
     ctx.putImageData(img, 0, 0);
-    return c;
   });
-  const height = cachedCanvas("plaster-height", () => {
-    const { c, ctx } = makeCanvas(S, S);
+  return finishTexture(albedo, { srgb: true });
+}
+
+/** Height map for the plaster / paint bump (see plasterAlbedoTexture). */
+export function plasterBumpTexture(): THREE.CanvasTexture {
+  const S = 512;
+  const height = cachedCanvas("plaster-height", S, S, "rgb(120,120,120)", function* (ctx) {
     const img = ctx.createImageData(S, S);
     const trowel = periodicFbm(21, 6, 3, 0.5);
     const grain = periodicFbm(22, 64, 2, 0.6);
@@ -153,14 +233,11 @@ export function plasterTextures(): { map: THREE.CanvasTexture; bump: THREE.Canva
         img.data[i] = img.data[i + 1] = img.data[i + 2] = g;
         img.data[i + 3] = 255;
       }
+      if ((y & 15) === 15) yield;
     }
     ctx.putImageData(img, 0, 0);
-    return c;
   });
-  return {
-    map: finishTexture(albedo, { srgb: true }),
-    bump: finishTexture(height, { srgb: false, anisotropy: 4 }),
-  };
+  return finishTexture(height, { srgb: false, anisotropy: 4 });
 }
 
 // ------------------------------------------------------------------- damask
@@ -175,8 +252,8 @@ export function plasterTextures(): { map: THREE.CanvasTexture; bump: THREE.Canva
 export function damaskTextures(): { map: THREE.CanvasTexture; roughness: THREE.CanvasTexture } {
   const TW = 512;
   const TH = 768;
-  const mask = cachedCanvas("damask-mask", () => {
-    const { c, ctx } = makeCanvas(TW, TH);
+  // only drawn into the other two (queued first, so drawn before them)
+  const mask = cachedCanvas("damask-mask", TW, TH, "#000", function* (ctx) {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, TW, TH);
     ctx.fillStyle = "#fff";
@@ -274,19 +351,21 @@ export function damaskTextures(): { map: THREE.CanvasTexture; roughness: THREE.C
         fleuron();
         ctx.restore();
       }
+      yield;
     }
-    return c;
   });
 
-  const albedo = cachedCanvas("damask-albedo", () => {
-    const { c, ctx } = makeCanvas(TW, TH);
+  const albedo = cachedCanvas("damask-albedo", TW, TH, "rgb(234,229,227)", function* (ctx) {
     ctx.fillStyle = "rgb(226,226,226)";
     ctx.fillRect(0, 0, TW, TH);
     ctx.filter = "blur(1.2px)";
     ctx.globalAlpha = 0.055;
     ctx.globalCompositeOperation = "lighter";
     // wrap copies so the blur is periodic too (no seam at the tile edge)
-    for (const dx of [-TW, 0, TW]) for (const dy of [-TH, 0, TH]) ctx.drawImage(mask, dx, dy);
+    for (const dx of [-TW, 0, TW]) {
+      for (const dy of [-TH, 0, TH]) ctx.drawImage(mask.canvas, dx, dy);
+      yield;
+    }
     ctx.filter = "none";
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
@@ -302,12 +381,11 @@ export function damaskTextures(): { map: THREE.CanvasTexture; roughness: THREE.C
         img.data[i + 1] = Math.min(255, img.data[i + 1] * k);
         img.data[i + 2] = Math.min(255, img.data[i + 2] * k * 0.99);
       }
+      if ((y & 15) === 15) yield;
     }
     ctx.putImageData(img, 0, 0);
-    return c;
   });
-  const rough = cachedCanvas("damask-rough", () => {
-    const { c, ctx } = makeCanvas(TW, TH);
+  const rough = cachedCanvas("damask-rough", TW, TH, "rgb(158,158,158)", function* (ctx) {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, TW, TH);
     ctx.filter = "blur(1.2px)";
@@ -317,11 +395,14 @@ export function damaskTextures(): { map: THREE.CanvasTexture; roughness: THREE.C
     tctx.fillStyle = "rgb(158,158,158)";
     tctx.fillRect(0, 0, TW, TH);
     tctx.globalCompositeOperation = "destination-in";
-    tctx.drawImage(mask, 0, 0);
+    tctx.drawImage(mask.canvas, 0, 0);
     ctx.globalCompositeOperation = "source-over";
-    for (const dx of [-TW, 0, TW]) for (const dy of [-TH, 0, TH]) ctx.drawImage(tint, dx, dy);
+    yield;
+    for (const dx of [-TW, 0, TW]) {
+      for (const dy of [-TH, 0, TH]) ctx.drawImage(tint, dx, dy);
+      yield;
+    }
     ctx.filter = "none";
-    return c;
   });
   return {
     map: finishTexture(albedo, { srgb: true }),
@@ -340,8 +421,8 @@ export function damaskTextures(): { map: THREE.CanvasTexture; roughness: THREE.C
 export function woodGrainTexture(kind: "oak-dark" | "oak-light"): THREE.CanvasTexture {
   const W = 512;
   const H = 512;
-  const c = cachedCanvas(`grain-${kind}`, () => {
-    const { c, ctx } = makeCanvas(W, H);
+  const mean = kind === "oak-dark" ? "rgb(237,235,232)" : "rgb(241,239,237)";
+  const grain = cachedCanvas(`grain-${kind}`, W, H, mean, function* (ctx) {
     const img = ctx.createImageData(W, H);
     const NL = 72; // growth lines across the tile (~8.6 mm apart)
     // low-frequency fields are tabulated once and sampled bilinearly (fast)
@@ -374,11 +455,11 @@ export function woodGrainTexture(kind: "oak-dark" | "oak-light"): THREE.CanvasTe
         img.data[i + 2] = 255 * l * (0.7 + 0.3 * l);
         img.data[i + 3] = 255;
       }
+      if ((y & 15) === 15) yield;
     }
     ctx.putImageData(img, 0, 0);
-    return c;
   });
-  return finishTexture(c, { srgb: true, anisotropy: 16 });
+  return finishTexture(grain, { srgb: true, anisotropy: 16 });
 }
 
 // ----------------------------------------------------------------- concrete
@@ -386,8 +467,7 @@ export function woodGrainTexture(kind: "oak-dark" | "oak-light"): THREE.CanvasTe
 /** Polished concrete: fine aggregate speckle and faint trowel clouds (1 m tile). */
 export function concreteTexture(): THREE.CanvasTexture {
   const S = 512;
-  const c = cachedCanvas("concrete", () => {
-    const { c, ctx } = makeCanvas(S, S);
+  const concrete = cachedCanvas("concrete", S, S, "rgb(234,234,234)", function* (ctx) {
     const img = ctx.createImageData(S, S);
     const cloud = periodicFbm(51, 4, 4, 0.55);
     const fine = periodicNoise(52, 170);
@@ -400,6 +480,7 @@ export function concreteTexture(): THREE.CanvasTexture {
         img.data[i] = img.data[i + 1] = img.data[i + 2] = Math.round(255 * l);
         img.data[i + 3] = 255;
       }
+      if ((y & 15) === 15) yield;
     }
     ctx.putImageData(img, 0, 0);
     // exposed aggregate: small stones, a little darker or lighter, wrapped
@@ -418,10 +499,10 @@ export function concreteTexture(): THREE.CanvasTexture {
           ctx.ellipse(x + dx, y + dy, rad, rad * (0.6 + r() * 0.4), r() * 3, 0, Math.PI * 2);
           ctx.fill();
         }
+      if ((k & 255) === 255) yield;
     }
-    return c;
   });
-  return finishTexture(c, { srgb: true, anisotropy: 16 });
+  return finishTexture(concrete, { srgb: true, anisotropy: 16 });
 }
 
 // ------------------------------------------------------------ laylight glass
@@ -432,8 +513,9 @@ export function concreteTexture(): THREE.CanvasTexture {
  */
 export function laylightTexture(panesX: number, panesY: number): THREE.CanvasTexture {
   const S = 512;
-  const c = cachedCanvas(`laylight-${panesX}x${panesY}`, () => {
-    const { c, ctx } = makeCanvas(S, S);
+  // mean of the drawn glass: glazing bars darken a multi-pane bay
+  const glassMean = panesX * panesY > 1 ? "rgb(223,223,223)" : "rgb(241,241,241)";
+  const glass = cachedCanvas(`laylight-${panesX}x${panesY}`, S, S, glassMean, function* (ctx) {
     const img = ctx.createImageData(S, S);
     const cloud = periodicFbm(61, 3, 3, 0.5);
     const paneVar = periodicNoise(62, 8);
@@ -463,11 +545,11 @@ export function laylightTexture(panesX: number, panesY: number): THREE.CanvasTex
         img.data[i + 2] = Math.round(255 * Math.max(0.12, l));
         img.data[i + 3] = 255;
       }
+      if ((y & 15) === 15) yield;
     }
     ctx.putImageData(img, 0, 0);
-    return c;
   });
-  const t = finishTexture(c, { srgb: true, anisotropy: 8 });
+  const t = finishTexture(glass, { srgb: true, anisotropy: 8 });
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   return t;
 }

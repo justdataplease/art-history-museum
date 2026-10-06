@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { RectAreaLightUniformsLib } from "three/examples/jsm/lights/RectAreaLightUniformsLib.js";
@@ -8,10 +8,26 @@ import type { GalleryLayout } from "./layout";
 import type { GalleryTheme } from "./theme";
 import { setGalleryEnv } from "./env-store";
 import { buildGlass, buildHall, ceilingSpec, disposeHall } from "./room-geometry";
-import { captureProbe, ENV_INTENSITY, initialEnvironment, roomDimmers, roomState } from "./room-env";
+import {
+  captureProbe,
+  ENV_INTENSITY,
+  initialEnvironment,
+  placeholderEnvironment,
+  precompileProbeShader,
+  roomDimmers,
+  roomState,
+} from "./room-env";
 import { ReflectiveFloor } from "./room-floor";
 import { patchRoomMaterial } from "./room-shading";
-import { damaskTextures, laylightTexture, plasterTextures, woodGrainTexture } from "./textures";
+import {
+  damaskTextures,
+  laylightTexture,
+  plasterAlbedoTexture,
+  plasterBumpTexture,
+  proceduralTexturesPending,
+  subscribeProceduralTextures,
+  woodGrainTexture,
+} from "./textures";
 
 // The architecture of the hall: environment, ceiling light, floor, walls,
 // mouldings, laylight / lightbox, lighting track and benches.
@@ -38,23 +54,48 @@ export function EnvSetup({
   const envRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const captured = useRef(false);
   const countdown = useRef(-1);
-  const retired = useRef<{ rt: THREE.WebGLRenderTarget; timer: ReturnType<typeof setTimeout> }[]>([]);
+  const retired = useRef<Retired>([]);
+
+  // A lost and restored WebGL context keeps no render-target contents: the
+  // proxy and the probe come back empty. Rebuild both from scratch.
+  const [contextGen, setContextGen] = useState(0);
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const onRestored = () => setContextGen((g) => g + 1);
+    canvas.addEventListener("webglcontextrestored", onRestored);
+    return () => canvas.removeEventListener("webglcontextrestored", onRestored);
+  }, [gl]);
 
   // Synchronously, inside the commit that adds the room: the first frame
-  // already sees an environment, so no program is ever compiled without one.
+  // already sees an environment of the final shape, so no program is ever
+  // compiled without one. Its contents (the proxy room) are built below.
   const pmremRef = useRef<THREE.PMREMGenerator | null>(null);
+  const buildProxy = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
     // one generator for the proxy and the probe: its blur programs compile once
     const pm = new THREE.PMREMGenerator(gl);
     pmremRef.current = pm;
-    const rt = initialEnvironment(pm, layout, theme);
-    envRef.current = rt;
+    const stand = placeholderEnvironment(gl);
+    envRef.current = stand;
     captured.current = false;
-    scene.environment = rt.texture;
+    countdown.current = -1;
+    scene.environment = stand.texture;
     scene.environmentIntensity = ENV_INTENSITY * envDimFactor(roomState.dim);
-    setGalleryEnv(rt.texture);
+    setGalleryEnv(stand.texture);
     const pending = retired.current;
+    let built = false;
+    buildProxy.current = () => {
+      // once; never over a probe that got there first
+      if (built || captured.current) return;
+      built = true;
+      swapEnvironment(scene, envRef, pending, initialEnvironment(pm, layout, theme));
+      precompileProbeShader(gl, pm);
+      invalidate();
+    };
+    invalidate();
     return () => {
+      built = true;
+      buildProxy.current = null;
       pm.dispose();
       pmremRef.current = null;
       if (scene.environment === envRef.current?.texture) scene.environment = null;
@@ -67,7 +108,22 @@ export function EnvSetup({
       });
       pending.length = 0;
     };
-  }, [gl, scene, layout, theme]);
+  }, [gl, scene, invalidate, layout, theme, contextGen]);
+
+  // The proxy PMREM's GGX program compiles synchronously (~350 ms on a cold
+  // GPU shader cache): build it only after this commit's effects have run —
+  // the exhibits' among them, which start the painting fetches.
+  useEffect(() => {
+    const t = setTimeout(() => buildProxy.current?.(), 0);
+    return () => clearTimeout(t);
+  }, [gl, scene, invalidate, layout, theme, contextGen]);
+
+  // The probe should see the walls and floor with their procedural maps drawn.
+  const texturesDrawn = useSyncExternalStore(
+    subscribeProceduralTextures,
+    () => !proceduralTexturesPending(),
+    () => false
+  );
 
   // Safety net: if `ready` never arrives, capture the hall anyway.
   const [fallback, setFallback] = useState(false);
@@ -77,22 +133,26 @@ export function EnvSetup({
   }, []);
 
   useEffect(() => {
-    if ((ready || fallback) && !captured.current && countdown.current < 0) {
+    if (((ready && texturesDrawn) || fallback) && !captured.current && countdown.current < 0) {
       // let the freshly settled canvases commit and upload first
       countdown.current = 3;
       invalidate();
     }
-    // re-armed when the room is rebuilt (a new layout/theme gets its own probe)
-  }, [ready, fallback, invalidate, layout, theme]);
+    // re-armed when the room is rebuilt (a new layout/theme gets its own
+    // probe, a restored context a fresh one)
+  }, [ready, texturesDrawn, fallback, invalidate, layout, theme, contextGen]);
 
   useFrame((state) => {
     if (countdown.current < 0 || captured.current) return;
-    // capture at rest (not while a painting is focused and the room dimmed)
-    if (countdown.current > 0 || roomState.dim < 0.98) {
-      if (countdown.current > 0) countdown.current--;
+    if (countdown.current > 0) {
+      countdown.current--;
       state.invalidate();
       return;
     }
+    // Capture at rest, not while a painting is focused and the room dimmed.
+    // No frames are requested meanwhile: Lighting renders every frame while
+    // it brings the room back up, and this check runs again on those.
+    if (roomState.dim < 0.98) return;
     countdown.current = -1;
     captured.current = true;
     const pm = pmremRef.current ?? new THREE.PMREMGenerator(gl);
@@ -100,27 +160,38 @@ export function EnvSetup({
     // the generator's work is done: free its internal targets and programs
     pm.dispose();
     pmremRef.current = null;
-    const old = envRef.current;
-    envRef.current = probe;
-    scene.environment = probe.texture;
-    setGalleryEnv(probe.texture);
-    if (old) {
-      // exhibits re-bind on their next React commit; free the proxy after that
-      const list = retired.current;
-      const entry = {
-        rt: old,
-        timer: setTimeout(() => {
-          old.dispose();
-          const i = list.indexOf(entry);
-          if (i >= 0) list.splice(i, 1);
-        }, 2500),
-      };
-      list.push(entry);
-    }
+    swapEnvironment(scene, envRef, retired.current, probe);
     state.invalidate();
   });
 
   return null;
+}
+
+type Retired = { rt: THREE.WebGLRenderTarget; timer: ReturnType<typeof setTimeout> }[];
+
+/** Make `rt` the gallery environment; the one it replaces is retired. */
+function swapEnvironment(
+  scene: THREE.Scene,
+  envRef: { current: THREE.WebGLRenderTarget | null },
+  retired: Retired,
+  rt: THREE.WebGLRenderTarget
+) {
+  const old = envRef.current;
+  envRef.current = rt;
+  scene.environment = rt.texture;
+  setGalleryEnv(rt.texture);
+  if (old) {
+    // exhibits re-bind on their next React commit; free the old one after that
+    const entry = {
+      rt: old,
+      timer: setTimeout(() => {
+        old.dispose();
+        const i = retired.indexOf(entry);
+        if (i >= 0) retired.splice(i, 1);
+      }, 2500),
+    };
+    retired.push(entry);
+  }
 }
 
 /** Environment strength while a painting is focused (dim = 0) vs at rest (1). */
@@ -148,7 +219,8 @@ export function Lighting({
   const invalidate = useThree((s) => s.invalidate);
   const area = useRef<THREE.RectAreaLight>(null);
   const spec = useMemo(() => ceilingSpec(layout, theme), [layout, theme]);
-  const level = useRef(1);
+  // from the shared state, so a level left over anywhere is damped back to rest
+  const level = useRef(roomState.dim);
 
   const glass = useMemo(() => {
     const geometry = buildGlass(spec);
@@ -178,6 +250,21 @@ export function Lighting({
   useEffect(() => {
     invalidate();
   }, [focused, invalidate]);
+
+  useEffect(
+    () => () => {
+      // Leaving the gallery (even mid-inspect): the next one must start at
+      // rest. roomState outlives this canvas, and the next room builds its
+      // materials and environment from it before any frame runs.
+      roomState.dim = 1;
+      // The LTC tables are three's module singletons: free them from this
+      // renderer (they upload again on the next one's first use) so their
+      // dispose listeners do not keep it alive.
+      const lib = THREE.UniformsLib as unknown as Record<string, THREE.Texture | undefined>;
+      for (const k of ["LTC_FLOAT_1", "LTC_FLOAT_2", "LTC_HALF_1", "LTC_HALF_2"]) lib[k]?.dispose();
+    },
+    []
+  );
 
   useFrame((state, dt) => {
     const target = focused ? 0 : 1;
@@ -231,9 +318,10 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       wall.roughnessMap = roughness;
       textures.push(map, roughness);
     } else {
-      const { map, bump } = plasterTextures();
+      const bump = plasterBumpTexture();
       if (finish === "plaster") {
         // lime plaster: soft trowel undulation plus fine grain
+        const map = plasterAlbedoTexture();
         map.repeat.set(1 / 2.2, 1 / 2.2);
         bump.repeat.set(1 / 1.3, 1 / 1.3);
         wall.map = map;
@@ -241,7 +329,6 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         textures.push(map);
       } else {
         // painted board: even colour, only a fine orange-peel texture
-        map.dispose();
         bump.repeat.set(1 / 0.35, 1 / 0.35);
         wall.bumpScale = 0.12;
       }
@@ -323,9 +410,15 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
 
     // Benches: wooden parts get oak grain projected in world space (the
     // merged rounded boxes have no meaningful UVs); leather is plain satin.
-    // share the floor's grain canvas when the floor is wood (one generation per room)
-    const grain = woodGrainTexture(theme.floor.kind === "oak-dark" ? "oak-dark" : "oak-light");
-    textures.push(grain);
+    // A wooden floor shares the same grain texture (one canvas, one upload).
+    const oakSeat = theme.room.bench === "oak-block";
+    const steel = theme.room.bench === "modern-leather";
+    const woodFloor = theme.floor.kind !== "concrete";
+    const grain =
+      woodFloor || oakSeat || !steel
+        ? woodGrainTexture(theme.floor.kind === "oak-dark" ? "oak-dark" : "oak-light")
+        : null;
+    if (grain) textures.push(grain);
     const woodGrain = (m: THREE.MeshStandardMaterial, key: string) => {
       m.map = grain;
       return patchRoomMaterial(m, {
@@ -339,14 +432,12 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
 }`,
       });
     };
-    const oakSeat = theme.room.bench === "oak-block";
     const benchSeat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(theme.room.benchSeat),
       roughness: oakSeat ? 0.5 : 0.46,
       metalness: 0,
     });
     if (oakSeat) woodGrain(benchSeat, "bench-wood");
-    const steel = theme.room.bench === "modern-leather";
     const benchFrame = new THREE.MeshStandardMaterial({
       color: new THREE.Color(theme.room.benchFrame),
       roughness: steel ? 0.3 : 0.5,
@@ -397,6 +488,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       benchFrame,
       benchShadow,
       dimmers,
+      floorGrain: woodFloor ? grain : null,
       dispose() {
         all.forEach((m) => m.dispose());
         textures.forEach((t) => t.dispose());
@@ -406,9 +498,12 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
 }
 
 export function Room({ layout, theme }: { layout: GalleryLayout; theme: GalleryTheme }) {
+  const invalidate = useThree((s) => s.invalidate);
   const hall = useMemo(() => buildHall(layout, theme), [layout, theme]);
   const mats = useRoomMaterials(layout, theme);
   useEffect(() => () => disposeHall(hall), [hall]);
+  // the procedural maps are drawn after mount: show each one as it lands
+  useEffect(() => subscribeProceduralTextures(() => invalidate()), [invalidate]);
   useEffect(() => {
     mats.dimmers.forEach((d) => roomDimmers.add(d));
     return () => {
@@ -419,7 +514,13 @@ export function Room({ layout, theme }: { layout: GalleryLayout; theme: GalleryT
 
   return (
     <group>
-      <ReflectiveFloor W={layout.hallWidth} L={layout.hallLength} H={layout.wallHeight} theme={theme} />
+      <ReflectiveFloor
+        W={layout.hallWidth}
+        L={layout.hallLength}
+        H={layout.wallHeight}
+        theme={theme}
+        grain={mats.floorGrain ?? undefined}
+      />
       <mesh geometry={hall.walls} material={mats.wall} matrixAutoUpdate={false} />
       <mesh geometry={hall.ceiling} material={mats.ceiling} matrixAutoUpdate={false} />
       <mesh geometry={hall.trim} material={mats.trim} matrixAutoUpdate={false} />

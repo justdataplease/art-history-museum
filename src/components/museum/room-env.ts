@@ -1,10 +1,13 @@
 // The gallery's reflection environment.
 //
-// 1. Before the first frame: a PMREM of a tiny proxy room (walls, floor,
+// 0. Before the first frame: an empty CubeUV target of exactly the PMREM's
+//    shape, so every program is built once with USE_ENVMAP / CUBEUV at 256 —
+//    no second compile when the real environment arrives.
+// 1. Right after the mount commit: a PMREM of a tiny proxy room (walls, floor,
 //    ceiling and a glowing laylight in the theme's colours at roughly the
-//    radiance the real hall will have). It exists before any shader compiles,
-//    so every program is built once with USE_ENVMAP / CUBEUV at 256 — no
-//    second compile when the real probe arrives.
+//    radiance the real hall will have). Not inside the commit: its GGX
+//    program compiles synchronously (~350 ms on a cold GPU shader cache),
+//    which would hold up the painting fetches the exhibits start there.
 // 2. Once every painting has settled: ONE capture of the gallery itself from
 //    the hall centre at eye height (CubeCamera, 256², HalfFloat) → PMREM at the
 //    same size, so the program keys are unchanged and nothing recompiles.
@@ -34,6 +37,28 @@ export const roomDimmers = new Set<{ uniform: THREE.IUniform<THREE.Color>; base:
 
 function lin(hex: string, k = 1): THREE.Color {
   return new THREE.Color(hex).multiplyScalar(k);
+}
+
+/**
+ * An empty stand-in shaped like the PMREM of ENV_SIZE (three's CubeUV layout:
+ * 3·max(size, 112) × 4·size, HalfFloat). Programs key on the mapping and the
+ * height only, so everything compiled against it fits the real environment.
+ */
+export function placeholderEnvironment(gl: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
+  const rt = new THREE.WebGLRenderTarget(3 * Math.max(ENV_SIZE, 16 * 7), 4 * ENV_SIZE, {
+    magFilter: THREE.LinearFilter,
+    minFilter: THREE.LinearFilter,
+    generateMipmaps: false,
+    type: THREE.HalfFloatType,
+    format: THREE.RGBAFormat,
+    colorSpace: THREE.LinearSRGBColorSpace,
+    depthBuffer: false,
+  });
+  rt.texture.mapping = THREE.CubeUVReflectionMapping;
+  rt.texture.name = "PMREM.cubeUv";
+  // allocated (zero-filled, black) rather than sampled unbound
+  gl.initRenderTarget(rt);
+  return rt;
 }
 
 /**
@@ -88,6 +113,24 @@ export function initialEnvironment(
   const rt = pm.fromScene(s, 0.02, 0.05, 100, { size: ENV_SIZE });
   disposables.forEach((d) => d.dispose());
   return rt;
+}
+
+/**
+ * Link the probe's cubemap → CubeUV program now, in parallel with the
+ * warm-up, rather than synchronously on the capture frame. compile() builds
+ * the variant for the bound target (screen: tone-mapped sRGB), so bind one as
+ * fromCubemap() will (linear, no tone mapping) — or it would link twice.
+ */
+export function precompileProbeShader(gl: THREE.WebGLRenderer, pm: THREE.PMREMGenerator): void {
+  const prev = gl.getRenderTarget();
+  const rt = new THREE.WebGLRenderTarget(1, 1);
+  try {
+    gl.setRenderTarget(rt);
+    pm.compileCubemapShader();
+  } finally {
+    gl.setRenderTarget(prev);
+    rt.dispose();
+  }
 }
 
 /** One-time capture of the real gallery into a PMREM of the same size. */

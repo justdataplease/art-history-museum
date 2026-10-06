@@ -34,6 +34,10 @@ interface Controller {
   sync(): void;
   /** True while playback is wanted but blocked by the autoplay policy. */
   blocked(): boolean;
+  /** True once every track has failed to load (e.g. offline). */
+  unavailable(): boolean;
+  /** Forget that give-up, so the next sync() tries the current track again. */
+  retry(): void;
 }
 
 /** Stored preference, or null if the visitor never chose. */
@@ -96,6 +100,7 @@ export function MuseumAudio({
 }) {
   const [muted, setMuted] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
   const [current, setCurrent] = useState<Track | null>(null);
   const [creditVisible, setCreditVisible] = useState(false);
 
@@ -214,6 +219,7 @@ export function MuseumAudio({
 
     const giveUp = () => {
       gaveUp = true; // e.g. offline: stay silent rather than spin
+      setUnavailable(true);
       clearGap();
       cancelRamp();
       disarmGesture();
@@ -243,6 +249,16 @@ export function MuseumAudio({
     const onGesture = (e: Event) => {
       // "M" is the mute toggle; let that handler decide what it means.
       if (e instanceof KeyboardEvent && isMuteKey(e)) return;
+      // So is a press on the toggle itself: its click starts the music (the
+      // press's activation is still valid then). Starting here instead lets
+      // a buffered track begin before that click, which then reads as "mute".
+      if (
+        e.target instanceof Element &&
+        e.target.closest("[data-music-toggle]") &&
+        (!(e instanceof KeyboardEvent) || e.key === "Enter" || e.key === " ")
+      ) {
+        return;
+      }
       play();
     };
 
@@ -337,7 +353,23 @@ export function MuseumAudio({
       }
     };
 
-    const ctrl: Controller = { sync, blocked: () => gestureArmed };
+    const retry = () => {
+      if (disposed || !gaveUp) return;
+      gaveUp = false;
+      failures = 0;
+      loaded = false; // re-request the current track from scratch
+      setUnavailable(false);
+    };
+
+    // Back online after giving up: try again by itself.
+    const onOnline = () => {
+      if (!gaveUp) return;
+      retry();
+      sync();
+    };
+    window.addEventListener("online", onOnline);
+
+    const ctrl: Controller = { sync, blocked: () => gestureArmed, unavailable: () => gaveUp, retry };
     ctrlRef.current = ctrl;
     sync();
 
@@ -346,6 +378,8 @@ export function MuseumAudio({
       if (ctrlRef.current === ctrl) ctrlRef.current = null;
       clearGap();
       disarmGesture();
+      setUnavailable(false);
+      window.removeEventListener("online", onOnline);
       audio.removeEventListener("playing", onPlaying);
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
@@ -383,10 +417,12 @@ export function MuseumAudio({
   );
 
   /** The control does what its label says: if autoplay was blocked, this
-   *  gesture starts the music; otherwise it toggles mute. */
+   *  gesture starts the music; if every track failed, it tries again (a mute
+   *  nobody could hear is not recorded); otherwise it toggles mute. */
   const activate = useCallback(() => {
     const ctrl = ctrlRef.current;
-    if (ctrl && ctrl.blocked() && !mutedRef.current) {
+    if (ctrl && !mutedRef.current && (ctrl.blocked() || ctrl.unavailable())) {
+      ctrl.retry();
       ctrl.sync();
       return;
     }
@@ -395,6 +431,7 @@ export function MuseumAudio({
     setMuted(next);
     writeMuted(next);
     if (next) setCreditVisible(false);
+    else ctrl?.retry();
     ctrl?.sync(); // synchronous, so an unmute keeps the gesture's activation
   }, []);
 
@@ -410,7 +447,8 @@ export function MuseumAudio({
   if (tracks.length === 0) return null;
 
   const track = current && tracks.includes(current) ? current : tracks[0];
-  const off = muted || blocked;
+  const off = muted || blocked || unavailable;
+  const failed = unavailable && !muted;
   const performer = track.performer && track.performer !== track.composer ? track.performer : null;
   const deed = licenseUrl(track.license);
 
@@ -424,8 +462,9 @@ export function MuseumAudio({
         type="button"
         className={styles.button}
         data-off={off ? "true" : "false"}
-        aria-label={off ? "Play music" : "Mute music"}
-        title={trackCredit(track)}
+        data-music-toggle=""
+        aria-label={failed ? "Music unavailable, retry" : off ? "Play music" : "Mute music"}
+        title={failed ? "Music unavailable — click to retry" : trackCredit(track)}
         onClick={activate}
       >
         <svg
