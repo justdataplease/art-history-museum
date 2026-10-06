@@ -1,6 +1,9 @@
 // Load the Wikipedia ingest cache into the Neon Postgres database.
 // Reads DATABASE_URL from .env.local (never printed).
 //
+//   npm run load-db                          # refuses to remove a live gallery
+//   npm run load-db -- --allow-removals      # also when the cache lacks artists the database has
+//
 // The site reads these tables while a reload runs (an hourly ISR regeneration
 // can start at any moment and caches what it reads for the next hour), so a
 // reload never exposes a half-loaded state: the new data is built in staging
@@ -50,6 +53,8 @@ const CREATE_STAGING = `
     portrait_url TEXT,
     portrait_width INT,
     portrait_height INT,
+    -- {author, license, licenseUrl, page} of the portrait (src/lib/types.ts ImageCredit)
+    portrait_credit JSONB,
     wikipedia_url TEXT
   );
 
@@ -60,7 +65,7 @@ const CREATE_STAGING = `
     slug TEXT NOT NULL,
     title TEXT NOT NULL,
     year INT,
-    image_url TEXT NOT NULL,
+    image_url TEXT,
     image_width INT,
     image_height INT,
     story TEXT NOT NULL DEFAULT '',
@@ -72,6 +77,10 @@ const CREATE_STAGING = `
     height_cm REAL,
     pageviews INTEGER,
     image_bytes BIGINT,
+    -- no free image: the work is still in copyright (image_url is null)
+    copyrighted BOOLEAN NOT NULL DEFAULT false,
+    -- {author, license, licenseUrl, page} of the image (src/lib/types.ts ImageCredit)
+    image_credit JSONB,
     CONSTRAINT paintings_new_artist_id_slug_key UNIQUE (artist_id, slug)
   );
   CREATE INDEX paintings_new_artist_idx ON paintings_new(artist_id);
@@ -199,17 +208,19 @@ async function main() {
     ord: i, slug: a.slug, period_slug: a.periodSlug, name: a.name, wiki_title: a.wikiTitle, qid: a.qid,
     birth_year: a.birthYear, death_year: a.deathYear, tagline: a.tagline, bio: a.bio,
     portrait_url: a.portraitUrl, portrait_width: a.portraitWidth, portrait_height: a.portraitHeight,
+    portrait_credit: a.portraitUrl ? a.portraitCredit ?? null : null,
     wikipedia_url: a.wikipediaUrl,
   }));
   await db.query(
     `INSERT INTO artists_new (slug, period_slug, name, wiki_title, qid, birth_year, death_year,
-                              tagline, bio, portrait_url, portrait_width, portrait_height, wikipedia_url)
+                              tagline, bio, portrait_url, portrait_width, portrait_height, portrait_credit,
+                              wikipedia_url)
      SELECT slug, period_slug, name, wiki_title, qid, birth_year, death_year,
-            tagline, bio, portrait_url, portrait_width, portrait_height, wikipedia_url
+            tagline, bio, portrait_url, portrait_width, portrait_height, portrait_credit, wikipedia_url
      FROM json_to_recordset($1::json) AS x(ord INT, slug TEXT, period_slug TEXT, name TEXT, wiki_title TEXT,
                                            qid TEXT, birth_year INT, death_year INT, tagline TEXT, bio TEXT,
                                            portrait_url TEXT, portrait_width INT, portrait_height INT,
-                                           wikipedia_url TEXT)
+                                           portrait_credit JSONB, wikipedia_url TEXT)
      ORDER BY ord`,
     [JSON.stringify(artists)]
   );
@@ -221,18 +232,22 @@ async function main() {
       image_url: p.imageUrl, image_width: p.imageWidth, image_height: p.imageHeight,
       story: p.story, facts: p.facts ?? [], wikipedia_url: p.wikipediaUrl, sort,
       width_cm: p.widthCm ?? null, height_cm: p.heightCm ?? null, pageviews: p.pageviews ?? null,
-      image_bytes: p.imageBytes ?? null,
+      image_bytes: p.imageBytes ?? null, copyrighted: p.copyrighted === true,
+      image_credit: p.imageUrl ? p.imageCredit ?? null : null,
     }))
   );
   await db.query(
     `INSERT INTO paintings_new (artist_id, slug, title, year, image_url, image_width, image_height,
-                                story, facts, wikipedia_url, sort, width_cm, height_cm, pageviews, image_bytes)
+                                story, facts, wikipedia_url, sort, width_cm, height_cm, pageviews, image_bytes,
+                                copyrighted, image_credit)
      SELECT a.id, x.slug, x.title, x.year, x.image_url, x.image_width, x.image_height,
-            x.story, x.facts, x.wikipedia_url, x.sort, x.width_cm, x.height_cm, x.pageviews, x.image_bytes
+            x.story, x.facts, x.wikipedia_url, x.sort, x.width_cm, x.height_cm, x.pageviews, x.image_bytes,
+            x.copyrighted, x.image_credit
      FROM json_to_recordset($1::json) AS x(ord INT, artist_slug TEXT, slug TEXT, title TEXT, year INT,
                                            image_url TEXT, image_width INT, image_height INT, story TEXT,
                                            facts JSONB, wikipedia_url TEXT, sort INT, width_cm REAL,
-                                           height_cm REAL, pageviews INT, image_bytes BIGINT)
+                                           height_cm REAL, pageviews INT, image_bytes BIGINT,
+                                           copyrighted BOOLEAN, image_credit JSONB)
      JOIN artists_new a ON a.slug = x.artist_slug
      ORDER BY x.ord
      ON CONFLICT (artist_id, slug) DO NOTHING`,
@@ -241,6 +256,21 @@ async function main() {
 
   // ---- 2. swap them in ----
   const before = await gallerySlugs(db);
+  // A gallery that would disappear is almost always an ingest that failed for
+  // that artist, not a curatorial decision: refuse unless asked explicitly.
+  const incoming = new Set<string>(
+    data.artists.filter((a: any) => a.paintings?.length).map((a: any) => a.slug as string)
+  );
+  const lost = [...before].filter((s) => !incoming.has(s));
+  if (lost.length && !process.argv.includes("--allow-removals")) {
+    await db.query("DROP TABLE IF EXISTS paintings_new; DROP TABLE IF EXISTS artists_new; DROP TABLE IF EXISTS periods_new;");
+    await db.end();
+    console.error(
+      `The cache has no gallery for ${lost.length} artist(s) the database shows: ${lost.join(", ")}.\n` +
+        "Nothing was changed. Re-run the ingest for them, or pass --allow-removals to remove them."
+    );
+    process.exit(1);
+  }
   await swapIn(db);
   const after = await gallerySlugs(db);
 
@@ -250,7 +280,8 @@ async function main() {
             (SELECT COUNT(*) FROM paintings) AS paintings,
             (SELECT COUNT(*) FROM paintings WHERE width_cm IS NOT NULL AND height_cm IS NOT NULL) AS with_dimensions,
             (SELECT COUNT(*) FROM paintings WHERE pageviews IS NOT NULL) AS with_pageviews,
-            (SELECT COUNT(*) FROM paintings WHERE image_bytes IS NOT NULL) AS with_image_bytes`
+            (SELECT COUNT(*) FROM paintings WHERE image_bytes IS NOT NULL) AS with_image_bytes,
+            (SELECT COUNT(*) FROM paintings WHERE image_credit IS NOT NULL) AS with_image_credit`
   );
   console.log("Loaded into Neon:", counts.rows[0]);
 

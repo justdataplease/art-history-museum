@@ -48,8 +48,8 @@ const C = "https://commons.wikimedia.org/wiki/File:";
 const U = "https://upload.wikimedia.org/wikipedia/commons/";
 const T = "https://upload.wikimedia.org/wikipedia/commons/transcoded/";
 
-export const ERA_MUSIC: Record<EraKey, Track[]> = {
-  // Medieval / Gothic + Early Renaissance
+const PLAYLISTS: Record<Exclude<EraKey, "northern" | "victorian" | "secession">, Track[]> = {
+  // Medieval / Gothic, Early + Northern Renaissance
   sacred: [
     {
       title: "Salve Regina",
@@ -92,7 +92,7 @@ export const ERA_MUSIC: Record<EraKey, Track[]> = {
     },
   ],
 
-  // High Renaissance, Mannerism, Baroque
+  // High Renaissance, Mannerism, Baroque (and the Dutch rooms)
   "old-master": [
     {
       title: "Kyrie, Missa Sicut lilium inter spinas",
@@ -181,7 +181,7 @@ export const ERA_MUSIC: Record<EraKey, Track[]> = {
     },
   ],
 
-  // Romanticism + Realism
+  // Romanticism, Hudson River School, Realism (and the Victorian rooms)
   nineteenth: [
     {
       title: "Nocturne in E-flat, Op. 9 No. 2",
@@ -226,7 +226,7 @@ export const ERA_MUSIC: Record<EraKey, Track[]> = {
     },
   ],
 
-  // Impressionism + Post-Impressionism
+  // Impressionism, Post-Impressionism (and Symbolism / the Secession room)
   impressionist: [
     {
       // Recording is CC BY 3.0 (Commons metadata shows the composition's PD).
@@ -270,7 +270,7 @@ export const ERA_MUSIC: Record<EraKey, Track[]> = {
     },
   ],
 
-  // Expressionism, Cubism, Surrealism, American Modernism
+  // Fauvism, Expressionism, Cubism, Abstract Art, Surrealism, American Modernism
   "early-modern": [
     {
       // Performance is CC BY-SA 3.0 (Commons metadata shows the composition's PD).
@@ -365,6 +365,36 @@ export const ERA_MUSIC: Record<EraKey, Track[]> = {
     },
   ],
 };
+
+// Rooms with their own decor share the playlist of the musical era they
+// belong to: the Dutch Golden Age is Baroque music, the Pre-Raphaelites and
+// the academic Salon are the Romantic century, fin-de-siècle Vienna and the
+// Symbolists are Debussy's world.
+export const ERA_MUSIC: Record<EraKey, Track[]> = {
+  ...PLAYLISTS,
+  northern: PLAYLISTS["old-master"],
+  victorian: PLAYLISTS.nineteenth,
+  secession: PLAYLISTS.impressionist,
+};
+
+/** File name of the local mirror in public/audio/ (scripts/fetch-music.ts):
+ *  the Commons file name, slugified, as AAC. */
+export function localAudioFile(t: Track): string {
+  const base = decodeURIComponent(t.original.split("/").pop() ?? "track")
+    .replace(/\.[a-z0-9]+$/i, "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 80);
+  return `${base}.m4a`;
+}
+
+/** Same-origin URL of the local mirror (served from public/audio). */
+export function localAudioUrl(t: Track): string {
+  return `/audio/${localAudioFile(t)}`;
+}
 
 /** One-line attribution, e.g. for a title attribute. */
 export function trackCredit(t: Track): string {

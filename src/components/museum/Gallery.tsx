@@ -1,17 +1,40 @@
 "use client";
 
-import { memo, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ArtistWithPaintings } from "@/lib/types";
-import type { GalleryLayout, Placement } from "./layout";
+import {
+  confine,
+  entryGate,
+  entryZ,
+  EYE_HEIGHT,
+  spawnZ,
+  type GalleryLayout,
+  type Placement,
+} from "./layout";
 import type { GalleryTheme } from "./theme";
 import { PaintingExhibit } from "./PaintingExhibit";
 import { EnvSetup, Lighting, Room } from "./Room";
 import { EntryDolly, InspectCamera, Player, TouchPlayer, type LockApi } from "./Controls";
 import { isMoving } from "./renderer-motion";
+import { planExhibitLights, roomDims } from "./exhibit-lights";
+import { lodAt, SuiteRuntime, type Lod } from "./suite-runtime";
+import { textureStats } from "./exhibit-texture";
+import { FxSlot } from "./fx/Slot";
 
 export type { LockApi };
+
+/** Exhibits mounted per frame while a long suite's window moves (the rest
+ *  of the window follows over the next frames, nearest rooms first). */
+const MOUNTS_PER_FRAME = 3;
+
+export interface TeleportApi {
+  /** Put the visitor at the entrance of `room`, facing into it. */
+  go(room: number): void;
+  /** The room's lights are up and its works hung: the fade may clear. */
+  settled(): boolean;
+}
 
 export interface WarmupApi {
   /** Compile every material currently in the scene (screen and reflection
@@ -29,7 +52,8 @@ export interface GalleryProps {
   onLockChange: (locked: boolean) => void;
   walkEnabled: boolean;
   entering: boolean;
-  /** Every painting texture has settled (loaded or failed). */
+  /** The works the reflection probe sees have settled (loaded or failed):
+   *  every painting in a single room, the visitor's room in a suite. */
   ready?: boolean;
   /** A painting's wall texture loaded or failed (fires once per painting). */
   onSettled: (slug: string) => void;
@@ -47,6 +71,10 @@ export interface GalleryProps {
   touch: boolean;
   /** Touch mode: the visitor has dismissed the "step inside" overlay. */
   touchActive: boolean;
+  /** The visitor walked into another room of a suite (index, entrance room 0). */
+  onRoom?: (room: number) => void;
+  /** Filled here: the room navigator's jump (MuseumApp fades around it). */
+  teleportApi?: RefObject<TeleportApi | null>;
 }
 
 export const Gallery = memo(function Gallery(props: GalleryProps) {
@@ -54,24 +82,139 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
   const meshRegistry = useRef(new Map<string, THREE.Mesh>());
   const focusSlug = props.inspect?.painting.slug ?? null;
 
+  // Every exhibit's track heads, planned up front; their lights are a fixed
+  // pool in the runtime (one per head in a single room, POOL_MAX in a suite).
+  const lights = useMemo(
+    () => layout.placements.map((pl) => planExhibitLights(pl, theme, roomDims(layout, pl))),
+    [layout, theme]
+  );
+  const runtime = useMemo(
+    () =>
+      new SuiteRuntime(layout, lights, {
+        color: theme.light.spot,
+        gate: entryGate(layout),
+        start: { x: 0, z: entryZ(layout) },
+      }),
+    [layout, lights, theme.light.spot]
+  );
+  useEffect(() => () => runtime.dispose(), [runtime]);
+
+  // ---- which exhibits exist: a long suite hangs only the rooms around the
+  // visitor (full detail next door, frame + canvas two rooms away). When the
+  // visitor changes rooms, the window moves; newcomers mount a few per frame.
+  const [room, setRoom] = useState(() => runtime.currentRoom());
+  useEffect(() => runtime.onWindowChange(() => setRoom(runtime.currentRoom())), [runtime]);
+  const target = useMemo(() => {
+    const t = new Map<string, Lod>();
+    // nearest rooms first: the order newcomers are mounted in
+    const byNear = [...layout.placements].sort((a, b) => Math.abs(a.room - room) - Math.abs(b.room - room));
+    for (const pl of byNear) {
+      const lod = lodAt(pl.room, room);
+      if (lod) t.set(pl.painting.slug, lod);
+    }
+    return t;
+  }, [layout, room]);
+  const [mounted, setMounted] = useState(target);
+  const mountedRef = useRef(mounted);
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    let raf = 0;
+    const step = () => {
+      const prev = mountedRef.current;
+      const next = new Map(prev);
+      let changed = false;
+      // leaving the window, or dropping to frame + canvas: at once (frees memory)
+      for (const [slug, lod] of prev) {
+        const t = target.get(slug);
+        if (!t) {
+          next.delete(slug);
+          changed = true;
+        } else if (t === "lite" && lod === "full") {
+          next.set(slug, "lite");
+          changed = true;
+        }
+      }
+      let budget = MOUNTS_PER_FRAME;
+      for (const [slug, t] of target) {
+        if (budget === 0) break;
+        if (next.get(slug) === t) continue;
+        next.set(slug, t);
+        changed = true;
+        budget--;
+      }
+      if (!changed) return;
+      mountedRef.current = next;
+      setMounted(next);
+      invalidate();
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, invalidate]);
+
+  // ---- the room navigator's jump
+  const camera = useThree((s) => s.camera);
+  useEffect(() => {
+    const api = props.teleportApi;
+    if (!api) return;
+    const tp: TeleportApi = {
+      go(r: number) {
+        const n = layout.rooms.length;
+        const to = Math.max(0, Math.min(n - 1, r));
+        // just inside the room's doorway (the spawn point in the first room),
+        // facing down the room
+        const d = layout.doorways[to - 1];
+        const p = { x: 0, z: to === 0 ? spawnZ(layout) : d.z - d.thickness / 2 - 1.6 };
+        confine(p, layout);
+        camera.position.set(p.x, EYE_HEIGHT, p.z);
+        camera.rotation.set(0, 0, 0, "YXZ");
+        camera.updateMatrixWorld();
+        runtime.teleport(to);
+        invalidate();
+      },
+      settled() {
+        // the window's newcomers are mounted and the lights have come up
+        if (!runtime.settled()) return false;
+        const want = targetRef.current;
+        const have = mountedRef.current;
+        if (have.size !== want.size) return false;
+        for (const [slug, lod] of want) if (have.get(slug) !== lod) return false;
+        return true;
+      },
+    };
+    api.current = tp;
+    return () => {
+      if (api.current === tp) api.current = null;
+    };
+  }, [props.teleportApi, layout, camera, runtime, invalidate]);
+
   return (
     <>
       <CameraLayers />
-      <EnvSetup layout={layout} theme={theme} ready={!!props.ready} />
-      <Lighting layout={layout} theme={theme} focused={!!props.inspect} />
-      <Room layout={layout} theme={theme} />
-      {layout.placements.map((pl) => (
-        <PaintingExhibit
-          key={pl.painting.slug}
-          placement={pl}
-          artistName={artist.name}
-          focusSlug={focusSlug}
-          registry={meshRegistry.current}
-          theme={theme}
-          layout={layout}
-          onSettled={props.onSettled}
-        />
-      ))}
+      <EnvSetup layout={layout} theme={theme} ready={!!props.ready} runtime={runtime} />
+      <Lighting layout={layout} theme={theme} focused={!!props.inspect} runtime={runtime} />
+      <Room layout={layout} theme={theme} runtime={runtime} />
+      {/* the spotlight pool: a fixed count from the first frame */}
+      <primitive object={runtime.root} />
+      {layout.placements.map((pl, i) => {
+        const lod = mounted.get(pl.painting.slug);
+        return lod ? (
+          <PaintingExhibit
+            key={pl.painting.slug}
+            placement={pl}
+            artistName={artist.name}
+            focusSlug={focusSlug}
+            registry={meshRegistry.current}
+            theme={theme}
+            lights={lights[i]}
+            runtime={runtime}
+            lod={lod}
+            onSettled={props.onSettled}
+          />
+        ) : null;
+      })}
       {props.touch ? (
         <TouchPlayer
           layout={layout}
@@ -93,12 +236,65 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
       )}
       <InspectCamera inspect={props.inspect} layout={layout} onReturned={props.onReturned} />
       <EntryDolly entering={props.entering} layout={layout} onArrived={props.onArrived} />
+      {/* after the controls: it reads the camera they have just moved */}
+      <SuiteDirector
+        runtime={runtime}
+        focusSlug={focusSlug}
+        open={props.entering}
+        onRoom={props.onRoom}
+      />
       <AdaptiveDpr onDprCap={props.onDprCap} />
+      <FxSlot
+        registry={meshRegistry.current}
+        enabled={props.walkEnabled}
+        touch={props.touch}
+        compile={() => props.warmApi.current?.run() ?? Promise.resolve()}
+      />
       {/* last, so its effect runs after the room and exhibits have set up */}
       <Warmup api={props.warmApi} />
     </>
   );
 });
+
+/** Drives the runtime each rendered frame: spot fades and focus gains,
+ *  texture tiers, portal culling and the current room. */
+function SuiteDirector({
+  runtime,
+  focusSlug,
+  open,
+  onRoom,
+}: {
+  runtime: SuiteRuntime;
+  focusSlug: string | null;
+  open: boolean;
+  onRoom?: (room: number) => void;
+}) {
+  const camera = useThree((s) => s.camera);
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    runtime.setFocus(focusSlug);
+    invalidate();
+  }, [runtime, focusSlug, invalidate]);
+  useEffect(() => {
+    runtime.setOpen(open);
+    invalidate();
+  }, [runtime, open, invalidate]);
+  useEffect(() => (onRoom ? runtime.onRoomChange(onRoom) : undefined), [runtime, onRoom]);
+  // Test hook: an init script sets window.__MUSEUM_DEBUG__ to reach the
+  // camera, layout and runtime from automation (nothing is exposed otherwise).
+  useEffect(() => {
+    const w = window as unknown as { __MUSEUM_DEBUG__?: boolean; __museum?: unknown };
+    if (!w.__MUSEUM_DEBUG__) return;
+    w.__museum = { camera, layout: runtime.layout, runtime, invalidate, textureStats };
+    return () => {
+      w.__museum = undefined;
+    };
+  }, [camera, runtime, invalidate]);
+  useFrame((state, dt) => {
+    if (runtime.update(camera.position, dt)) state.invalidate();
+  });
+  return null;
+}
 
 /** The main camera also sees layer 1: small props that should not appear in
  *  the floor reflection live there (drei's reflector camera sees layer 0). */

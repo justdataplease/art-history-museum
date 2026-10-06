@@ -1,9 +1,17 @@
 // Helpers for pulling data from Wikipedia, Wikidata and Wikimedia Commons.
 // All text stored in the museum is verbatim Wikipedia content.
 
+import "./env"; // .env.local (WIKI_USER_AGENT) before UA is read below
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
 // Wikimedia's User-Agent policy: identify the client and give a contact.
+// If you run the ingest yourself, set WIKI_USER_AGENT to your own project
+// URL / contact, e.g. "MyMuseum/1.0 (https://example.org; me@example.org)".
 export const UA =
-  "ArtHistoryMuseum/1.0 (https://justdataplease.com; hey@justdataplease.com) node-fetch";
+  process.env.WIKI_USER_AGENT ??
+  "TimelineMuseum/1.0 (https://github.com/justdataplease/museum) node-fetch";
 
 export async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -29,6 +37,23 @@ export async function fetchJson<T>(
   init: RequestInit = {},
   retries = 6
 ): Promise<T | null> {
+  // WIKI_HTTP_CACHE=<dir>: keep GET responses on disk, so re-running a script
+  // (a --dry-run, then the real run) doesn't ask the APIs twice.
+  const cacheDir = process.env.WIKI_HTTP_CACHE;
+  const cacheFile =
+    cacheDir && (!init.method || init.method === "GET")
+      ? path.join(cacheDir, createHash("sha1").update(url).digest("hex") + ".json")
+      : null;
+  if (cacheFile && fs.existsSync(cacheFile)) return JSON.parse(fs.readFileSync(cacheFile, "utf8")) as T | null;
+  const body = await fetchJsonLive<T>(url, init, retries);
+  if (cacheFile) {
+    fs.mkdirSync(cacheDir!, { recursive: true });
+    fs.writeFileSync(cacheFile, JSON.stringify(body));
+  }
+  return body;
+}
+
+async function fetchJsonLive<T>(url: string, init: RequestInit, retries: number): Promise<T | null> {
   for (let attempt = 0; ; attempt++) {
     const backoff = Math.min(30_000, 1000 * 2 ** attempt);
     let res: Response;
@@ -113,17 +138,30 @@ export interface WikidataDates {
   deathYear?: number;
 }
 
+/**
+ * Year of the best statement of a time property: preferred rank if any, else
+ * normal rank; deprecated statements (disproved dates) never count. Among the
+ * chosen statements the most precise one wins (a day beats a decade).
+ */
+export function bestTimeYear(claims: any, prop: string, minPrecision = 9): number | undefined {
+  const all = ((claims?.[prop] ?? []) as any[]).filter(
+    (c) => c?.rank !== "deprecated" && c?.mainsnak?.snaktype === "value" && c.mainsnak.datavalue?.value?.time
+  );
+  const preferred = all.filter((c) => c.rank === "preferred");
+  const pool = (preferred.length ? preferred : all)
+    .map((c) => c.mainsnak.datavalue.value as { time: string; precision?: number })
+    .filter((v) => (v.precision ?? 11) >= minPrecision)
+    .sort((a, b) => (b.precision ?? 11) - (a.precision ?? 11));
+  const m = pool[0] && /^([+-]\d+)-/.exec(pool[0].time);
+  return m ? parseInt(m[1], 10) : undefined;
+}
+
 export async function getWikidataDates(qid: string): Promise<WikidataDates> {
   const url = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qid}&props=claims&format=json&formatversion=2`;
   const data = await fetchJson<any>(url);
   const claims = data?.entities?.[qid]?.claims;
-  const year = (prop: string): number | undefined => {
-    const time = claims?.[prop]?.[0]?.mainsnak?.datavalue?.value?.time;
-    if (!time) return undefined;
-    const m = /^([+-]\d+)-/.exec(time);
-    return m ? parseInt(m[1], 10) : undefined;
-  };
-  return { birthYear: year("P569"), deathYear: year("P570") };
+  // a life date of decade or century precision ("c. 1260s") still beats none
+  return { birthYear: bestTimeYear(claims, "P569", 0), deathYear: bestTimeYear(claims, "P570", 0) };
 }
 
 export interface SparqlPainting {
@@ -131,31 +169,122 @@ export interface SparqlPainting {
   label: string;
   sitelinks: number;
   year?: number;
+  /** Wikidata time precision of that year: 9 = year, 8 = decade, 7 = century. */
+  yearPrecision?: number;
   image?: string; // Commons image URL (PD works)
   article?: string; // English Wikipedia article title
 }
 
-// Paintings by an artist, most-famous first (sitelink count is the fame proxy).
+// Wikidata classes hung as a "painting": easel paintings plus the forms many
+// canonical works are filed under — frescoes and wall paintings (The Last
+// Supper, The School of Athens), triptychs / polyptychs / altarpieces (The
+// Garden of Earthly Delights) and painting series whose article leads with
+// one version (Sunflowers, Water Lilies, The Scream).
+export const PAINTING_CLASSES = [
+  "Q3305213", // painting
+  "Q192110", // self-portrait
+  "Q18761202", // watercolor painting
+  "Q79218", // triptych
+  "Q475476", // diptych
+  "Q1278452", // polyptych
+  "Q144860", // altarpiece
+  "Q15711026", // altarpiece (the item most altarpieces use)
+  "Q22669139", // fresco (the item most frescoes use: The Creation of Adam)
+  "Q134194", // fresco painting
+  "Q99516640", // wall painting
+  "Q219423", // mural
+  "Q15727816", // painting series
+  "Q1404472", // group of paintings
+  "Q18573970", // group of paintings (variant)
+];
+
+/** Lead image of an article under any licence (`pilicense=any`): the
+ *  fallback that finds a work whose only image is non-free. */
+export async function getPageImageAny(
+  title: string
+): Promise<{ source: string; width: number; height: number } | null> {
+  const data = await fetchJson<{
+    query?: { pages?: { original?: { source: string; width: number; height: number } }[] };
+  }>(
+    "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&redirects=1&prop=pageimages&piprop=original&pilicense=any&titles=" +
+      encodeURIComponent(title)
+  );
+  return data?.query?.pages?.[0]?.original ?? null;
+}
+
+/**
+ * Which English-Wikipedia-local files are non-free (fair use), by their
+ * `NonFree` extmetadata flag. Commons hosts only free files, so only
+ * /wikipedia/en/ files need asking. `files` are file names without "File:".
+ */
+export async function nonFreeFiles(files: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  const unique = [...new Set(files)];
+  for (let i = 0; i < unique.length; i += 50) {
+    const batch = unique.slice(i, i + 50);
+    const qs = new URLSearchParams({
+      action: "query",
+      format: "json",
+      formatversion: "2",
+      prop: "imageinfo",
+      iiprop: "extmetadata",
+      iiextmetadatafilter: "NonFree",
+      titles: batch.map((f) => `File:${f}`).join("|"),
+    });
+    const data = await fetchJson<{
+      query?: {
+        normalized?: { from: string; to: string }[];
+        pages?: { title: string; imageinfo?: { extmetadata?: { NonFree?: { value: string } } }[] }[];
+      };
+    }>(`https://en.wikipedia.org/w/api.php?${qs}`);
+    if (!data?.query) throw new Error("imageinfo (NonFree) returned nothing");
+    const norm = new Map((data.query.normalized ?? []).map((n) => [n.to, n.from]));
+    for (const p of data.query.pages ?? []) {
+      const flag = p.imageinfo?.[0]?.extmetadata?.NonFree?.value;
+      if (flag && flag !== "false") out.add((norm.get(p.title) ?? p.title).replace(/^File:/, ""));
+    }
+  }
+  return out;
+}
+
+// Paintings by an artist, most-famous first (sitelink count is the fame proxy):
+// every work with an English Wikipedia article — no cap, the museum hangs all
+// of them — followed by the best-known image-only works (Wikidata item with a
+// Commons image but no article), the fallback pool for thin galleries.
 export async function getPaintingsByArtist(
   artistQid: string
 ): Promise<SparqlPainting[]> {
-  const query = `
-SELECT ?item ?itemLabel ?sitelinks ?inception ?image ?article WHERE {
+  const head = `
+  VALUES ?class { ${PAINTING_CLASSES.map((q) => `wd:${q}`).join(" ")} }
   ?item wdt:P170 wd:${artistQid} .
-  ?item wdt:P31 wd:Q3305213 .
+  ?item wdt:P31 ?class .
   ?item wikibase:sitelinks ?sitelinks .
-  OPTIONAL { ?item wdt:P571 ?inception . }
+  OPTIONAL {
+    ?item p:P571 ?incStatement .
+    ?incStatement a wikibase:BestRank ; psv:P571 ?incValue .
+    ?incValue wikibase:timeValue ?inception ; wikibase:timePrecision ?incPrecision .
+  }`;
+  const withArticle = `
+SELECT ?item ?itemLabel ?sitelinks ?inception ?incPrecision ?image ?article WHERE {${head}
+  ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> .
   OPTIONAL { ?item wdt:P18 ?image . }
-  OPTIONAL { ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }
-ORDER BY DESC(?sitelinks)
-LIMIT 40`;
-  const url =
-    "https://query.wikidata.org/sparql?format=json&query=" +
-    encodeURIComponent(query);
-  const data = await fetchJson<any>(url);
-  const rows: any[] = data?.results?.bindings ?? [];
+ORDER BY DESC(?sitelinks) DESC(?incPrecision)`;
+  const imageOnly = `
+SELECT ?item ?itemLabel ?sitelinks ?inception ?incPrecision ?image WHERE {${head}
+  ?item wdt:P18 ?image .
+  FILTER NOT EXISTS { ?a schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+ORDER BY DESC(?sitelinks) DESC(?incPrecision)
+LIMIT 60`;
+  const sparql = (q: string) =>
+    fetchJson<any>("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(q));
+  const rows: any[] = [
+    ...((await sparql(withArticle))?.results?.bindings ?? []),
+    ...((await sparql(imageOnly))?.results?.bindings ?? []),
+  ];
   const seen = new Set<string>();
   const out: SparqlPainting[] = [];
   for (const row of rows) {
@@ -181,6 +310,7 @@ LIMIT 40`;
       label,
       sitelinks: parseInt(row.sitelinks?.value ?? "0", 10),
       year,
+      yearPrecision: row.incPrecision?.value ? parseInt(row.incPrecision.value, 10) : undefined,
       image: row.image?.value,
       article,
     });
@@ -188,15 +318,61 @@ LIMIT 40`;
   return out;
 }
 
-// Article titles in an English Wikipedia category (e.g. "Category:Paintings by X").
-export async function getCategoryMembers(category: string): Promise<string[]> {
-  const url =
-    "https://en.wikipedia.org/w/api.php?action=query&list=categorymembers&cmnamespace=0&cmlimit=100&format=json&formatversion=2&cmtitle=" +
-    encodeURIComponent(category);
-  const data = await fetchJson<{
-    query?: { categorymembers?: { title: string }[] };
-  }>(url);
-  return (data?.query?.categorymembers ?? []).map((m) => m.title);
+// Article titles in an English Wikipedia category (e.g. "Category:Paintings
+// by X"), following continuation, plus one level of subcategories named for
+// the same artist ("Category:Self-portraits by Rembrandt").
+export async function getCategoryMembers(category: string, artist?: string): Promise<string[]> {
+  const titles: string[] = [];
+  const subcats: string[] = [];
+  let cont: string | undefined;
+  do {
+    const url =
+      "https://en.wikipedia.org/w/api.php?action=query&list=categorymembers&cmnamespace=0%7C14&cmlimit=500&format=json&formatversion=2&cmtitle=" +
+      encodeURIComponent(category) +
+      (cont ? "&cmcontinue=" + encodeURIComponent(cont) : "");
+    const data = await fetchJson<{
+      continue?: { cmcontinue?: string };
+      query?: { categorymembers?: { title: string; ns: number }[] };
+    }>(url);
+    for (const m of data?.query?.categorymembers ?? []) {
+      if (m.ns === 0) titles.push(m.title);
+      else if (artist && m.title.includes(`by ${artist}`)) subcats.push(m.title);
+    }
+    cont = data?.continue?.cmcontinue;
+  } while (cont);
+  for (const sub of subcats) {
+    for (const t of await getCategoryMembers(sub)) if (!titles.includes(t)) titles.push(t);
+  }
+  return titles;
+}
+
+/**
+ * The REST summary's "original" image is often a 3840 px thumbnail on
+ * thumb.wikimedia.org with tracking parameters. Map it back to the file's
+ * canonical upload.wikimedia.org original (the app sizes thumbs itself, the
+ * CSP allows only upload.wikimedia.org, and enrichment reads the true pixel
+ * size of that file).
+ */
+export function canonicalImageUrl(url: string): string;
+export function canonicalImageUrl(url: string | null): string | null;
+export function canonicalImageUrl(url: string | null): string | null {
+  if (!url) return url;
+  let u: URL;
+  try {
+    u = new URL(url.replace(/&amp;/g, "&"));
+  } catch {
+    return url;
+  }
+  if (u.hostname !== "upload.wikimedia.org" && u.hostname !== "thumb.wikimedia.org") return url;
+  // /wikipedia/<project>/thumb/a/ab/File.jpg/<N>px-File.jpg -> /wikipedia/<project>/a/ab/File.jpg
+  const m = /^(\/wikipedia\/[^/]+\/)thumb\/([0-9a-f]\/[0-9a-f]{2}\/([^/]+))\/([^/]+)$/.exec(u.pathname);
+  // A page rendering of a paged document ("page1-1280px-File.pdf.jpg") is the
+  // only form a browser can show: the original is a PDF / DjVu / multi-page
+  // TIFF. Keep such a thumbnail as it is.
+  if (m && /\.(pdf|djvu|tiff?)$/i.test(m[3]) && /^(?:lossy-|lossless-)?page\d+-\d+px-/.test(m[4]))
+    return `https://upload.wikimedia.org${u.pathname}`;
+  const pathname = m ? m[1] + m[2] : u.pathname;
+  return `https://upload.wikimedia.org${pathname}`;
 }
 
 // ---- fun-fact extraction (verbatim sentences from the article body) ----

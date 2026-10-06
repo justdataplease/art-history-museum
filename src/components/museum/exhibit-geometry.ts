@@ -197,6 +197,9 @@ export interface HallDims {
   hallWidth: number;
   hallLength: number;
   wallHeight: number;
+  /** The work's room within a suite: its far / near wall faces (default: the whole hall). */
+  roomZ0?: number;
+  roomZ1?: number;
 }
 
 const ADAPTER = { w: 0.05, h: 0.036, l: 0.12 };
@@ -231,11 +234,13 @@ export function hallFromPlacement(pl: Placement, given?: Partial<HallDims>): Hal
     hallWidth: given?.hallWidth ?? (Math.abs(nx) > 0.5 ? 2 * (Math.abs(pl.position[0]) + WALL_GAP) : 9.2),
     hallLength: given?.hallLength ?? lengthFromWall ?? 15,
     wallHeight: given?.wallHeight ?? 4.7,
+    roomZ0: given?.roomZ0,
+    roomZ1: given?.roomZ1,
     lengthKnown: given?.hallLength !== undefined || lengthFromWall !== undefined,
   };
 }
 
-/** Where ROOM's side rails end near the entrance (room-geometry: zEnd = L/2 − 0.9). */
+/** Where ROOM's side rails end near a room's entrance (room-geometry: zEnd = z1 − 0.9). */
 const SIDE_RAIL_END_CLEAR = 0.9;
 
 /** local (exhibit group) point → world */
@@ -268,12 +273,17 @@ export function planFixture(
     let z = railAt ?? pl.position[2];
     if (hall.lengthKnown !== false) {
       const L2 = hall.hallLength / 2;
-      z = THREE.MathUtils.clamp(z, -L2 + TRACK_INSET + 0.08, L2 - SIDE_RAIL_END_CLEAR - 0.08);
+      const z0 = hall.roomZ0 ?? -L2;
+      const z1 = hall.roomZ1 ?? L2;
+      z = THREE.MathUtils.clamp(z, z0 + TRACK_INSET + 0.08, z1 - SIDE_RAIL_END_CLEAR - 0.08);
     }
     mount = new THREE.Vector3(railX, railY - RAIL_HALF_H - ADAPTER.h / 2 + 0.003, z);
     railAxis = "z";
   } else {
-    const railZ = nz > 0 ? -hall.hallLength / 2 + TRACK_INSET : hall.hallLength / 2 - TRACK_INSET;
+    const railZ =
+      nz > 0
+        ? (hall.roomZ0 ?? -hall.hallLength / 2) + TRACK_INSET
+        : (hall.roomZ1 ?? hall.hallLength / 2) - TRACK_INSET;
     const railX = hall.hallWidth / 2 - TRACK_INSET;
     const x = THREE.MathUtils.clamp(railAt ?? pl.position[0], -railX + 0.08, railX - 0.08);
     mount = new THREE.Vector3(x, railY - RAIL_HALF_H - ADAPTER.h / 2 + 0.003, railZ);

@@ -6,8 +6,17 @@ import * as THREE from "three";
 import { RectAreaLightUniformsLib } from "three/examples/jsm/lights/RectAreaLightUniformsLib.js";
 import type { GalleryLayout } from "./layout";
 import type { GalleryTheme } from "./theme";
+import type { SuiteRuntime } from "./suite-runtime";
 import { setGalleryEnv } from "./env-store";
-import { buildGlass, buildHall, ceilingSpec, disposeHall } from "./room-geometry";
+import {
+  buildGlass,
+  buildHall,
+  ceilingSpecs,
+  disposeHall,
+  HALL_PARTS,
+  setRoomWindow,
+  type IndexRange,
+} from "./room-geometry";
 import {
   captureProbe,
   ENV_INTENSITY,
@@ -18,7 +27,8 @@ import {
   roomState,
 } from "./room-env";
 import { ReflectiveFloor } from "./room-floor";
-import { patchRoomMaterial } from "./room-shading";
+import { RoomSigns } from "./room-signs";
+import { CROSS_SLOTS, crossWalls, patchRoomMaterial, setCrossWindow } from "./room-shading";
 import {
   damaskTextures,
   laylightTexture,
@@ -42,11 +52,15 @@ export function EnvSetup({
   layout,
   theme,
   ready,
+  runtime,
 }: {
   layout: GalleryLayout;
   theme: GalleryTheme;
-  /** True once every painting texture has settled (the reflection probe is captured then). */
+  /** True once the works the probe sees have settled: every painting in a
+   *  single room, the visitor's room in a suite. */
   ready: boolean;
+  /** Where the visitor is, and whether the lights have stopped fading. */
+  runtime: SuiteRuntime;
 }) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
@@ -149,14 +163,23 @@ export function EnvSetup({
       state.invalidate();
       return;
     }
-    // Capture at rest, not while a painting is focused and the room dimmed.
-    // No frames are requested meanwhile: Lighting renders every frame while
-    // it brings the room back up, and this check runs again on those.
-    if (roomState.dim < 0.98) return;
+    // Capture at rest, not while a painting is focused and the room dimmed,
+    // and in a fully lit room: no spot or laylight still fading (in a suite
+    // they follow the visitor). No frames are requested meanwhile: Lighting
+    // and the runtime render every frame while they change, and this check
+    // runs again on those.
+    if (roomState.dim < 0.98 || !runtime.settled()) return;
     countdown.current = -1;
     captured.current = true;
     const pm = pmremRef.current ?? new THREE.PMREMGenerator(gl);
-    const probe = captureProbe(gl, pm, scene, layout);
+    // From the middle of the visitor's room, whose works and lights are all
+    // up: every room of a suite shares the theme and section, so the one
+    // probe stands for all of them (a probe of a room the visitor has left
+    // would see it unlit, its exhibits unmounted).
+    const probe = captureProbe(gl, pm, scene, layout, runtime.currentRoom());
+    // test hook (see Gallery's SuiteDirector): where and when it was taken
+    const w = window as unknown as { __MUSEUM_DEBUG__?: boolean; __museumProbe?: unknown };
+    if (w.__MUSEUM_DEBUG__) w.__museumProbe = { room: runtime.currentRoom(), atMs: Math.round(performance.now()) };
     // the generator's work is done: free its internal targets and programs
     pm.dispose();
     pmremRef.current = null;
@@ -203,32 +226,53 @@ function envDimFactor(dim: number) {
 
 /**
  * The laylight (or modern lightbox): emissive glass panes in the ceiling and
- * the RectAreaLight that is their light. Both — and the environment — dim
- * together while a painting is focused.
+ * the RectAreaLights that are their light. A fixed number of area lights for
+ * the gallery's life (lights never change number at runtime): one per room
+ * up to AREA_POOL, which then follow the visitor (the runtime's areaSlots:
+ * a light leaving its room fades out, moves, and fades in on the next).
+ * Lights, glass and environment dim together while a painting is focused.
  */
 export function Lighting({
   layout,
   theme,
   focused,
+  runtime,
 }: {
   layout: GalleryLayout;
   theme: GalleryTheme;
   focused: boolean;
+  runtime: SuiteRuntime;
 }) {
   const scene = useThree((s) => s.scene);
   const invalidate = useThree((s) => s.invalidate);
-  const area = useRef<THREE.RectAreaLight>(null);
-  const spec = useMemo(() => ceilingSpec(layout, theme), [layout, theme]);
+  const areas = useRef<(THREE.RectAreaLight | null)[]>([]);
+  const specs = useMemo(() => ceilingSpecs(layout, theme), [layout, theme]);
   // from the shared state, so a level left over anywhere is damped back to rest
   const level = useRef(roomState.dim);
 
   const glass = useMemo(() => {
-    const geometry = buildGlass(spec);
-    const map = laylightTexture(spec.panes[0], spec.panes[1]);
+    const geometry = buildGlass(specs);
+    const map = laylightTexture(specs[0].panes[0], specs[0].panes[1]);
     const base = new THREE.Color(theme.room.daylight).multiplyScalar(theme.room.daylightLevel);
     const material = new THREE.MeshBasicMaterial({ color: base.clone(), map });
-    return { geometry, material, map, base };
-  }, [spec, theme]);
+    // one quad (6 indices) per bay, room after room
+    const ranges: IndexRange[] = [];
+    let start = 0;
+    for (const sp of specs) {
+      ranges.push({ start, count: sp.bays.length * 6 });
+      start += sp.bays.length * 6;
+    }
+    return { geometry, material, map, base, ranges };
+  }, [specs, theme]);
+  // a long suite: only the glass of the rooms around the visitor
+  useEffect(() => {
+    const apply = () => {
+      setRoomWindow(glass.geometry, glass.ranges, runtime.archWindow());
+      invalidate();
+    };
+    apply();
+    return runtime.onWindowChange(apply);
+  }, [glass, runtime, invalidate]);
   useEffect(
     () => () => {
       glass.geometry.dispose();
@@ -239,8 +283,23 @@ export function Lighting({
   );
 
   const areaBase = theme.room.daylightLevel * (theme.room.ceiling === "laylight" ? 1.0 : 1.25);
+  // each pooled area light: over its room's glass, at its fade level
+  const placeAreas = (k: number) => {
+    runtime.areaSlots.forEach((slot, i) => {
+      const a = areas.current[i];
+      const sp = specs[slot.room];
+      if (!a || !sp) return;
+      const z = (sp.wellZ0 + sp.wellZ1) / 2;
+      if (a.position.z !== z) {
+        a.position.z = z;
+        a.height = sp.wellZ1 - sp.wellZ0;
+      }
+      const f = slot.level >= 1 ? 1 : slot.level * slot.level * (3 - 2 * slot.level);
+      a.intensity = areaBase * (0.1 + 0.9 * k) * f;
+    });
+  };
   const apply = (k: number) => {
-    if (area.current) area.current.intensity = areaBase * (0.1 + 0.9 * k);
+    placeAreas(k);
     glass.material.color.copy(glass.base).multiplyScalar(0.22 + 0.78 * k);
     scene.environmentIntensity = ENV_INTENSITY * envDimFactor(k);
     roomDimmers.forEach((d) => d.uniform.value.copy(d.base).multiplyScalar(0.25 + 0.75 * k));
@@ -273,6 +332,9 @@ export function Lighting({
       if (cur !== target) {
         level.current = target;
         apply(target);
+      } else if (runtime.areaSlots.length < specs.length) {
+        // a long suite's area lights may be moving between rooms
+        placeAreas(cur);
       }
       return;
     }
@@ -281,15 +343,22 @@ export function Lighting({
     state.invalidate();
   });
 
-  const glassLen = spec.wellZ1 - spec.wellZ0;
   return (
     <>
-      <rectAreaLight
-        ref={area}
-        args={[theme.room.daylight, areaBase, 2 * spec.wellX, glassLen]}
-        position={[0, spec.yGlass - 0.04, (spec.wellZ0 + spec.wellZ1) / 2]}
-        rotation-x={-Math.PI / 2}
-      />
+      {runtime.areaSlots.map((slot, i) => {
+        const spec = specs[slot.room];
+        return (
+          <rectAreaLight
+            key={i}
+            ref={(el: THREE.RectAreaLight | null) => {
+              areas.current[i] = el;
+            }}
+            args={[theme.room.daylight, areaBase, 2 * spec.wellX, spec.wellZ1 - spec.wellZ0]}
+            position={[0, spec.yGlass - 0.04, (spec.wellZ0 + spec.wellZ1) / 2]}
+            rotation-x={-Math.PI / 2}
+          />
+        );
+      })}
       <mesh geometry={glass.geometry} material={glass.material} matrixAutoUpdate={false} />
     </>
   );
@@ -301,6 +370,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
   return useMemo(() => {
     const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
     const roomHalf = new THREE.Vector3(W / 2, H, L / 2);
+    const cross = crossWalls(layout);
     const textures: THREE.Texture[] = [];
     const finish = theme.room.wallFinish;
 
@@ -344,6 +414,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
     patchRoomMaterial(wall, {
       key: `wall-${finish}-${useWash ? "wash" : "nowash"}`,
       roomHalf,
+      cross,
       ao: [0.5, 0.38, 0.3],
       mottle: finish === "paint" ? 0.006 : 0.03,
       mottleScale: 0.4,
@@ -379,13 +450,14 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       {
         key: "ceiling",
         roomHalf,
+        cross,
         ao: [0.42, 0.3, 0.25],
         mottle: 0.02,
         mottleScale: 0.35,
         extraUniforms: { uUplight: uplight },
         extraPars: "uniform vec3 uUplight;",
         extraColor: `{
-  float dw = min(uRoomHalf.x - abs(vRoomPos.x), uRoomHalf.z - abs(vRoomPos.z));
+  float dw = min(min(uRoomHalf.x - abs(vRoomPos.x), uRoomHalf.z - abs(vRoomPos.z)), roomCrossFace(vRoomPos));
   float up = exp(-max(dw, 0.0) / 1.2);
   totalEmissiveRadiance += diffuseColor.rgb * uUplight * (0.3 + 0.7 * up);
 }`,
@@ -399,7 +471,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         roughness: stone ? 0.82 : theme.room.classical ? 0.42 : 0.6,
         metalness: 0,
       }),
-      { key: "trim", roomHalf, ao: [0.45, 0.25, 0.3], mottle: stone ? 0.05 : 0.0, mottleScale: 2.2 }
+      { key: "trim", roomHalf, cross, ao: [0.45, 0.25, 0.3], mottle: stone ? 0.05 : 0.0, mottleScale: 2.2 }
     );
 
     const track = new THREE.MeshStandardMaterial({
@@ -424,6 +496,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       return patchRoomMaterial(m, {
         key,
         roomHalf,
+        cross,
         ao: [0.0, 0.3, 0.0],
         replaceMap: `{
   vec3 an = abs(normalize(vRoomNrm));
@@ -489,6 +562,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       benchShadow,
       dimmers,
       floorGrain: woodFloor ? grain : null,
+      cross,
       dispose() {
         all.forEach((m) => m.dispose());
         textures.forEach((t) => t.dispose());
@@ -497,11 +571,31 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
   }, [layout, theme]);
 }
 
-export function Room({ layout, theme }: { layout: GalleryLayout; theme: GalleryTheme }) {
+export function Room({
+  layout,
+  theme,
+  runtime,
+}: {
+  layout: GalleryLayout;
+  theme: GalleryTheme;
+  runtime: SuiteRuntime;
+}) {
   const invalidate = useThree((s) => s.invalidate);
   const hall = useMemo(() => buildHall(layout, theme), [layout, theme]);
   const mats = useRoomMaterials(layout, theme);
   useEffect(() => () => disposeHall(hall), [hall]);
+  // A long suite draws only the rooms around the visitor (draw ranges over
+  // the merged geometry), and the room AO follows the nearest cross walls.
+  useEffect(() => {
+    const apply = () => {
+      const win = runtime.archWindow();
+      for (const k of HALL_PARTS) setRoomWindow(hall[k], hall.ranges[k], win);
+      setCrossWindow(mats.cross, layout, runtime.crossFirst(CROSS_SLOTS));
+      invalidate();
+    };
+    apply();
+    return runtime.onWindowChange(apply);
+  }, [runtime, hall, mats, layout, invalidate]);
   // the procedural maps are drawn after mount: show each one as it lands
   useEffect(() => subscribeProceduralTextures(() => invalidate()), [invalidate]);
   useEffect(() => {
@@ -520,6 +614,7 @@ export function Room({ layout, theme }: { layout: GalleryLayout; theme: GalleryT
         H={layout.wallHeight}
         theme={theme}
         grain={mats.floorGrain ?? undefined}
+        cross={mats.cross}
       />
       <mesh geometry={hall.walls} material={mats.wall} matrixAutoUpdate={false} />
       <mesh geometry={hall.ceiling} material={mats.ceiling} matrixAutoUpdate={false} />
@@ -535,6 +630,8 @@ export function Room({ layout, theme }: { layout: GalleryLayout; theme: GalleryT
         layers={1}
         renderOrder={1}
       />
+      {/* a suite's room numbers over the doorways */}
+      <RoomSigns layout={layout} runtime={runtime} />
     </group>
   );
 }

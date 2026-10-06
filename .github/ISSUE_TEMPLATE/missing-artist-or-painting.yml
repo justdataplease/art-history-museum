@@ -1,0 +1,28 @@
+name: Missing artist or painting
+description: An artist or a work that should be in the museum but isn't.
+labels: ["content"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Everything in the museum comes from English Wikipedia / Wikidata / Wikimedia Commons,
+        so please link the Wikipedia article. Works still in copyright hang as a placeholder.
+  - type: input
+    id: artist
+    attributes:
+      label: Artist
+      description: English Wikipedia article of the artist
+      placeholder: https://en.wikipedia.org/wiki/Gustav_Klimt
+    validations:
+      required: true
+  - type: textarea
+    id: works
+    attributes:
+      label: Missing works
+      description: English Wikipedia article(s) of the painting(s), one per line (leave empty if the whole artist is missing)
+      placeholder: https://en.wikipedia.org/wiki/The_Kiss_(Klimt)
+  - type: input
+    id: period
+    attributes:
+      label: Period on the timeline
+      placeholder: Symbolism & Art Nouveau

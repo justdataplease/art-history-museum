@@ -9,10 +9,12 @@ import { Pool, type PoolConfig } from "pg";
 import type {
   Artist,
   ArtistWithPaintings,
+  ImageCredit,
   Painting,
   Period,
   TimelineData,
 } from "./types";
+import { isTakenDown } from "./takedowns";
 import { cleanArtistName, decodeEntities } from "./text";
 
 // `next build` sets NEXT_PHASE for its prerender workers (read at runtime, not inlined).
@@ -109,20 +111,32 @@ function toArtist(a: Omit<Artist, "paintingCount">, paintingCount: number): Arti
     portraitUrl: a.portraitUrl,
     portraitWidth: a.portraitWidth,
     portraitHeight: a.portraitHeight,
+    portraitCredit: a.portraitUrl ? toCredit(a.portraitCredit) : null,
     wikipediaUrl: a.wikipediaUrl,
     paintingCount,
   };
 }
 
+/** Only the four contract fields (a JSONB column may carry more). */
+function toCredit(c: ImageCredit | null | undefined): ImageCredit | null {
+  if (!c || typeof c !== "object" || !c.page) return null;
+  return { author: c.author ?? null, license: c.license ?? "", licenseUrl: c.licenseUrl ?? null, page: c.page };
+}
+
 function toPainting(p: Painting): Painting {
+  // a rights holder's takedown withholds the image; the work stays
+  const takenDown = isTakenDown(p.wikipediaUrl);
+  const imageUrl = takenDown ? null : (p.imageUrl ?? null);
   return {
     slug: p.slug,
     title: p.title,
     year: p.year,
-    imageUrl: p.imageUrl,
+    imageUrl,
+    copyrighted: p.copyrighted === true || takenDown,
     imageWidth: p.imageWidth,
     imageHeight: p.imageHeight,
     imageBytes: p.imageBytes ?? null,
+    imageCredit: imageUrl ? toCredit(p.imageCredit) : null,
     widthCm: p.widthCm ?? null,
     heightCm: p.heightCm ?? null,
     pageviews: p.pageviews ?? null,
@@ -153,6 +167,7 @@ SELECT json_build_object(
       'birthYear', a.birth_year, 'deathYear', a.death_year,
       'tagline', a.tagline, 'bio', a.bio,
       'portraitUrl', a.portrait_url, 'portraitWidth', a.portrait_width, 'portraitHeight', a.portrait_height,
+      'portraitCredit', to_jsonb(a) -> 'portrait_credit',
       'wikipediaUrl', a.wikipedia_url,
       'paintingCount', (SELECT COUNT(*)::int FROM paintings p WHERE p.artist_id = a.id)
     ) ORDER BY a.birth_year NULLS LAST, a.id)
@@ -162,14 +177,17 @@ SELECT json_build_object(
 const ARTIST_SQL = `
 SELECT a.slug, a.period_slug, a.name, a.birth_year, a.death_year, a.tagline, a.bio,
        a.portrait_url, a.portrait_width, a.portrait_height, a.wikipedia_url,
+       (SELECT to_jsonb(x) -> 'portrait_credit' FROM artists x WHERE x.id = a.id) AS portrait_credit,
        pe.name AS period_name, pe.color AS period_color,
        COALESCE(json_agg(json_build_object(
          'slug', p.slug, 'title', p.title, 'year', p.year,
          'imageUrl', p.image_url, 'imageWidth', p.image_width, 'imageHeight', p.image_height,
          'imageBytes', to_jsonb(p) -> 'image_bytes',
+         'imageCredit', to_jsonb(p) -> 'image_credit',
          'widthCm', to_jsonb(p) -> 'width_cm',
          'heightCm', to_jsonb(p) -> 'height_cm',
          'pageviews', to_jsonb(p) -> 'pageviews',
+         'copyrighted', COALESCE((to_jsonb(p) ->> 'copyrighted')::boolean, false),
          'story', p.story, 'facts', p.facts, 'wikipediaUrl', p.wikipedia_url
        ) ORDER BY p.year NULLS LAST, p.sort) FILTER (WHERE p.id IS NOT NULL), '[]'::json) AS paintings
 FROM artists a
@@ -231,6 +249,7 @@ export async function getArtist(slug: string): Promise<ArtistWithPaintings | nul
             portraitUrl: r.portrait_url,
             portraitWidth: r.portrait_width,
             portraitHeight: r.portrait_height,
+            portraitCredit: r.portrait_credit ?? null,
             wikipediaUrl: r.wikipedia_url,
           },
           paintings.length

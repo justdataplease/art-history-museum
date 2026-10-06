@@ -69,6 +69,7 @@ interface RowProps {
   R: number;
   lineTop: number;
   clip: string;
+  cont: boolean;
   in0: number;
   inW: number;
   nodeX: number;
@@ -143,6 +144,9 @@ const ArtistRow = memo(function ArtistRow(r: RowProps) {
       }}
     >
       <span key="life" className={`life${r.clip}`} style={{ top: r.lineTop }} />
+      {r.cont && (
+        <span key="cont" className="cont" style={{ top: r.lineTop, left: r.nodeX - r.P / 2 - 11 }} />
+      )}
       {r.inW > 1 && (
         <span key="in" className="life-in" style={{ top: r.lineTop, left: r.in0, width: r.inW }} />
       )}
@@ -199,6 +203,7 @@ const OFF_ROW = {
   R: 0,
   lineTop: 0,
   clip: "",
+  cont: false,
   in0: 0,
   inW: 0,
   nodeX: 0,
@@ -216,7 +221,6 @@ function rowProps(
   meta: ArtistMeta,
   c: string,
   dimmed: boolean,
-  R: number,
   onArtist: RowProps["onArtist"]
 ): RowProps {
   if (!r.onScreen) return { ...OFF_ROW, meta, onArtist };
@@ -239,9 +243,10 @@ function rowProps(
     x,
     y: Math.round(r.y),
     width: Math.max(2, Math.round(r.le - r.ls)),
-    R: Math.round(R),
+    R: Math.round(r.R),
     lineTop: Math.round(r.lineY - r.y),
     clip: (r.clipL ? " cl" : "") + (r.clipR ? " cr" : ""),
+    cont: r.cont,
     in0: Math.round(r.in0 - x),
     inW: Math.round(r.in1 - r.in0),
     nodeX: Math.round(r.nodeX - x),
@@ -363,7 +368,7 @@ export function WallView({
               return (
                 <ArtistRow
                   key={r.a.slug}
-                  {...rowProps(r, m, st.c, dim || dimArtist(r.a), layout.rowH, onArtist)}
+                  {...rowProps(r, m, st.c, dim || dimArtist(r.a), onArtist)}
                 />
               );
             })}

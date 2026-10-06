@@ -17,6 +17,7 @@ import {
   axisTicks,
   clamp,
   clampTransform,
+  diveYears,
   frameYears,
   K_MAX,
   K_MIN,
@@ -30,12 +31,13 @@ import {
 import { buildArtistMeta, buildPeriodStyles } from "./artist-meta";
 import { whenFontsReady } from "./text-measure";
 import { computeWallLayout } from "./wall-layout";
-import { computeStarLayout } from "./star-layout";
+import { computeStarLayout, starYears } from "./star-layout";
 import { WallView } from "./WallView";
 import { StarView } from "./StarView";
 import { Axis } from "./Axis";
 import { FilterDropdown, Filter } from "./FilterDropdown";
 import { ArtistCard } from "./ArtistCard";
+import { SourceLink } from "./SourceLink";
 
 export type ViewName = "wall" | "stars";
 
@@ -43,6 +45,9 @@ const VIEWS: { id: ViewName; label: string }[] = [
   { id: "wall", label: "Gallery Wall" },
   { id: "stars", label: "Star Map" },
 ];
+
+/** the "more below" pill's strip, kept free above the footer while the wall overflows */
+const PILL_H = 26;
 
 const reducedMotion = () =>
   typeof window !== "undefined" &&
@@ -105,6 +110,8 @@ export function Timeline({ data }: { data: TimelineData }) {
   const [view, setView] = useState<ViewName>("wall");
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [headerH, setHeaderH] = useState(0);
+  /** height of the footer row (hint, note, source link) from the bottom of the screen */
+  const [footH, setFootH] = useState(0);
   const wRef = useRef(0);
   const hRef = useRef(0);
   const tRef = useRef<Transform>({ k: 1, x: 0, y: 0 });
@@ -113,6 +120,8 @@ export function Timeline({ data }: { data: TimelineData }) {
   const rafRef = useRef(0);
   const tweenRef = useRef<gsap.core.Tween | null>(null);
   const [filter, setFilter] = useState<Filter>(null);
+  /** the period last dived into (gets the wall text and full-size rows) */
+  const [focusP, setFocusP] = useState<string | null>(null);
   const [selected, setSelected] = useState<Artist | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const [, setFontsTick] = useState(0);
@@ -120,7 +129,6 @@ export function Timeline({ data }: { data: TimelineData }) {
   // ---- data prepared once
   const meta = useMemo(() => buildArtistMeta(artists), [artists]);
   const styles = useMemo(() => buildPeriodStyles(periods), [periods]);
-  const lanesInfo = useMemo(() => assignLanes(periods), [periods]);
   const byPeriod = useMemo(() => {
     const m = new Map<string, Artist[]>();
     for (const p of periods) m.set(p.slug, []);
@@ -129,6 +137,11 @@ export function Timeline({ data }: { data: TimelineData }) {
       l.sort((a, b) => (a.birthYear ?? 9999) - (b.birthYear ?? 9999) || a.name.localeCompare(b.name));
     return m;
   }, [periods, artists]);
+  // lanes are packed by how many artists each period hangs (a lane is as tall as its biggest)
+  const lanesInfo = useMemo(
+    () => assignLanes(periods, new Map([...byPeriod].map(([s, l]) => [s, l.length]))),
+    [periods, byPeriod]
+  );
 
   // ---- transform: the ref is the source of truth, React commits once per frame
   const commit = useCallback(() => {
@@ -152,13 +165,16 @@ export function Timeline({ data }: { data: TimelineData }) {
   useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
   // ---- size: measured before first paint, rescaled + re-clamped on resize
-  // (the header too: it wraps on narrow screens, and the content starts below it)
+  // (the header and footer too: they wrap on narrow screens, and the content
+  // sits between them)
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return;
     const header = el.querySelector<HTMLElement>(".tl-header");
+    const footer = el.querySelector<HTMLElement>(".tl-foot");
     const measure = () => {
       if (header) setHeaderH(header.offsetHeight);
+      if (footer) setFootH(Math.ceil(el.clientHeight - footer.offsetTop));
       const nw = el.clientWidth;
       const nh = el.clientHeight;
       const ow = wRef.current;
@@ -178,6 +194,7 @@ export function Timeline({ data }: { data: TimelineData }) {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     if (header) ro.observe(header);
+    if (footer) ro.observe(footer);
     return () => ro.disconnect();
   }, []);
 
@@ -234,14 +251,6 @@ export function Timeline({ data }: { data: TimelineData }) {
       flyTo({ k, x: cx - ((cx - c.x) * k) / c.k, y: c.y }, 0.35);
     },
     [flyTo]
-  );
-
-  const diveInto = useCallback(
-    (p: Period) => {
-      const pad = Math.max(4, (p.endYear - p.startYear) * 0.07);
-      zoomToYears(p.startYear - pad, p.endYear + pad);
-    },
-    [zoomToYears]
   );
 
   // ---- wheel: native non-passive listener so ctrl/pinch zoom only the timeline
@@ -397,11 +406,18 @@ export function Timeline({ data }: { data: TimelineData }) {
   // ---- keyboard: arrows pan, +/- zoom, 0/Home overview; focus pans into view
   // the content (and the axis above it) starts below the header, however it wraps
   const contentTop = Math.max(size && size.w <= 720 ? 158 : 122, headerH + 44);
+  // ...and ends above the footer row (hint, note, source link), which no row may sit under
+  const footReserve = footH ? footH + 6 : 52;
 
-  /** The Gallery Wall at transform `tt` (pure and cheap: used to aim fly-tos at a row). */
+  /**
+   * The Gallery Wall at transform `tt` (pure and cheap: used to aim fly-tos at
+   * a row). A wall taller than the screen also keeps the "more below" pill's
+   * strip, above the footer, free (no row ever sits under the pill). Rows are
+   * already at their tightest when the wall overflows, so the lanes don't move.
+   */
   const wallAt = useCallback(
-    (tt: Transform, w = wRef.current, h = hRef.current) =>
-      computeWallLayout({
+    (tt: Transform, w = wRef.current, h = hRef.current, focus = focusP) => {
+      const inp = {
         periods,
         byPeriod,
         meta,
@@ -411,9 +427,13 @@ export function Timeline({ data }: { data: TimelineData }) {
         h,
         t: tt,
         top: contentTop,
-        bottom: h - 46,
-      }),
-    [periods, byPeriod, meta, lanesInfo, contentTop]
+        bottom: h - footReserve,
+        focus,
+      };
+      const L = computeWallLayout(inp);
+      return L.overflow > 0.5 ? computeWallLayout({ ...inp, bottom: inp.bottom - PILL_H }) : L;
+    },
+    [periods, byPeriod, meta, lanesInfo, contentTop, footReserve, focusP]
   );
 
   /**
@@ -427,11 +447,45 @@ export function Timeline({ data }: { data: TimelineData }) {
       const L = wallAt(tt);
       const r = L.rows.find((q) => q.a.slug === slug);
       let y = tt.y;
-      if (r && r.y < contentTop + 10) y += contentTop + 10 - r.y;
-      else if (r && r.y + L.rowH > h - 60) y -= r.y + L.rowH - (h - 60);
+      const lo = contentTop + 10;
+      const hi = h - footReserve - 8;
+      if (r && r.y < lo) y += lo - r.y;
+      else if (r && r.y + r.R > hi) y -= r.y + r.R - hi;
       return { target: { ...tt, y: clamp(y, -L.overflow, 0) }, overflow: L.overflow };
     },
-    [wallAt, contentTop]
+    [wallAt, contentTop, footReserve]
+  );
+
+  /**
+   * Dive into a period: frame its years and, on the Gallery Wall, bring its
+   * band up from a lower lane when it would otherwise open below the fold.
+   */
+  const diveInto = useCallback(
+    (p: Period) => {
+      const [y0, y1] = diveYears(p);
+      setFocusP(p.slug);
+      if (view !== "wall") {
+        zoomToYears(y0, y1);
+        return;
+      }
+      const w = wRef.current || 1;
+      const h = hRef.current;
+      const target = clampTransform(frameYears(y0, y1, w), w, 0);
+      const L = wallAt(target, w, h, p.slug);
+      const b = L.bands.find((q) => q.p.slug === p.slug);
+      let y = 0;
+      // the band's title sits ~30px above it; the footer row below is out of bounds
+      const lo = contentTop + 34;
+      const hi = h - footReserve - 6;
+      if (b && (b.top < lo || b.top + b.height > hi)) {
+        // a band that has to move comes to the middle of the free space (its
+        // top under the ruler when it is taller than that), not to an edge
+        const room = hi - lo;
+        y = (b.height <= room ? lo + (room - b.height) / 2 : lo) - b.top;
+      }
+      flyTo({ ...target, y: clamp(y, -L.overflow, 0) }, 1.15, undefined, L.overflow);
+    },
+    [view, zoomToYears, wallAt, flyTo, contentTop, footReserve]
   );
 
   const onKeyDown = useCallback(
@@ -482,10 +536,10 @@ export function Timeline({ data }: { data: TimelineData }) {
       if (r.left < 12) x += 40 - r.left;
       else if (r.right > w - 12) x -= Math.min(r.left - 40, r.right - (w - 40));
       if (r.top < contentTop) y += contentTop + 20 - r.top;
-      else if (r.bottom > h - 50) y -= r.bottom - (h - 60);
+      else if (r.bottom > h - footReserve) y -= r.bottom - (h - footReserve - 10);
       if (x !== c.x || y !== c.y) flyTo({ ...c, x, y }, 0.45);
     },
-    [flyTo, contentTop]
+    [flyTo, contentTop, footReserve]
   );
 
   const onFocusIn = useCallback(
@@ -518,9 +572,10 @@ export function Timeline({ data }: { data: TimelineData }) {
         target = aim.target;
         overflowY = aim.overflow;
       } else if (slug) {
-        // a star sits at the middle of the artist's working years
+        // a star sits at the middle of the artist's working years (inside its period's slot)
         const m = meta.get(slug);
-        if (m) target = { ...c, x: xFor(m.active.mid, 0.5) };
+        const sy = starYears(periods, byPeriod, meta, lanesInfo.lanes, lanesInfo.laneCount);
+        if (m) target = { ...c, x: xFor(sy.year.get(slug) ?? m.active.mid, 0.5) };
       } else if (ps) {
         const p = periods.find((q) => q.slug === ps);
         if (p) target = { ...c, x: xFor((p.startYear + p.endYear) / 2, 0.5) };
@@ -538,7 +593,7 @@ export function Timeline({ data }: { data: TimelineData }) {
         overflowY
       );
     },
-    [flyTo, meta, periods, revealEl, view, wallAt, aimAtRow]
+    [flyTo, meta, periods, byPeriod, revealEl, view, wallAt, aimAtRow, lanesInfo]
   );
 
   // ---- filter: dim the rest, fly to the selection
@@ -609,7 +664,7 @@ export function Timeline({ data }: { data: TimelineData }) {
   // ---- layout for this frame
   const w = size?.w ?? 0;
   const h = size?.h ?? 0;
-  const bottom = h - 46;
+  const bottom = h - footReserve;
   const ticks = size ? axisTicks(w, t) : null;
   const wall = size && view === "wall" ? wallAt(t, w, h) : null;
   const stars =
@@ -625,6 +680,7 @@ export function Timeline({ data }: { data: TimelineData }) {
           t,
           top: contentTop,
           bottom: bottom - 14,
+          focus: focusP,
         })
       : null;
 
@@ -669,7 +725,11 @@ export function Timeline({ data }: { data: TimelineData }) {
     <div
       ref={rootRef}
       className={`tl-root view-${view}`}
-      style={{ ["--top" as string]: `${contentTop}px` }}
+      style={{
+        ["--top" as string]: `${contentTop}px`,
+        ["--foot" as string]: `${footReserve}px`,
+        ["--pill" as string]: `${overflow > 0.5 ? PILL_H : 0}px`,
+      }}
     >
       <div
         ref={canvasRef}
@@ -694,7 +754,7 @@ export function Timeline({ data }: { data: TimelineData }) {
         {common && wall && <WallView {...common} layout={wall} />}
         {common && stars && <StarView {...common} layout={stars} />}
         {size && ticks && <Axis ticks={ticks} w={w} t={t} top={contentTop - 44} />}
-        {size && overflow > 4 && (
+        {size && overflow > 0.5 && (
           <div
             className="tl-scrollhint"
             aria-hidden
@@ -717,13 +777,31 @@ export function Timeline({ data }: { data: TimelineData }) {
         inert={!!selected}
       />
 
-      <div className="tl-hint" id="tl-hint">
-        <span className="hint-fine">
-          Scroll or pinch to travel through time · drag to pan · click a period to dive in · Tab
-          to browse
-        </span>
-        <span className="hint-touch">Pinch to travel through time · drag to pan · tap a period</span>
-      </div>
+      {/* the footer row: note (left), hint (centre), source link (right);
+          stacked and centred on narrow screens. Its measured height is kept
+          free of content (--foot). */}
+      <footer className="tl-foot" inert={!!selected}>
+        <p className="tl-note">
+          <span className="tl-note-lead">Every artist and every work, together in one museum.</span>{" "}
+          <span className="tl-note-src">
+            All content from{" "}
+            <a href="https://en.wikipedia.org/" target="_blank" rel="noopener noreferrer">
+              Wikipedia
+            </a>{" "}
+            · for educational purposes only.
+          </span>
+        </p>
+        <div className="tl-hint" id="tl-hint">
+          <span className="hint-fine">
+            Scroll or pinch to travel through time · drag to pan · click a period to dive in · Tab
+            to browse
+          </span>
+          <span className="hint-touch">Pinch to travel through time · drag to pan · tap a period</span>
+        </div>
+        <div className="tl-source-cell">
+          <SourceLink className="tl-source" />
+        </div>
+      </footer>
 
       {selected && (
         <ArtistCard

@@ -8,9 +8,13 @@
 //    radiance the real hall will have). Not inside the commit: its GGX
 //    program compiles synchronously (~350 ms on a cold GPU shader cache),
 //    which would hold up the painting fetches the exhibits start there.
-// 2. Once every painting has settled: ONE capture of the gallery itself from
-//    the hall centre at eye height (CubeCamera, 256², HalfFloat) → PMREM at the
-//    same size, so the program keys are unchanged and nothing recompiles.
+// 2. Once the works around the visitor have settled and the lights are up:
+//    ONE capture of the gallery itself from the centre of the visitor's room
+//    at eye height (in a suite every room shares the theme and section, so
+//    one fully lit room stands for all; a fixed entrance-room probe taken
+//    after the visitor had walked on saw that room dark and unhung)
+//    (CubeCamera, 256², HalfFloat) → PMREM at the same size, so the program
+//    keys are unchanged and nothing recompiles.
 //    The capture never nulls scene.environment (that would compile env-less
 //    variants of every program): it zeroes scene.environmentIntensity and the
 //    envMapIntensity of materials that bind their own envMap instead, and
@@ -28,6 +32,13 @@ export const ENV_SIZE = 256;
 export const ENV_INTENSITY = 1;
 /** Eye height of the probe. */
 const PROBE_Y = 1.6;
+
+/** The middle of a room (the whole hall, for a single room): where the
+ *  probe is captured, and the proxy room (the entrance room) centred. */
+function probeZ(layout: GalleryLayout, room = 0): number {
+  const r = layout.rooms[room] ?? layout.rooms[0];
+  return r ? (r.z0 + r.z1) / 2 : 0;
+}
 
 /** Shared between Lighting (writes) and EnvSetup (reads before capture). */
 export const roomState = { dim: 1 };
@@ -71,14 +82,18 @@ export function initialEnvironment(
   layout: GalleryLayout,
   theme: GalleryTheme
 ): THREE.WebGLRenderTarget {
-  const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
+  // the entrance room (the probe's), as a closed box
+  const room = layout.rooms[0];
+  const { hallWidth: W, wallHeight: H } = layout;
+  const L = room ? room.z1 - room.z0 : layout.hallLength;
+  const zc = probeZ(layout);
   const spec = ceilingSpec(layout, theme);
   const s = new THREE.Scene();
   const disposables: { dispose(): void }[] = [];
   const add = (geo: THREE.BufferGeometry, color: THREE.Color, pos: [number, number, number], rotX = 0, rotY = 0) => {
     const m = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, toneMapped: false });
     const mesh = new THREE.Mesh(geo, m);
-    mesh.position.set(pos[0], pos[1] - PROBE_Y, pos[2]);
+    mesh.position.set(pos[0], pos[1] - PROBE_Y, pos[2] - zc);
     mesh.rotation.set(rotX, rotY, 0);
     s.add(mesh);
     disposables.push(geo, m);
@@ -88,13 +103,13 @@ export function initialEnvironment(
   const floor = lin(theme.floor.tint, theme.floor.kind === "concrete" ? 0.6 : 0.5);
   const ceil = lin(theme.ceiling, 0.45);
   // walls
-  add(new THREE.PlaneGeometry(L, H), wall, [-W / 2, H / 2, 0], 0, Math.PI / 2);
-  add(new THREE.PlaneGeometry(L, H), wall, [W / 2, H / 2, 0], 0, -Math.PI / 2);
-  add(new THREE.PlaneGeometry(W, H), wall, [0, H / 2, -L / 2]);
-  add(new THREE.PlaneGeometry(W, H), wall, [0, H / 2, L / 2], 0, Math.PI);
+  add(new THREE.PlaneGeometry(L, H), wall, [-W / 2, H / 2, zc], 0, Math.PI / 2);
+  add(new THREE.PlaneGeometry(L, H), wall, [W / 2, H / 2, zc], 0, -Math.PI / 2);
+  add(new THREE.PlaneGeometry(W, H), wall, [0, H / 2, zc - L / 2]);
+  add(new THREE.PlaneGeometry(W, H), wall, [0, H / 2, zc + L / 2], 0, Math.PI);
   // floor + ceiling
-  add(new THREE.PlaneGeometry(W, L), floor, [0, 0, 0], -Math.PI / 2);
-  add(new THREE.PlaneGeometry(W, L), ceil, [0, H, 0], Math.PI / 2);
+  add(new THREE.PlaneGeometry(W, L), floor, [0, 0, zc], -Math.PI / 2);
+  add(new THREE.PlaneGeometry(W, L), ceil, [0, H, zc], Math.PI / 2);
   // the laylight / lightbox glass (just under the proxy ceiling plane)
   add(
     new THREE.PlaneGeometry(2 * spec.wellX, spec.wellZ1 - spec.wellZ0),
@@ -105,6 +120,7 @@ export function initialEnvironment(
   // warm spot pools on the walls where the paintings hang
   const pool = lin(theme.light.spot, 0.45);
   for (const pl of layout.placements) {
+    if (pl.room !== 0) continue;
     const g = new THREE.PlaneGeometry(pl.w + 0.6, pl.h + 0.8);
     const [x, y, z] = pl.position;
     const inset = 0.01;
@@ -133,19 +149,20 @@ export function precompileProbeShader(gl: THREE.WebGLRenderer, pm: THREE.PMREMGe
   }
 }
 
-/** One-time capture of the real gallery into a PMREM of the same size. */
+/** One-time capture of the real gallery, from the middle of `room`, into a PMREM of the same size. */
 export function captureProbe(
   gl: THREE.WebGLRenderer,
   pm: THREE.PMREMGenerator,
   scene: THREE.Scene,
-  layout: GalleryLayout
+  layout: GalleryLayout,
+  room = 0
 ): THREE.WebGLRenderTarget {
   const cubeRT = new THREE.WebGLCubeRenderTarget(ENV_SIZE, {
     type: THREE.HalfFloatType,
     generateMipmaps: false,
   });
   const cam = new THREE.CubeCamera(0.05, Math.max(60, layout.hallLength * 2), cubeRT);
-  cam.position.set(0, PROBE_Y, 0);
+  cam.position.set(0, PROBE_Y, probeZ(layout, room));
   cam.updateMatrixWorld(true);
 
   // Direct light + emissive only: no env contribution during the capture.

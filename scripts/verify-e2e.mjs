@@ -4,6 +4,15 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 
 const BASE = process.argv[2] ?? "http://localhost:3000";
+// VERIFY_PLACEHOLDER_IMAGES=1 serves a local placeholder for every Wikimedia
+// image (portraits, paintings): repeated runs then stay clear of its rate limits.
+const PLACEHOLDER_IMAGES = !!process.env.VERIFY_PLACEHOLDER_IMAGES;
+// a 4x4 warm-grey PNG
+const PLACEHOLDER_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGPoqkqDIwbiOABO0hahD+yEBAAAAABJRU5ErkJggg==",
+  "base64"
+);
+const placeholder = (route) => route.fulfill({ status: 200, contentType: "image/png", body: PLACEHOLDER_PNG });
 const OUT = "verify-artifacts";
 const W = 1600;
 const H = 900;
@@ -19,6 +28,19 @@ const browser = await chromium.launch({
   args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11"],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H } });
+// Never let a test take the real cursor: Chrome on Windows implements
+// requestPointerLock with an OS-level cursor clip, even headless.
+await page.addInitScript(() => {
+  let locked = null;
+  Object.defineProperty(Document.prototype, "pointerLockElement", { configurable: true, get() { return locked; } });
+  const fire = () => queueMicrotask(() => document.dispatchEvent(new Event("pointerlockchange")));
+  // the stub has to remember which element asked for the lock
+  // eslint-disable-next-line @typescript-eslint/no-this-alias
+  Element.prototype.requestPointerLock = function () { locked = this; fire(); return Promise.resolve(); };
+  Document.prototype.exitPointerLock = function () { locked = null; fire(); };
+});
+
+if (PLACEHOLDER_IMAGES) await page.route(/(upload|thumb)\.wikimedia\.org/, placeholder);
 
 page.on("console", (msg) => {
   if (msg.type() === "error")
@@ -87,7 +109,7 @@ check((await page.locator(".stream, .river-svg").count()) === 0, "River view rem
 const bands = await page.locator(".band").count();
 check(bands >= 15, `period bands rendered: ${bands}`);
 const railLabels = await page.locator(".rail-label:not(.offscreen)").count();
-check(railLabels >= 16, `period titles identifiable at overview: ${railLabels}/18`);
+check(railLabels >= 16, `period titles identifiable at overview: ${railLabels}/${bands}`);
 let ov = await labelOverlaps();
 check(ov.bad.length === 0, `no overlapping labels at overview (${ov.n} labels) ${ov.bad.slice(0, 3).join(" | ")}`);
 const ax0 = await axisState();
@@ -274,7 +296,7 @@ check(stars >= 60, `stars rendered at overview: ${stars}`);
 const figures = await page.locator(".constellations path").count();
 check(figures >= 12, `constellation figures drawn: ${figures}`);
 const starTitles = await page.locator(".neb-label:not(.offscreen)").count();
-check(starTitles >= 16, `constellation titles at overview: ${starTitles}/18`);
+check(starTitles >= 16, `constellation titles at overview: ${starTitles}`);
 ov = await labelOverlaps();
 check(ov.bad.length === 0, `no overlapping star-map labels (${ov.n}) ${ov.bad.slice(0, 3).join(" | ")}`);
 const blurred = await page.evaluate(() =>
@@ -309,7 +331,8 @@ log("explore dropdown");
 await page.getByRole("button", { name: "Explore" }).click();
 await page.waitForTimeout(900);
 const items = await page.locator(".filter-item").count();
-check(items === 18, `filter items (periods tab): ${items}`);
+const nPeriods = Number(await page.locator(".filter-tab", { hasText: "Periods" }).locator(".count").innerText());
+check(items === nPeriods && items >= 18, `filter items (periods tab): ${items} of ${nPeriods} periods`);
 check((await page.locator(".filter-btn[aria-expanded=true]").count()) === 1, "Explore button reports aria-expanded");
 await page.screenshot({ path: `${OUT}/6-filter-dropdown.png` });
 await page.mouse.click(400, 700);
@@ -387,6 +410,199 @@ for (const [slug, name, mid] of [
   check(ax && Math.abs(ax.center - mid) < 6, `Explore → ${name}: framed on the life (centre ${ax?.center.toFixed(1)} vs ${mid})`);
 }
 await page.screenshot({ path: `${OUT}/10-filter-artist-short-screen.png` });
+
+// ---------------------------------------------------------------- 11. layout at common sizes
+/** A fresh page at a size (phones get touch), with the pointer-lock stub. */
+async function pageAt(w, h) {
+  const phone = w < 600;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: phone, isMobile: phone });
+  const p = await ctx.newPage();
+  await p.addInitScript(() => {
+    let locked = null;
+    Object.defineProperty(Document.prototype, "pointerLockElement", { configurable: true, get() { return locked; } });
+    const fire = () => queueMicrotask(() => document.dispatchEvent(new Event("pointerlockchange")));
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    Element.prototype.requestPointerLock = function () { locked = this; fire(); return Promise.resolve(); };
+    Document.prototype.exitPointerLock = function () { locked = null; fire(); };
+  });
+  if (PLACEHOLDER_IMAGES) await p.route(/(upload|thumb)\.wikimedia\.org/, placeholder);
+  p.on("pageerror", (e) => consoleErrors.push(`pageerror @${w}x${h}: ${e.message.slice(0, 300)}`));
+  await p.goto(BASE, { waitUntil: "networkidle" });
+  await p.waitForTimeout(900);
+  return { p, ctx };
+}
+
+/** Open Explore and pick a period or an artist (by visible name). */
+async function pick(p, tab, name) {
+  await p.locator(".filter-btn").click();
+  await p.waitForTimeout(500);
+  if (tab === "artists") {
+    await p.locator(".filter-tab", { hasText: "Artists" }).click();
+    await p.waitForTimeout(300);
+    await p.locator(".filter-search input").fill(name);
+    await p.waitForTimeout(200);
+    await p.locator(".fi-artist").first().click();
+  } else {
+    await p.locator(".fi-period", { has: p.locator(".fi-name", { hasText: new RegExp(`^${name}$`) }) }).click();
+  }
+  await p.waitForTimeout(1800);
+}
+
+/**
+ * Footer row: its parts and the "more below" pill never overlap, and the wall
+ * ends above it (`lowest`: the bottom of the lowest band or name on screen).
+ */
+const footerState = (p) =>
+  p.evaluate(() => {
+    const foot = document.querySelector(".tl-foot").getBoundingClientRect();
+    const box = (s) => document.querySelector(s)?.getBoundingClientRect();
+    const hit = (a, b) => a && b && a.width && b.width && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const parts = [".tl-hint", ".tl-note", ".tl-source", ".tl-scrollhint"].map((s) => [s, box(s)]);
+    const clashes = [];
+    for (let i = 0; i < parts.length; i++)
+      for (let j = i + 1; j < parts.length; j++) if (hit(parts[i][1], parts[j][1])) clashes.push(`${parts[i][0]}/${parts[j][0]}`);
+    const lowest = Math.max(
+      0,
+      ...[...document.querySelectorAll(".band, .wall-row:not(.offscreen) .name")]
+        .map((e) => e.getBoundingClientRect())
+        .filter((r) => r.width && r.right > 0 && r.left < innerWidth)
+        .map((r) => r.bottom)
+    );
+    const pill = box(".tl-scrollhint");
+    return { clashes, lowest: Math.round(lowest), pillAbove: !pill || pill.bottom <= foot.top + 1, footTop: Math.round(foot.top) };
+  });
+
+log("footer row, Star Map titles and dives at common sizes");
+for (const [w, h] of [[1600, 900], [1440, 900], [1366, 768], [1280, 720], [820, 1180], [390, 844], [360, 740]]) {
+  const { p, ctx } = await pageAt(w, h);
+  const fs0 = await footerState(p);
+  check(fs0.clashes.length === 0 && fs0.pillAbove, `${w}x${h}: footer parts and the pill never overlap (${fs0.clashes.join(", ") || "clear"})`);
+  // scrolled to the end of the wall, its last lane clears the footer row
+  await p.locator(".tl-canvas").focus();
+  // (the pill fades out once the end is reached)
+  for (let i = 0; i < 40; i++) {
+    const op = await p.evaluate(() => {
+      const e = document.querySelector(".tl-scrollhint");
+      return e ? +getComputedStyle(e).opacity : 0;
+    });
+    if (op < 0.05) break;
+    await p.keyboard.press("ArrowDown");
+    await p.waitForTimeout(320);
+  }
+  await p.waitForTimeout(400);
+  const fs1 = await footerState(p);
+  check(fs1.lowest <= fs1.footTop, `${w}x${h}: scrolled to its end, the wall stops above the footer row (${fs1.lowest} <= ${fs1.footTop})`);
+  await p.keyboard.press("Home");
+  await p.waitForTimeout(1300);
+  await p.getByRole("button", { name: "Star Map" }).click();
+  await p.waitForTimeout(1100);
+  const missing = await p.locator(".neb-label.offscreen").count();
+  if (w >= 900) check(missing === 0, `${w}x${h}: every constellation on the Star Map overview has its title (${missing} missing)`);
+  else check(missing <= 10, `${w}x${h}: most constellation titles placed on a narrow Star Map (${missing} missing)`);
+  ov = await labelOverlaps();
+  check(ov.bad.length === 0, `${w}x${h}: no overlapping star-map labels (${ov.bad.slice(0, 2).join(" | ")})`);
+  await p.getByRole("button", { name: "Gallery Wall" }).click();
+  await p.waitForTimeout(800);
+  for (const name of ["Cubism", "Fauvism", "Pop Art"]) {
+    await pick(p, "periods", name);
+    const d = await p.evaluate(() => {
+      const t = document.querySelector(".wall-text");
+      const foot = document.querySelector(".tl-foot").getBoundingClientRect();
+      if (!t) return { text: false };
+      const r = t.getBoundingClientRect();
+      const band = [...document.querySelectorAll(".band")].find((b) => b.getBoundingClientRect().top <= r.top && b.getBoundingClientRect().bottom >= r.bottom);
+      const br = band?.getBoundingClientRect();
+      return {
+        text: true,
+        opacity: +getComputedStyle(t).opacity,
+        inView: r.left >= 0 && r.right <= innerWidth && r.top >= 100 && r.bottom <= foot.top,
+        bandAboveFoot: !br || br.bottom <= foot.top + 1,
+      };
+    });
+    check(d.text && d.opacity > 0.9 && d.inView, `${w}x${h}: diving into ${name} shows its wall text in full (opacity ${d.opacity?.toFixed(2)}, in view ${d.inView})`);
+    check(d.bandAboveFoot !== false, `${w}x${h}: ${name}'s band ends above the footer row`);
+  }
+  await ctx.close();
+}
+
+log("Explore on a phone after a pick, and the placard at phone and desktop sizes");
+for (const [w, h] of [[360, 740], [390, 844], [430, 932]]) {
+  const { p, ctx } = await pageAt(w, h);
+  for (const [tab, name] of [["periods", "Northern Renaissance"], ["artists", "Jean-Léon Gérôme"]]) {
+    await pick(p, tab, name);
+    await p.locator(".filter-btn").click();
+    await p.waitForTimeout(700);
+    const r = await p.evaluate(() => {
+      const b = document.querySelector(".filter-panel").getBoundingClientRect();
+      return { l: Math.round(b.left), r: Math.round(b.right) };
+    });
+    check(r.l >= 0 && r.r <= w, `${w}x${h}: Explore stays on screen after picking ${name} (${r.l}..${r.r})`);
+    await p.keyboard.press("Escape");
+    await p.waitForTimeout(500);
+  }
+  await ctx.close();
+}
+for (const [w, h] of [[360, 740], [390, 844], [1600, 900], [1366, 768]]) {
+  const { p, ctx } = await pageAt(w, h);
+  await p.evaluate(() => document.querySelector('.artist-node[data-slug="caravaggio"]')?.click());
+  await p.waitForTimeout(1400);
+  const c = await p.evaluate(() => {
+    const inV = (s) => {
+      const e = document.querySelector(s);
+      if (!e) return null;
+      const r = e.getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth;
+    };
+    return { card: inV(".card"), enter: inV(".card-enter"), wiki: inV(".card-wiki") };
+  });
+  check(c.card && c.enter && c.wiki !== false, `${w}x${h}: the placard fits, Enter the Gallery and the source in view (${JSON.stringify(c)})`);
+  await ctx.close();
+}
+
+log("artist search ignores punctuation and accents");
+{
+  const { p, ctx } = await pageAt(1366, 768);
+  await p.locator(".filter-btn").click();
+  await p.waitForTimeout(500);
+  await p.locator(".filter-tab", { hasText: "Artists" }).click();
+  await p.waitForTimeout(300);
+  for (const [q, want] of [
+    ["Jean-Léon Gérôme", "Jean-Léon Gérôme"],
+    ["jean leon gerome", "Jean-Léon Gérôme"],
+    ["O'Keeffe", "Georgia O'Keeffe"],
+    ["okeeffe", "Georgia O'Keeffe"],
+    ["J. M. W. Turner", "J. M. W. Turner"],
+    ["jmw turner", "J. M. W. Turner"],
+    ["J.M.W. Turner", "J. M. W. Turner"],
+  ]) {
+    await p.locator(".filter-search input").fill(q);
+    await p.waitForTimeout(150);
+    const names = await p.locator(".fi-artist .fi-name").allInnerTexts();
+    const norm = (s) => s.replace(/[’]/g, "'");
+    check(names.some((n) => norm(n) === norm(want)), `search "${q}" finds ${want} (${names.length} found)`);
+  }
+  await ctx.close();
+}
+
+log("app icon");
+{
+  const links = await page.evaluate(() =>
+    [...document.querySelectorAll('link[rel~="icon"]')].map((l) => l.getAttribute("href") ?? "")
+  );
+  const svgHref = links.find((h) => /icon.*\.svg/.test(h));
+  const svg = svgHref ? await page.request.get(new URL(svgHref, BASE).href) : null;
+  const ico = await page.request.get(new URL("/favicon.ico", BASE).href);
+  const icon = {
+    links,
+    svgOk: !!svg?.ok(),
+    svgType: svg?.headers()["content-type"],
+    icoOk: ico.ok(),
+    icoBytes: (await ico.body()).length,
+  };
+  check(icon.svgOk && /svg/.test(icon.svgType ?? ""), `museum icon linked and served (${icon.links.join(", ")})`);
+  // 25931 bytes is Next.js's default favicon
+  check(icon.icoOk && icon.icoBytes !== 25931, `favicon.ico is the museum mark (${icon.icoBytes} bytes)`);
+}
 
 // ---------------------------------------------------------------- report
 const wikiFails = failedRequests.filter((r) => r.includes("wikimedia"));

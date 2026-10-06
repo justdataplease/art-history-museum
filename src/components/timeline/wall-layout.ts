@@ -14,6 +14,7 @@ import { placeRail, RailItem } from "./label-place";
 import { textWidth } from "./text-measure";
 import {
   clamp,
+  diveFill,
   lerp,
   pxPerYear,
   smoothstep,
@@ -32,6 +33,8 @@ export interface WallInput {
   t: Transform;
   top: number;
   bottom: number;
+  /** the period the visitor last dived into: it wins the wall text when it fills the view */
+  focus?: string | null;
 }
 
 export interface WallBand {
@@ -69,10 +72,14 @@ export interface WallRow {
   lineY: number;
   clipL: boolean;
   clipR: boolean;
+  /** the life began before the drawn line: a chevron leads into the node */
+  cont: boolean;
   in0: number;
   in1: number;
   nodeX: number;
   P: number;
+  /** this row's pitch (rows of a period you dive into grow to full size) */
+  R: number;
   mode: RowMode;
   label: 0 | 1 | 2;
   dates: boolean;
@@ -104,10 +111,11 @@ export interface WallLayout {
 const RAIL_ROW_H = 19;
 const RAIL_TWO = 44;
 const RAIL_ONE = 26;
-const PAD_T = 10;
-const PAD_B = 8;
-const LANE_GAP = 12;
 const TEXT_H = 98;
+/** smallest row pitch that still carries a name (dot mode, 10.5px type) */
+const NAME_MIN_R = 11;
+/** row pitch of a period you have dived into: full rows (portrait, name, dates) */
+const FOCUS_R = 44;
 /** px kept free on each side of a slot boundary so neighbouring rows never touch */
 const SLOT_GAP = 7;
 
@@ -129,6 +137,10 @@ export function computeWallLayout(inp: WallInput): WallLayout {
   const { periods, byPeriod, meta, lanes, laneCount, w, h, t, top, bottom } = inp;
   const ppy = pxPerYear(w, t.k);
   const detail = smoothstep(2.6, 5.2, ppy);
+  // the overview packs the whole collection onto one screen: tighter chrome
+  const PAD_T = lerp(7, 10, detail);
+  const PAD_B = lerp(5, 8, detail);
+  const LANE_GAP = lerp(8, 12, detail);
   const avail = bottom - top + LANE_GAP;
   const margin = Math.max(260, w * 0.35);
   const X = (year: number) => xOf(year, w, t);
@@ -160,20 +172,33 @@ export function computeWallLayout(inp: WallInput): WallLayout {
       const dist = Math.max(0, X(es) - w, -X(ee));
       const v = 1 - smoothstep(0, margin, dist);
       const visW = Math.max(0, Math.min(x1, w) - Math.max(x0, 0));
-      // "zoomed into this period": a narrow window so the wall text is rarely left half-open
-      const f = smoothstep(0.66, 0.74, visW / w) * smoothstep(340, 420, visW) * detail;
+      // "zoomed into this period": a narrow window so the wall text is rarely
+      // left half-open. A short period can't fill the screen even when dived
+      // into (the zoom tops out), so it asks for most of what a dive gives it.
+      const need = Math.min(0.66, diveFill(p) * 0.86);
+      const f =
+        smoothstep(need, need + 0.08, visW / w) *
+        smoothstep(Math.min(340, w * need * 0.8), Math.min(420, w * need), visW) *
+        detail;
       info.set(p.slug, { p, lane: L, arts, n: arts.length, fs, fe, x0, x1, v, f, visW });
     })
   );
 
-  // only one wall text at a time: overlapping periods that all fill the view
-  // share by a soft arg-max (the most specific, i.e. shortest, period wins)
+  // only one wall text (and one set of full-size rows) at a time: overlapping
+  // periods that all fill the view share by a soft arg-max. The period dived
+  // into wins; otherwise the one most wholly on screen, then the most specific
+  // (shortest) - in the dense 19th century several periods fill any view.
   {
     let sum = 0;
     const u = new Map<string, number>();
     for (const I of info.values()) {
       if (I.f <= 0) continue;
-      const v = Math.pow(I.f, 6) * Math.pow(100 / Math.max(10, I.p.endYear - I.p.startYear), 6);
+      const cover = I.visW / Math.max(1, I.x1 - I.x0);
+      const v =
+        Math.pow(I.f, 6) *
+        Math.pow(100 / Math.max(10, I.p.endYear - I.p.startYear), 6) *
+        Math.pow(cover, 12) *
+        (I.p.slug === inp.focus ? 1e4 : 1);
       u.set(I.p.slug, v);
       sum += v;
     }
@@ -186,11 +211,13 @@ export function computeWallLayout(inp: WallInput): WallLayout {
   const railH = lerp(RAIL_TWO, RAIL_ONE, detail);
   const railRows = railH >= 2 * RAIL_ROW_H + 4 ? 2 : 1;
 
+  // the period being dived into (I.f > 0) grows its rows toward full size
+  const pitch = (I: PInfo, R: number) => R + I.f * Math.max(0, FOCUS_R - R);
   const laneContent = (L: number, R: number, textOn: number) => {
     let m = 0;
     for (const p of laneP[L]) {
       const I = info.get(p.slug)!;
-      const hh = I.v * (I.n * R + I.f * TEXT_H * textOn);
+      const hh = I.v * (I.n * pitch(I, R) + I.f * TEXT_H * textOn);
       if (hh > m) m = hh;
     }
     return m;
@@ -202,7 +229,9 @@ export function computeWallLayout(inp: WallInput): WallLayout {
     return s;
   };
 
-  const Rmin = lerp(15, 25, detail);
+  // zoomed out the rows may thin down to bare lifelines (names return as soon
+  // as a row is tall enough to carry one); zoomed in they keep their portraits
+  const Rmin = lerp(9, 25, detail);
   const Rmax = lerp(30, 58, detail);
   const solve = (textOn: number) => {
     if (total(Rmax, textOn) <= avail) return Rmax;
@@ -218,14 +247,14 @@ export function computeWallLayout(inp: WallInput): WallLayout {
   };
   // a period that fills the view shows its wall text, even if its rows get tighter
   const textOn = 1;
-  const R = solve(textOn);
-  const overflow = Math.max(0, total(R, textOn) - avail);
+  const R0 = solve(textOn);
+  const overflow = Math.max(0, total(R0, textOn) - avail);
 
   const laneTop: number[] = [];
   let y = top + t.y;
   for (let L = 0; L < laneCount; L++) {
     laneTop[L] = y;
-    y += laneFixed(L) + laneContent(L, R, textOn);
+    y += laneFixed(L) + laneContent(L, R0, textOn);
   }
 
   // ---- bands + wall text
@@ -237,23 +266,32 @@ export function computeWallLayout(inp: WallInput): WallLayout {
     const L = I.lane;
     const T = I.f * TEXT_H * textOn;
     const bt = laneTop[L] + wL[L] * railH;
-    const height = PAD_T + T + I.n * R + PAD_B;
+    const height = PAD_T + T + I.n * pitch(I, R0) + PAD_B;
     bandTopOf.set(p.slug, bt);
     rowsTopOf.set(p.slug, bt + PAD_T + T);
     const onScreen = I.x1 > -40 && I.x0 < w + 40 && bt < h && bt + height > 0;
-    let text: WallBand["text"] = null;
-    if (T > 6 && I.visW > 0) {
-      const tw = Math.min(680, I.visW - 48);
-      text = {
-        x: clamp(Math.max(I.x0, 0) + 24, I.x0 + 24, I.x1 - tw - 24),
-        y: bt + PAD_T + 2,
-        w: tw,
-        h: T - 6,
-        o: Math.pow(I.f * textOn, 1.6),
-      };
-    }
     const sl = Number.isFinite(I.fs) ? X(I.fs) + SLOT_GAP : -1e7;
     const sr = Number.isFinite(I.fe) ? X(I.fe) - SLOT_GAP : 1e7;
+    let text: WallBand["text"] = null;
+    if (T > 6 && I.visW > 0) {
+      // inside the band when it is wide enough to read in; a short period's
+      // text may run on beyond it, across its own (empty) stretch of the lane
+      const bx0 = Math.max(I.x0, 0);
+      const bx1 = Math.min(I.x1, w);
+      const inBand = bx1 - bx0 - 48 >= Math.min(300, w - 96);
+      const lo = inBand ? bx0 : Math.max(sl, 0);
+      const hi = inBand ? bx1 : Math.min(sr, w);
+      const tw = Math.max(0, Math.min(680, hi - lo - 48));
+      if (tw >= 120) {
+        text = {
+          x: clamp(bx0 + 24, lo + 24, hi - tw - 24),
+          y: bt + PAD_T + 2,
+          w: tw,
+          h: T - 6,
+          o: Math.pow(I.f * textOn, 1.6),
+        };
+      }
+    }
     bands.push({
       p,
       x0: I.x0,
@@ -268,16 +306,28 @@ export function computeWallLayout(inp: WallInput): WallLayout {
   }
 
   // ---- artist rows
-  const baseMode: RowMode = detail < 0.45 || R < 24 ? "dot" : R < 40 ? "inline" : "full";
-  const P0 =
-    baseMode === "full" ? clamp(R - 10, 30, 46) : baseMode === "inline" ? clamp(R - 6, 18, 28) : R >= 20 ? 8 : 7;
-  const nameSize = baseMode === "full" ? (R >= 48 ? 15 : 14) : baseMode === "inline" ? 12.5 : 11.5;
-  const dateSize = baseMode === "full" ? 10.5 : baseMode === "inline" ? 9.5 : 9;
   const rows: WallRow[] = [];
   const rowExtent = new Map<string, [number, number]>();
   for (const p of periods) {
     const I = info.get(p.slug)!;
     const rt = rowsTopOf.get(p.slug)!;
+    const R = pitch(I, R0);
+    const baseMode: RowMode = detail < 0.45 || R < 24 ? "dot" : R < 40 ? "inline" : "full";
+    const P0 =
+      baseMode === "full"
+        ? clamp(R - 10, 30, 46)
+        : baseMode === "inline"
+          ? clamp(R - 6, 18, 28)
+          : R >= 20
+            ? 8
+            : R >= 13
+              ? 7
+              : 6;
+    // a dot-mode name is never taller than its row, so neighbouring names can't touch
+    const nameSize =
+      baseMode === "full" ? (R >= 48 ? 15 : 14) : baseMode === "inline" ? 12.5 : Math.min(11.5, R - 0.5);
+    const namesOn = baseMode !== "dot" || R >= NAME_MIN_R;
+    const dateSize = baseMode === "full" ? 10.5 : baseMode === "inline" ? 9.5 : 9;
     const sL = Number.isFinite(I.fs) ? X(I.fs) + SLOT_GAP : -1e7;
     const sR = Number.isFinite(I.fe) ? X(I.fe) - SLOT_GAP : 1e7;
     I.arts.forEach((a, i) => {
@@ -303,8 +353,14 @@ export function computeWallLayout(inp: WallInput): WallLayout {
       const half = P / 2;
       const lineY =
         mode === "full" ? rowY + R / 2 : mode === "inline" ? rowY + R * 0.6 : rowY + R - 6;
+      // the life began before the line shown (cut at its slot's edge, or off
+      // the left of the screen): a "continues" chevron leads in, and the node
+      // stands clear of the cut, so it can't read as a birth there
+      // (not on the overview's tightly packed dot rows, where it would only be noise)
+      const cont = bx < Math.max(ls, 0) - 0.5 && (mode !== "dot" || R >= 16);
+      const lead = cont ? 11 : 0;
       // the node stays at the start of the visible line (sticky at the left edge), inside its slot
-      const sticky = Math.max(ls, 10 + half);
+      const sticky = cont ? Math.max(ls + lead + half, 14 + half) : Math.max(ls, 10 + half);
       const nodeX = clamp(Math.min(sticky, Math.max(ls, le - half)), sL + half, Math.max(sL + half, sR - half));
       const textX = nodeX + (mode === "dot" ? 5 : half + 8);
       const room = Math.min(sR, w - 6) - textX - 2;
@@ -312,7 +368,9 @@ export function computeWallLayout(inp: WallInput): WallLayout {
       const shortW = textWidth(m.short, "serif", nameSize);
       const datesW = m.years ? textWidth(m.years, "sans", dateSize) : 0;
       let label: 0 | 1 | 2 = 0;
-      if (fullW <= room) label = 2;
+      // a node sliding off the left edge takes its name with it
+      if (!namesOn || nodeX - half < 0) label = 0;
+      else if (fullW <= room) label = 2;
       else if (shortW <= room) label = 1;
       const nameW = label === 2 ? fullW : label === 1 ? shortW : 0;
       const dates =
@@ -336,10 +394,12 @@ export function computeWallLayout(inp: WallInput): WallLayout {
         lineY,
         clipL: bx < sL - 0.5,
         clipR: dx > sR + 0.5,
+        cont: cont && nodeX - half - lead >= Math.max(ls, -2) - 0.5,
         in0: clamp(I.x0, ls, le),
         in1: clamp(I.x1, ls, le),
         nodeX,
         P,
+        R,
         mode,
         label,
         dates,
@@ -353,6 +413,7 @@ export function computeWallLayout(inp: WallInput): WallLayout {
   // ---- period titles on each lane's rail
   const labels = new Map<string, WallLabel>();
   const leaders: WallLeader[] = [];
+  const bandOf = new Map(bands.map((b) => [b.p.slug, b]));
   const size = lerp(11, 14, detail);
   const yrSize = Math.round(size * 0.78 * 10) / 10;
   const labelH = Math.round(size * 1.35);
@@ -361,10 +422,9 @@ export function computeWallLayout(inp: WallInput): WallLayout {
     const items: RailItem[] = [];
     const meta2 = new Map<string, { years: boolean; anchor: number; ghost: -1 | 0 | 1 }>();
     for (const p of list) {
-      const I = info.get(p.slug)!;
       const nameW = textWidth(p.name, "serif-caps", size);
       const yrW = textWidth(`${p.startYear} – ${p.endYear}`, "sans", yrSize);
-      const b = bands.find((x) => x.p.slug === p.slug)!;
+      const b = bandOf.get(p.slug)!;
       const bandOn = b.dx1 > 0 && b.dx0 < w;
       if (!bandOn) {
         // band off screen but some of its rows are not: title the rows, pointing at the band
@@ -396,7 +456,15 @@ export function computeWallLayout(inp: WallInput): WallLayout {
         inside = fits(width);
       }
       const anchor = (vx0 + vx1) / 2;
-      items.push({ id: p.slug, width, inside, want: anchor - width / 2, anchor });
+      items.push({
+        id: p.slug,
+        width,
+        inside,
+        want: anchor - width / 2,
+        anchor,
+        a0: Math.min(vx0 + 4, anchor),
+        a1: Math.max(vx1 - 4, anchor),
+      });
       meta2.set(p.slug, { years, anchor, ghost: 0 });
     }
     const spots = placeRail(items, w, railRows);
@@ -419,14 +487,14 @@ export function computeWallLayout(inp: WallInput): WallLayout {
       if (s.callout && !meta2.get(it.id)!.ghost) {
         leaders.push({
           slug: it.id,
-          x1: it.anchor,
+          x1: s.lx,
           y1: bt,
-          x2: clamp(it.anchor, s.x + 6, s.x + it.width - 6),
+          x2: clamp(s.lx, s.x + 6, s.x + it.width - 6),
           y2: bottomY + 1,
         });
       }
     }
   });
 
-  return { bands, labels, rows, leaders, rowH: R, detail, overflow };
+  return { bands, labels, rows, leaders, rowH: R0, detail, overflow };
 }

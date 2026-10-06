@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EraKey } from "./theme";
-import { ERA_MUSIC, licenseUrl, trackCredit, type Track } from "./music";
+import { ERA_MUSIC, licenseUrl, localAudioUrl, trackCredit, type Track } from "./music";
 import styles from "./MuseumAudio.module.css";
 
 const GALLERY_VOLUME = 0.32;
@@ -25,6 +25,31 @@ const TRACK_GAP_MS = 2000; // silence between tracks
 const ERROR_SKIP_MS = 600; // pause before skipping a broken track
 const CREDIT_MS = 7000; // how long the now-playing caption stays up
 const STORAGE_KEY = "timeline-museum:music-muted";
+
+// Other parts of the page may ask the music to step back for a moment (a
+// level 0..1 of its normal volume, faded over a given time), and read the
+// visitor's mute state.
+let duckLevel = 1;
+let duckMs = DUCK_MS;
+const duckListeners = new Set<() => void>();
+let mutedNow = false;
+
+/** Lower the gallery music to `level` (0..1 of its normal level) over `seconds`; 1 restores it. */
+export function duckMusic(level: number, seconds: number): void {
+  duckLevel = Math.min(1, Math.max(0, level));
+  duckMs = Math.max(0, seconds * 1000);
+  duckListeners.forEach((l) => l());
+}
+
+function resetDuck(): void {
+  duckLevel = 1;
+  duckMs = DUCK_MS;
+}
+
+/** The visitor has muted the museum (M / the music toggle). */
+export function musicMuted(): boolean {
+  return mutedNow;
+}
 
 /** Events that can grant the user activation needed to start playback. */
 const GESTURES = ["pointerdown", "pointerup", "keydown", "touchend"] as const;
@@ -119,11 +144,16 @@ export function MuseumAudio({
 
   // Restore the visitor's mute preference (client only — keeps SSR markup
   // stable). Declared before the playback effect so it applies first.
+  // A duck is module state: each gallery starts, and leaves, at full level
+  // (a duck left on by the previous gallery must not carry over).
   useEffect(() => {
+    resetDuck();
     const initial = readMuted() ?? volumeIsFixed();
     mutedRef.current = initial;
+    mutedNow = initial;
     setMuted(initial);
     ctrlRef.current?.sync();
+    return resetDuck;
   }, []);
 
   // Playback engine: one audio element per era (in practice per visit).
@@ -150,7 +180,7 @@ export function MuseumAudio({
     let gapTimer: ReturnType<typeof setTimeout> | null = null;
 
     const shouldPlay = () => startedRef.current && !mutedRef.current && !gaveUp;
-    const target = () => (inspectingRef.current ? INSPECT_VOLUME : GALLERY_VOLUME);
+    const target = () => (inspectingRef.current ? INSPECT_VOLUME : GALLERY_VOLUME) * duckLevel;
 
     const cancelRamp = () => {
       if (rampRaf) cancelAnimationFrame(rampRaf);
@@ -200,12 +230,14 @@ export function MuseumAudio({
       });
     };
 
-    /** Point the element at track i. Prefers the MP3 transcode (Safari),
-     *  keeping the original as a fallback. False if nothing is playable. */
+    /** Point the element at track i. Prefers the site's own AAC mirror
+     *  (public/audio, scripts/fetch-music.ts), then Commons' MP3 transcode
+     *  (Safari), then the original upload. False if nothing is playable. */
     const setSource = (i: number): boolean => {
       index = i;
       const track = tracks[i];
       sources = [];
+      if (audio.canPlayType('audio/mp4; codecs="mp4a.40.2"')) sources.push(localAudioUrl(track));
       if (track.mp3 && audio.canPlayType("audio/mpeg")) sources.push(track.mp3);
       if (audio.canPlayType(track.originalType)) sources.push(track.original);
       sourceIdx = 0;
@@ -369,6 +401,12 @@ export function MuseumAudio({
     };
     window.addEventListener("online", onOnline);
 
+    // a duck: ease to the new level if playing (the next play() picks it up otherwise)
+    const onDuck = () => {
+      if (!disposed && shouldPlay() && !audio.paused && !gapTimer) ramp(target(), duckMs);
+    };
+    duckListeners.add(onDuck);
+
     const ctrl: Controller = { sync, blocked: () => gestureArmed, unavailable: () => gaveUp, retry };
     ctrlRef.current = ctrl;
     sync();
@@ -380,6 +418,7 @@ export function MuseumAudio({
       disarmGesture();
       setUnavailable(false);
       window.removeEventListener("online", onOnline);
+      duckListeners.delete(onDuck);
       audio.removeEventListener("playing", onPlaying);
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
@@ -428,6 +467,7 @@ export function MuseumAudio({
     }
     const next = !mutedRef.current;
     mutedRef.current = next;
+    mutedNow = next;
     setMuted(next);
     writeMuted(next);
     if (next) setCreditVisible(false);

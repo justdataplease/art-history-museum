@@ -1,6 +1,7 @@
 // Enrich the ingest cache with real reference data from Wikidata / Wikimedia:
 // physical size (widthCm / heightCm), 12-month enwiki pageviews, the
-// painting's Wikidata item (qid) and its image file's byte size (imageBytes).
+// painting's Wikidata item (qid), its image file's byte size (imageBytes) and
+// the credit line of every image and portrait (imageCredit / portraitCredit).
 // Re-runnable: pageviews are refreshed on every run; a failed lookup never
 // overwrites values from an earlier run.
 //
@@ -13,6 +14,7 @@
 // and (unless disabled) out-of-lifetime years and works by another artist;
 // everything else is written back unchanged in the same JSON layout.
 
+import "./lib/env"; // .env.local (WIKI_USER_AGENT) before anything reads it
 import fs from "node:fs";
 import path from "node:path";
 import { enrichArtists, type EnrichableArtist, type EnrichablePainting } from "./lib/enrich";
@@ -27,7 +29,7 @@ const dryRun = args.has("--dry-run");
 const fixYears = !args.has("--keep-years");
 const dropForeign = !args.has("--keep-foreign");
 
-const ENRICHED = ["widthCm", "heightCm", "pageviews", "qid", "imageBytes"] as const;
+const ENRICHED = ["widthCm", "heightCm", "pageviews", "qid", "imageBytes", "imageCredit"] as const;
 const key = (artistSlug: string, p: EnrichablePainting) => `${artistSlug}\u0000${p.slug}\u0000${p.imageUrl}`;
 
 function readJson<T>(file: string): T {
@@ -64,7 +66,9 @@ async function main() {
   const byKey = new Map<string, EnrichablePainting>();
   for (const a of targets) for (const p of a.paintings) byKey.set(key(a.slug, p), p);
   const removed = new Set(report.removed);
+  const portraitCredits = new Map(cached.map((c) => [c.artist.slug, c.artist.portraitCredit]));
   for (const a of museum.artists) {
+    if (portraitCredits.has(a.slug)) a.portraitCredit = portraitCredits.get(a.slug) ?? null;
     a.paintings = a.paintings.filter((p) => !removed.has(`${a.slug}/${p.slug}`));
     for (const p of a.paintings) {
       const src = byKey.get(key(a.slug, p));
@@ -89,6 +93,8 @@ async function main() {
     withAnyDim: live.filter((p) => p.widthCm != null || p.heightCm != null).length,
     withPageviews: live.filter((p) => p.pageviews != null).length,
     withImageBytes: live.filter((p) => p.imageBytes != null).length,
+    withCredit: live.filter((p) => p.imageCredit).length,
+    withImage: live.filter((p) => p.imageUrl).length,
   };
 
   console.log("\nRun:", {
@@ -112,6 +118,10 @@ async function main() {
   if (report.yearChanges.length) {
     console.log(`\nYear repairs (${report.yearChanges.length}):`);
     for (const r of report.yearChanges) console.log("  - " + r);
+  }
+  if (report.unitFixes.length) {
+    console.log(`\nSizes multiplied out of a Wikidata unit slip (${report.unitFixes.length}):`);
+    for (const r of report.unitFixes) console.log("  - " + r);
   }
   if (report.removed.length) {
     console.log(`\nRemoved, attributed to another artist (${report.removed.length}):`);

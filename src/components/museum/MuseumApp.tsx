@@ -16,13 +16,16 @@ import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import gsap from "gsap";
 import type { ArtistWithPaintings } from "@/lib/types";
-import { buildLayout, entryGateSlugs, entryZ, EYE_HEIGHT, type Placement } from "./layout";
-import { Gallery, type LockApi, type WarmupApi } from "./Gallery";
+import { buildLayout, entryGate, entryZ, EYE_HEIGHT, type Placement } from "./layout";
+import { Gallery, type LockApi, type TeleportApi, type WarmupApi } from "./Gallery";
+import { RoomNavigator } from "./RoomNavigator";
 import { InspectPanel } from "./InspectPanel";
-import { MuseumAudio } from "./MuseumAudio";
+import { duckMusic, MuseumAudio, musicMuted } from "./MuseumAudio";
+import { FxGate } from "./fx/Gate";
 import { galleryTheme } from "./theme";
 import { createSettleTracker, type SettleTracker } from "./renderer-motion";
 import styles from "./museum.module.css";
+import { SourceLink } from "@/components/timeline/SourceLink";
 
 const FOV = 55;
 /** Let the title on the doors register before they part. */
@@ -36,6 +39,12 @@ const WARM_CAP_MS = 2500;
 
 // Neutral (Khronos PBR Neutral) keeps the paintings' base colours faithful;
 // lighting is tuned for exposure 1. No shadow maps anywhere.
+/** A navigator jump: the fade to black, then how long the view stays dark at
+ *  least / at most while the new room's works mount and its lights come up. */
+const JUMP_FADE_MS = 280;
+const JUMP_HOLD_MIN_MS = 520;
+const JUMP_HOLD_MAX_MS = 2400;
+
 const GL_PROPS = {
   antialias: true,
   powerPreference: "high-performance" as const,
@@ -62,10 +71,15 @@ function getTouch() {
 }
 const getTouchServer = () => false;
 
+const FX_AUDIO = { duck: duckMusic, muted: musicMuted };
+const placardEl = () => document.querySelector(".mus-placard");
+
 export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   const layout = useMemo(() => buildLayout(artist.paintings), [artist]);
   const theme = useMemo(() => galleryTheme(artist.periodSlug), [artist.periodSlug]);
-  const gate = useMemo(() => entryGateSlugs(layout), [layout]);
+  // the flagship (a thumbnail, in a suite) and the entrance room's nearest works
+  const gate = useMemo(() => entryGate(layout), [layout]);
+  const rooms = layout.rooms.length;
   const tracker = useMemo(() => createSettleTracker(), [layout]);
   const total = layout.placements.length;
   const touch = useSyncExternalStore(subscribeTouch, getTouch, getTouchServer);
@@ -80,6 +94,12 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   const [returning, setReturning] = useState(false);
   const [allSettled, setAllSettled] = useState(false);
   const [dprCap, setDprCap] = useState(1.5);
+  // a suite's room navigator: the room the visitor is in, a pulse on entering
+  const [room, setRoom] = useState(0);
+  const [pulse, setPulse] = useState(0);
+  const [fading, setFading] = useState(false);
+  const announced = useRef(false);
+  const teleportApi = useRef<TeleportApi | null>(null);
 
   const doorsRef = useRef<HTMLDivElement>(null);
   const crosshairRef = useRef<HTMLDivElement>(null);
@@ -109,8 +129,38 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
       }),
     [tracker, total]
   );
+  // The reflection probe waits for the works it sees: all of them in a single
+  // room; in a suite (whose far rooms never load until visited) the room the
+  // visitor stands in.
+  const roomSlugs = useMemo(
+    () => layout.placements.filter((p) => p.room === room).map((p) => p.painting.slug),
+    [layout, room]
+  );
+  const roomSettled = useSyncExternalStore(
+    tracker.subscribe,
+    () => roomSlugs.every((s) => tracker.has(s)),
+    () => false
+  );
+  const probeReady = rooms > 1 ? roomSettled : allSettled;
 
   const markArrived = useCallback(() => setArrived(true), []);
+  const showRoom = useCallback((r: number) => {
+    setRoom(r);
+    setPulse((n) => n + 1);
+  }, []);
+  // The first step inside a suite highlights the navigator; doorways the rest.
+  const announceStart = useCallback(() => {
+    if (announced.current || rooms < 2) return;
+    announced.current = true;
+    setPulse((n) => n + 1);
+  }, [rooms]);
+  const onLockChange = useCallback(
+    (l: boolean) => {
+      setLocked(l);
+      if (l) announceStart();
+    },
+    [announceStart]
+  );
   const onReturned = useCallback(() => setReturning(false), []);
   // Crosshair aim toggles a class directly: no React render per aim change.
   const onAim = useCallback((a: boolean) => {
@@ -127,10 +177,11 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
     setInspect(null);
   }, []);
 
-  // Safety net: never stay "returning" if the fly-back is interrupted.
+  // Safety net: never stay "returning" if the fly-back is interrupted (a
+  // flight back through a suite's doorways takes up to ~2.1 s).
   useEffect(() => {
     if (!returning) return;
-    const t = setTimeout(() => setReturning(false), 3000);
+    const t = setTimeout(() => setReturning(false), 4000);
     return () => clearTimeout(t);
   }, [returning]);
 
@@ -231,6 +282,48 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   }, [inspect, closeInspect]);
 
   const walkEnabled = doorsOpen && arrived && !inspect && !returning;
+  const navEnabled = rooms > 1 && doorsOpen && arrived && !inspect && !returning;
+
+  // ---- jump to a room: a quick fade through black around the move, held
+  // until the new room's works are hung and its lights are up
+  const jumping = useRef(false);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(jumpTimer.current), []);
+  const goRoom = useCallback(
+    (to: number) => {
+      if (jumping.current || !navEnabled || to < 0 || to >= rooms) return;
+      jumping.current = true;
+      setFading(true);
+      jumpTimer.current = setTimeout(() => {
+        teleportApi.current?.go(to);
+        const t0 = performance.now();
+        const poll = () => {
+          const api = teleportApi.current;
+          const t = performance.now() - t0;
+          if (t >= JUMP_HOLD_MAX_MS || (t >= JUMP_HOLD_MIN_MS && (!api || api.settled()))) {
+            setFading(false);
+            jumping.current = false;
+            return;
+          }
+          jumpTimer.current = setTimeout(poll, 40);
+        };
+        jumpTimer.current = setTimeout(poll, JUMP_HOLD_MIN_MS);
+      }, JUMP_FADE_MS);
+    },
+    [navEnabled, rooms]
+  );
+  useEffect(() => {
+    if (!navEnabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.code === "BracketLeft" || e.code === "PageUp") goRoom(room - 1);
+      else if (e.code === "BracketRight" || e.code === "PageDown") goRoom(room + 1);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navEnabled, goRoom, room]);
   const engaged = touch ? touchActive : locked; // walking with input captured
   const showStart = doorsOpen && arrived && !inspect && !returning && !engaged;
   const dpr = useMemo(() => [1, dprCap] as [number, number], [dprCap]);
@@ -251,10 +344,10 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
           inspect={inspect}
           onSelect={selectPainting}
           onAim={onAim}
-          onLockChange={setLocked}
+          onLockChange={onLockChange}
           walkEnabled={walkEnabled}
           entering={entering}
-          ready={allSettled}
+          ready={probeReady}
           onSettled={onSettled}
           onArrived={markArrived}
           onReturned={onReturned}
@@ -263,6 +356,8 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
           onDprCap={setDprCap}
           touch={touch}
           touchActive={touchActive}
+          onRoom={rooms > 1 ? showRoom : undefined}
+          teleportApi={teleportApi}
         />
       </Canvas>
 
@@ -284,7 +379,19 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
           </p>
         </div>
         <span className={styles.topSpacer} />
+        {!inspect && <SourceLink className="mus-source" compact />}
+        {/* hung just below the bar, so it clears the title card at any width */}
+        <RoomNavigator
+          layout={layout}
+          room={room}
+          pulse={pulse}
+          visible={rooms > 1 && doorsOpen && !inspect}
+          disabled={!navEnabled}
+          onGo={goRoom}
+        />
       </div>
+
+      <div className={`${styles.teleportFade}${fading ? ` ${styles.teleportFadeOn}` : ""}`} />
 
       {engaged && walkEnabled && (
         <div className={`mus-hint ${styles.hint}`}>
@@ -314,6 +421,11 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
               <span>
                 <b>M</b> music
               </span>
+              {rooms > 1 && (
+                <span>
+                  <b>[ ]</b> rooms
+                </span>
+              )}
               <span>
                 <b>Esc</b> release cursor
               </span>
@@ -326,8 +438,10 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
         <div
           className="mus-click-to-start"
           onClick={() => {
-            if (touch) setTouchActive(true);
-            else lockApi.current?.lock();
+            if (touch) {
+              setTouchActive(true);
+              announceStart();
+            } else lockApi.current?.lock();
           }}
         >
           <h2>{artist.name}</h2>
@@ -340,6 +454,14 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
       <InspectPanel placement={inspect} onClose={closeInspect} touch={touch} artistName={artist.name} />
 
       <MuseumAudio era={theme.era} started={doorsOpen} inspecting={!!inspect} />
+
+      <FxGate
+        ready={doorsOpen && arrived}
+        inspecting={!!inspect || returning}
+        touch={touch}
+        secretTarget={placardEl}
+        audio={FX_AUDIO}
+      />
 
       {/* entry doors */}
       <div className="doors" ref={doorsRef}>

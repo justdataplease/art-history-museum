@@ -176,7 +176,9 @@ function aspectOf(p: Painting): number {
 function wallWidthM(p: Painting): number {
   if (p.widthCm && p.widthCm > 0) return Math.max(0.25, p.widthCm / 100);
   const aspect = aspectOf(p);
-  if (aspect >= 1.4) return Math.min(2.9, 1.1 * aspect + 0.6);
+  if (p.heightCm && p.heightCm > 0) return Math.max(0.25, (p.heightCm / 100) * aspect);
+  // (mirrors canvasSize in the gallery's layout.ts)
+  if (aspect >= 1.4) return Math.min(3.6, 1.1 * aspect + 0.6);
   return (aspect < 0.8 ? 1.75 : 1.55) * aspect;
 }
 
@@ -192,17 +194,45 @@ export function wallTexturePx(p: Painting): number {
   );
 }
 
+/** Thumbnail widths (Wikimedia buckets) for a suite's works seen from rooms
+ *  away; the flagship, seen head-on down the suite's axis, gets a little more. */
+export const THUMB_PX = 250;
+export const FLAGSHIP_THUMB_PX = 330;
+
+// Close-up viewing (the visitor within a few metres of a work): at 1 m the
+// view spans ~1.05 m vertically over ~1350 device pixels (900 px CSS at
+// 1.5x), so ~1300 px per metre of canvas stays sharp; capped at the 1920
+// bucket (the full original for smaller files, as wikiThumb decides).
+const NEAR_PX_PER_M = 1300;
+const NEAR_MAX_PX = 1920;
+
+/**
+ * Texture width (px) for a work the visitor stands close to: a step up from
+ * wallTexturePx, sized like it by the work's physical width, at least the
+ * next bucket above the wall texture and at most 1920 px.
+ */
+export function nearTexturePx(p: Painting): number {
+  const wall = wallTexturePx(p);
+  const target = Math.min(NEAR_MAX_PX, wallWidthM(p) * NEAR_PX_PER_M);
+  const sized =
+    WIKIMEDIA_THUMB_WIDTHS.find((b) => b >= target * WALL_UNDERSHOOT && b <= NEAR_MAX_PX) ?? NEAR_MAX_PX;
+  const above = WIKIMEDIA_THUMB_WIDTHS.find((b) => b > wall && b <= NEAR_MAX_PX) ?? wall;
+  return Math.max(sized, above);
+}
+
 /**
  * Texture width (px) to stream in when the work is inspected up close: the
  * whole original when it fits (long side <= 4096), else the largest
  * Wikimedia bucket that does (3840 / 1920 ...). paintingTextureUrl swaps a
  * byte-heavy original for a JPEG thumbnail.
  */
-export function inspectTexturePx(p: Painting): number {
+export function inspectTexturePx(p: Painting, maxLongSide = INSPECT_MAX_LONG_SIDE): number {
   const wall = wallTexturePx(p);
   const ow = p.imageWidth ?? 0;
   if (ow <= 0) return Math.max(wall, 1920);
-  const maxW = Math.min(3840, Math.floor(INSPECT_MAX_LONG_SIDE * Math.min(1, aspectOf(p))));
+  // `maxLongSide`: what the device can take (a desktop GPU lets a portrait
+  // work reach the 3840 bucket; the default keeps every WebGL2 GPU safe)
+  const maxW = Math.min(3840, Math.floor(maxLongSide * Math.min(1, aspectOf(p))));
   if (ow <= maxW) return Math.max(wall, ow); // wikiThumb serves the original file for this
   const bucket = [...WIKIMEDIA_THUMB_WIDTHS].reverse().find((b) => b <= maxW) ?? wall;
   return Math.max(wall, bucket);
@@ -220,8 +250,10 @@ function heavyOriginal(p: Painting, fileName: string): boolean {
  * The URL a painting texture of (at least) `px` wide is fetched from. Like
  * wikiThumb, except that thumbnails of PNG / TIFF sources come as JPEG and a
  * byte-heavy original is never downloaded: a JPEG thumbnail stands in for it.
+ * Null for a work still in copyright (no free image to show).
  */
-export function paintingTextureUrl(p: Painting, px: number): string {
+export function paintingTextureUrl(p: Painting, px: number): string | null {
+  if (!p.imageUrl) return null;
   const f = parseWikimedia(p.imageUrl);
   if (!f) return p.imageUrl;
   const ow = p.imageWidth ?? 0;
@@ -236,4 +268,17 @@ export function paintingTextureUrl(p: Painting, px: number): string {
     if (width) return thumbOf(f, width, true);
   }
   return sizedUrl(f, p.imageUrl, px, ow, true);
+}
+
+/**
+ * The file description page behind an upload.wikimedia.org URL (original or
+ * thumbnail): commons.wikimedia.org/wiki/File:… for Commons files,
+ * <lang>.wikipedia.org/wiki/File:… for a file hosted on a Wikipedia. Null
+ * for any other URL.
+ */
+export function wikiFilePage(url: string): string | null {
+  const f = parseWikimedia(url);
+  if (!f) return null;
+  const host = f.project === "commons" ? "commons.wikimedia.org" : `${f.project}.wikipedia.org`;
+  return `https://${host}/wiki/File:${f.file}`;
 }

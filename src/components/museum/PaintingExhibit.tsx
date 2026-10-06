@@ -1,9 +1,26 @@
 "use client";
 
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { inspectTexturePx, paintingTextureUrl, wallTexturePx } from "@/lib/img";
+import {
+  FLAGSHIP_THUMB_PX,
+  inspectTexturePx,
+  nearTexturePx,
+  paintingTextureUrl,
+  THUMB_PX,
+  wallTexturePx,
+} from "@/lib/img";
 import { PLACARD_H, PLACARD_W, WALL_GAP, frameAllowance, placardLocal, type Placement } from "./layout";
 import type { GalleryTheme } from "./theme";
 import { useGalleryEnv } from "./env-store";
@@ -18,53 +35,35 @@ import {
   frameMaterial,
   hasWeave,
 } from "./exhibit-materials";
-import { acquireTexture, placeholderTexture, releaseTexture, scheduleUpload } from "./exhibit-texture";
+import {
+  acquireTexture,
+  placeholderTexture,
+  releaseTexture,
+  scheduleUpload,
+  type FetchPriority,
+} from "./exhibit-texture";
 import {
   PLACARD_T,
   blankPlacardTexture,
   drawPlacard,
+  drawWithheldCanvas,
+  primedCanvasTexture,
   placardFontsReady,
 } from "./exhibit-placard";
-import {
-  canvasGeometry,
-  fixtureGeometry,
-  hallFromPlacement,
-  placardGeometry,
-  planLights,
-  type HallDims,
-} from "./exhibit-geometry";
+import { canvasGeometry, fixtureGeometry, placardGeometry } from "./exhibit-geometry";
+import type { ExhibitLights } from "./exhibit-lights";
 import { createShadowMaterial, shadowQuad } from "./exhibit-shadow";
 import { retainExhibitResources } from "./exhibit-shared";
+import { isInspectFlying } from "./renderer-motion";
+import type { Lod, SuiteRuntime } from "./suite-runtime";
 
 // ------------------------------------------------------------------ tuning
 
-/**
- * Target illuminance-like level at the aim point (spot intensity is solved
- * per fixture as E·d²/cosθ so every work gets the same light, whatever its
- * throw). Tuned for NeutralToneMapping at exposure 1.0.
- */
-const SPOT_E = 3.4;
-const FOCUS_GAIN = 1.3; // the inspected work
-const DIM_GAIN = 0.07; // everything else while inspecting
-const SPOT_PENUMBRA = 0.3;
-/**
- * Pale "white cube" walls (early-modern, post-war) show a spot's pool far more
- * than dark silk or distemper does, and their rooms already have a wall-wash:
- * a softer, slightly dimmer beam keeps the pool from reading as a hard disc.
- */
-function spotTune(era: GalleryTheme["era"]): { level: number; penumbra: number } {
-  return era === "early-modern" || era === "postwar"
-    ? { level: 0.85, penumbra: 0.45 }
-    : { level: 1, penumbra: SPOT_PENUMBRA };
-}
-/** A single head covers works up to this cone half-angle; bigger works get two heads. */
-const SPLIT_HALF_ANGLE = THREE.MathUtils.degToRad(33);
-/** Never open a cone wider than this (it would wash neighbours and the floor). */
-const MAX_HALF_ANGLE = THREE.MathUtils.degToRad(52);
-/** A failed image is retried this many times (after a short, jittered wait). */
-const MAX_RETRIES = 1;
-/** Seconds the inspect fly-in takes; the hi-res upload waits until it lands. */
+/** The inspect fly-in's shortest duration: the hi-res upload never comes
+ *  sooner, and after it, waits for the flight to land (isInspectFlying). */
 const INSPECT_TWEEN_MS = 1400;
+/** While the upload is held, check again this often. */
+const HOLD_POLL_MS = 100;
 /** Keep the hi-res scan this long after leaving inspect, then release it. */
 const HIRES_LINGER_MS = 1500;
 /** Varnish reflectance relative to a clean dielectric (F0 0.04). */
@@ -83,10 +82,14 @@ export interface PaintingExhibitProps {
   focusSlug: string | null;
   registry: Map<string, THREE.Mesh>;
   theme: GalleryTheme;
-  /** Fires exactly once, when the wall texture has loaded or failed. */
+  /** Its track heads (exhibit-lights.ts). Their lights belong to the runtime's pool. */
+  lights: ExhibitLights;
+  /** Spot levels, focus gains, texture tiers and visibility (suite-runtime.ts). */
+  runtime: SuiteRuntime;
+  /** "lite" (a long suite's rooms two away): frame and canvas only. */
+  lod?: Lod;
+  /** Fires exactly once, when the first wall texture has loaded or failed. */
   onSettled?: (slug: string) => void;
-  /** Hall dimensions (for the lighting track); derived from the placement when omitted. */
-  layout?: Partial<HallDims>;
 }
 
 export function PaintingExhibit(props: PaintingExhibitProps) {
@@ -145,15 +148,18 @@ function ExhibitBody({
   focusSlug,
   registry,
   theme,
-  layout,
+  lights,
+  runtime,
+  lod = "full",
   settle,
 }: PaintingExhibitProps & { settle: () => void }) {
+  const full = lod === "full";
   const { painting, w, h } = placement;
   const camera = useThree((s) => s.camera);
   const invalidate = useThree((s) => s.invalidate);
   const env = useGalleryEnv();
   const isFocused = focusSlug === painting.slug;
-  const somethingFocused = focusSlug !== null;
+  const live = runtime.state(painting.slug);
 
   // Props live on layer 1; the main camera must see it (idempotent).
   useEffect(() => {
@@ -180,44 +186,17 @@ function ExhibitBody({
     return { x, y, z: -WALL_GAP };
   }, [placement, frame.outer]);
 
-  // ---- fixtures + spotlights (one per work; two for monumental works)
-  const hall = useMemo(() => hallFromPlacement(placement, layout), [placement, layout]);
-  const spot = spotTune(theme.era);
-  const light = useMemo(() => {
-    const outer = { x0: -w / 2 - frame.outer, x1: w / 2 + frame.outer, y0: -h / 2 - frame.outer, y1: h / 2 + frame.outer };
-    const heads = planLights(placement, hall, outer, frame.canvasZ, {
-      level: SPOT_E * spot.level,
-      penumbra: spot.penumbra,
-      splitAt: SPLIT_HALF_ANGLE,
-      maxHalf: MAX_HALF_ANGLE,
-    });
-    // mean lens position in exhibit-local coordinates (for the analytic shadow)
-    const mean = new THREE.Vector3();
-    heads.forEach((l) => mean.add(l.plan.lens));
-    mean.divideScalar(heads.length).sub(new THREE.Vector3(...placement.position));
-    const c = Math.cos(placement.rotationY);
-    const s = Math.sin(placement.rotationY);
-    const local = new THREE.Vector3(mean.x * c - mean.z * s, mean.y, mean.x * s + mean.z * c);
-    const targets = heads.map((l) => {
-      const o = new THREE.Object3D();
-      o.position.copy(l.plan.target);
-      o.updateMatrixWorld();
-      return o;
-    });
-    return { heads, targets, local };
-  }, [placement, hall, h, w, frame, spot.level, spot.penumbra]);
-
-  const fixtureOrigin = light.heads[0].plan.mount;
+  // ---- track heads (one per work; two for monumental works). Their lights
+  // are pooled in the runtime, which also fades them on and off.
+  const fixtureOrigin = lights.heads[0].plan.mount;
   const fixtureGeo = useMemo(
-    () => fixtureGeometry(light.heads.map((l) => l.plan), light.heads[0].plan.mount),
-    [light],
+    () => fixtureGeometry(lights.heads.map((l) => l.plan), lights.heads[0].plan.mount),
+    [lights],
   );
   useEffect(() => () => fixtureGeo.dispose(), [fixtureGeo]);
   const trackColor = theme.room?.track ?? "#1c1c1d";
   const fixtureMat = useMemo(() => createFixtureMaterial(trackColor, theme.light.spot), [trackColor, theme.light.spot]);
   useEffect(() => () => fixtureMat.dispose(), [fixtureMat]);
-  const spots = useRef<(THREE.SpotLight | null)[]>([]);
-  const gainRef = useRef(1);
 
   // ---- analytic wall shadow
   const shadowMat = useMemo(() => createShadowMaterial(), []);
@@ -225,9 +204,10 @@ function ExhibitBody({
   const shadowGeo = useMemo(() => {
     const fr = { cx: 0, cy: 0, hw: w / 2 + frame.outer, hh: h / 2 + frame.outer, depth: frame.depth };
     const cd = { cx: card.x, cy: card.y, hw: PLACARD_W / 2, hh: PLACARD_H / 2, depth: PLACARD_T };
-    const drop = (frame.depth * (light.local.y - fr.cy)) / Math.max(0.3, light.local.z + WALL_GAP - frame.depth);
+    const local = lights.local;
+    const drop = (frame.depth * (local.y - fr.cy)) / Math.max(0.3, local.z + WALL_GAP - frame.depth);
     const u = shadowMat.uniforms;
-    u.uLight.value.set(light.local.x, light.local.y, light.local.z + WALL_GAP);
+    u.uLight.value.set(local.x, local.y, local.z + WALL_GAP);
     u.uFrame.value.set(fr.cx, fr.cy, fr.hw, fr.hh);
     // gilt: the outer drop is lower than the crest, so the effective occluding
     // edge sits a little below it; floater: the canvas box face is the occluder
@@ -235,35 +215,39 @@ function ExhibitBody({
     u.uCard.value.set(cd.cx, cd.cy, cd.hw, cd.hh);
     u.uCardDepth.value = PLACARD_T;
     return shadowQuad(fr, cd, Math.max(0, drop) + 0.05);
-  }, [w, h, frame, card, light, shadowMat]);
+  }, [w, h, frame, card, lights, shadowMat]);
   useEffect(() => () => shadowGeo.dispose(), [shadowGeo]);
 
-  // ---- focus dimming: damp toward the goal, keep rendering while it moves
-  useEffect(() => {
-    invalidate();
-  }, [focusSlug, invalidate]);
-  useFrame((state, dt) => {
+  // ---- portal culling: the runtime hides the exhibit while no doorway shows it
+  const groupRef = useRef<THREE.Group>(null);
+  useLayoutEffect(() => {
+    runtime.attach(painting.slug, groupRef.current);
+    return () => runtime.attach(painting.slug, null);
+  }, [runtime, painting.slug]);
+
+  // ---- the spot's level and focus gain (both animated by the runtime) drive
+  // the cast shadow and the lens glow. At rest (full light, no focus) the
+  // materials keep their own defaults.
+  const shown = useRef({ gain: 1, level: 1 });
+  useFrame((state) => {
     // The frame binds the probe explicitly (own strength); follow the room's
     // environment dimming (scene.environmentIntensity, 1 at rest) so gilt
     // dims with the hall while a work is inspected.
     if (frameMat.envMap) frameMat.envMapIntensity = frameEnvStrength * state.scene.environmentIntensity;
-    const goal = somethingFocused ? (isFocused ? FOCUS_GAIN : DIM_GAIN) : 1;
-    const cur = gainRef.current;
-    let next = THREE.MathUtils.damp(cur, goal, 3.5, Math.min(dt, 0.1));
-    if (Math.abs(next - goal) < 0.003) next = goal;
-    else state.invalidate();
-    if (next === cur && spots.current[0]?.intensity === light.heads[0].intensity * next) return;
-    gainRef.current = next;
-    light.heads.forEach((l, i) => {
-      const sp = spots.current[i];
-      if (sp) sp.intensity = l.intensity * next;
-    });
-    shadowMat.uniforms.uCast.value = CAST_SHADOW * Math.min(1.2, next);
-    fixtureMat.emissiveIntensity = LENS_GLOW * (0.15 + 0.85 * Math.min(1.3, next));
+    const gain = live?.gain ?? 1;
+    const level = live?.level ?? 1;
+    const s = shown.current;
+    if (gain === s.gain && level === s.level) return;
+    s.gain = gain;
+    s.level = level;
+    shadowMat.uniforms.uCast.value = CAST_SHADOW * Math.min(1.2, gain) * level;
+    // a lamp that is off keeps only a faint glint in its lens
+    const lamp = level >= 1 ? 1 : 0.06 + 0.94 * level;
+    fixtureMat.emissiveIntensity = LENS_GLOW * (0.15 + 0.85 * Math.min(1.3, gain)) * lamp;
   });
 
   return (
-    <group>
+    <group ref={groupRef}>
       <group position={placement.position} rotation-y={placement.rotationY}>
         <mesh geometry={frame.geometry} material={frameMat} />
         <CanvasSurface
@@ -274,97 +258,119 @@ function ExhibitBody({
           z={frame.canvasZ}
           depth={frame.canvasDepth}
           settle={settle}
+          runtime={runtime}
+          artistName={artistName}
         />
-        <Placard artistName={artistName} title={painting.title} year={painting.year} position={[card.x, card.y, card.z]} />
-        <mesh geometry={shadowGeo} material={shadowMat} position-z={-WALL_GAP + 0.0012} layers={PROP_LAYER} renderOrder={1} />
+        {full && (
+          <Placard artistName={artistName} title={painting.title} year={painting.year} copyrighted={painting.copyrighted === true} position={[card.x, card.y, card.z]} />
+        )}
+        {full && (
+          <mesh geometry={shadowGeo} material={shadowMat} position-z={-WALL_GAP + 0.0012} layers={PROP_LAYER} renderOrder={1} />
+        )}
       </group>
 
       {/* track heads: adapter on the rail, stem, knuckle, can aimed at the work */}
-      <mesh geometry={fixtureGeo} material={fixtureMat} position={fixtureOrigin} layers={PROP_LAYER} />
-      {light.heads.map((l, i) => (
-        <group key={i}>
-          <primitive object={light.targets[i]} />
-          <spotLight
-            ref={(el: THREE.SpotLight | null) => {
-              spots.current[i] = el;
-            }}
-            position={l.plan.lens}
-            target={light.targets[i]}
-            angle={l.angle}
-            penumbra={spot.penumbra}
-            decay={2}
-            distance={0}
-            intensity={l.intensity * gainRef.current}
-            color={theme.light.spot}
-            castShadow={false}
-          />
-        </group>
-      ))}
+      {full && <mesh geometry={fixtureGeo} material={fixtureMat} position={fixtureOrigin} layers={PROP_LAYER} />}
     </group>
   );
 }
 
 // ------------------------------------------------------------------ canvas
 
-/** Load `url` (decode off-thread, staggered single upload); null until ready or on failure. */
+/**
+ * Load `url` (decode off-thread, staggered single upload). Switching to
+ * another url keeps the current texture on show until the new one is up (a
+ * thumbnail stays until its wall-resolution version arrives, and back);
+ * a null url drops it. Null until the first texture is ready.
+ *
+ * Transient failures are retried by the loader (per-URL backoff, see
+ * exhibit-texture.ts); onError fires on the first one (so nothing waits on
+ * it meanwhile) or on a permanent failure. Asking for the url again (the
+ * visitor coming back: the tier changes away and back) retries a spent one.
+ */
 function useStreamedTexture(
   url: string | null,
-  opts: { track: boolean; notBefore?: number; onLoad?: () => void; onError?: () => void },
+  opts: {
+    track: boolean;
+    priority?: FetchPriority;
+    /** No upload before this time (performance.now())... */
+    notBefore?: number;
+    /** ...nor while this holds (polled). */
+    hold?: () => boolean;
+    /** A change asks again for a url that failed (the visitor came closer). */
+    epoch?: string;
+    onLoad?: () => void;
+    onError?: () => void;
+  },
 ): THREE.Texture | null {
   const gl = useThree((s) => s.gl);
   const invalidate = useThree((s) => s.invalidate);
-  const [state, setState] = useState<{ url: string; tex: THREE.Texture } | null>(null);
-  // one delayed retry after a failure (Wikimedia answers bursts with 429s)
-  const [attempt, setAttempt] = useState(0);
+  // the texture on show holds one cache reference until it is replaced
+  const [shown, setShown] = useState<{ url: string; tex: THREE.Texture } | null>(null);
+  const shownUrl = useRef<string | null>(null);
+  shownUrl.current = shown?.url ?? null;
   const cbs = useRef(opts);
   cbs.current = opts;
-  const track = opts.track;
+  const { track, priority, epoch } = opts;
 
   useEffect(() => {
-    if (!url) return;
+    if (!shown) return;
+    return () => releaseTexture(shown.url);
+  }, [shown]);
+
+  useEffect(() => {
+    if (!url) {
+      // nothing wanted any more: drop (and so release) what is on show
+      const t = setTimeout(() => setShown(null), 0);
+      return () => clearTimeout(t);
+    }
+    if (shownUrl.current === url) return;
     let alive = true;
+    let owned = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    acquireTexture(url, {
-      track,
-      maxSize: gl.capabilities.maxTextureSize,
-      anisotropy: Math.min(8, gl.capabilities.getMaxAnisotropy()),
-    }).then(
-      (tex) => {
+    const upload = (tex: THREE.Texture) =>
+      scheduleUpload(() => {
         if (!alive) return;
-        const wait = Math.max(0, (cbs.current.notBefore ?? 0) - performance.now());
-        timer = setTimeout(
-          () =>
-            scheduleUpload(() => {
-              if (!alive) return;
-              gl.initTexture(tex);
-              setState({ url, tex });
-              invalidate();
-              cbs.current.onLoad?.();
-            }),
-          wait,
-        );
+        gl.initTexture(tex);
+        owned = true;
+        setShown({ url, tex });
+        invalidate();
+        cbs.current.onLoad?.();
+      });
+    // wait out notBefore, then poll the hold, then queue the upload
+    const whenFree = (tex: THREE.Texture) => {
+      if (!alive) return;
+      const wait = Math.max(0, (cbs.current.notBefore ?? 0) - performance.now());
+      if (wait > 0) timer = setTimeout(() => whenFree(tex), wait);
+      else if (cbs.current.hold?.()) timer = setTimeout(() => whenFree(tex), HOLD_POLL_MS);
+      else upload(tex);
+    };
+    acquireTexture(
+      url,
+      {
+        track,
+        priority,
+        maxSize: gl.capabilities.maxTextureSize,
+        // the renderer's best: canvases are mostly seen at an angle down the walls
+        anisotropy: gl.capabilities.getMaxAnisotropy(),
       },
-      (err) => {
-        if (!alive) return;
-        console.warn("[exhibit] texture failed:", url, err);
-        cbs.current.onError?.();
-        if (attempt < MAX_RETRIES) retry = setTimeout(() => setAttempt((a) => a + 1), 2500 + Math.random() * 2500);
+      () => {
+        // retrying after a transient failure: report it, the loader keeps at it
+        if (alive) cbs.current.onError?.();
       },
-    );
+    ).then(whenFree, (err) => {
+      if (!alive || (err as { name?: string })?.name === "AbortError") return;
+      console.warn("[exhibit] texture failed:", url, err);
+      cbs.current.onError?.();
+    });
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
-      if (retry) clearTimeout(retry);
-      releaseTexture(url);
-      // Forget the texture with the reference: once released the cache may
-      // dispose it (and close its bitmap), so coming back to this url must
-      // wait for a fresh acquire rather than re-binding a dead texture.
-      setState((s) => (s && s.url === url ? null : s));
+      if (!owned) releaseTexture(url);
     };
-  }, [url, track, gl, invalidate, attempt]);
+  }, [url, track, priority, gl, invalidate, epoch]);
 
-  return state && state.url === url ? state.tex : null;
+  return url && shown ? shown.tex : null;
 }
 
 function CanvasSurface({
@@ -375,6 +381,8 @@ function CanvasSurface({
   z,
   depth,
   settle,
+  runtime,
+  artistName,
 }: {
   placement: Placement;
   isFocused: boolean;
@@ -383,22 +391,73 @@ function CanvasSurface({
   z: number;
   depth: number;
   settle: () => void;
+  runtime: SuiteRuntime;
+  artistName: string;
 }) {
   const { painting, w, h } = placement;
+  const slug = painting.slug;
   const invalidate = useThree((s) => s.invalidate);
   const meshRef = useRef<THREE.Mesh>(null);
 
-  const baseUrl = useMemo(() => paintingTextureUrl(painting, wallTexturePx(painting)), [painting]);
-  const hiUrl = useMemo(() => paintingTextureUrl(painting, inspectTexturePx(painting)), [painting]);
+  // Texture tier from the runtime: wall resolution near the visitor, a
+  // thumbnail rooms away, nothing yet for a suite's far rooms before the
+  // doors open.
+  const subscribe = useCallback((cb: () => void) => runtime.subscribeTier(slug, cb), [runtime, slug]);
+  const tier = useSyncExternalStore(subscribe, () => runtime.tier(slug), () => runtime.tier(slug));
+  const gate = runtime.state(slug)?.gate ?? false;
 
-  const base = useStreamedTexture(baseUrl, { track: true, onLoad: settle, onError: settle });
+  const baseUrl = useMemo(() => paintingTextureUrl(painting, wallTexturePx(painting)), [painting]);
+  const nearUrl = useMemo(() => paintingTextureUrl(painting, nearTexturePx(painting)), [painting]);
+  const flagship = placement === runtime.layout.placements[0];
+  const thumbUrl = useMemo(
+    () => paintingTextureUrl(painting, flagship ? FLAGSHIP_THUMB_PX : THUMB_PX),
+    [painting, flagship],
+  );
+  // Inspect: the full original or the 3840 bucket where the GPU takes it
+  // (long side up to 6144 on desktop; 4096 on touch devices, whose memory is
+  // tighter). One hi-res scan at a time, released after leaving inspect.
+  const gl = useThree((s) => s.gl);
+  const maxLong = useMemo(() => {
+    const coarse = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+    return Math.min(gl.capabilities.maxTextureSize, coarse ? 4096 : 6144);
+  }, [gl]);
+  const hiUrl = useMemo(() => paintingTextureUrl(painting, inspectTexturePx(painting, maxLong)), [painting, maxLong]);
+
+  // No image to show (the article has none, or a rights holder's takedown):
+  // nothing to fetch or wait for. The © canvas is drawn here instead.
+  const withheld = !baseUrl;
+  const [panel, setPanel] = useState<THREE.CanvasTexture | null>(null);
+  useEffect(() => {
+    if (!withheld) return;
+    settle();
+    let alive = true;
+    let tex: THREE.CanvasTexture | null = null;
+    placardFontsReady().then(() => {
+      if (!alive) return;
+      tex = drawWithheldCanvas(artistName, painting.title, painting.year, w / h);
+      setPanel(tex);
+      invalidate();
+    });
+    return () => {
+      alive = false;
+      tex?.dispose();
+    };
+  }, [withheld, settle, artistName, painting.title, painting.year, w, h, invalidate]);
+  const wantUrl = tier === "near" ? nearUrl : tier === "wall" ? baseUrl : tier === "thumb" ? thumbUrl : null;
+  const base = useStreamedTexture(wantUrl, {
+    track: tier === "wall",
+    priority: gate ? "high" : tier === "thumb" ? "low" : "auto",
+    epoch: tier,
+    onLoad: settle,
+    onError: settle,
+  });
 
   // Hi-res: requested on inspect, uploaded once the fly-in has landed,
   // released a moment after leaving inspect.
   const [hiWanted, setHiWanted] = useState(false);
   const focusAt = useRef(0);
   useEffect(() => {
-    if (hiUrl === baseUrl) return;
+    if (!hiUrl || hiUrl === baseUrl || hiUrl === wantUrl) return;
     if (isFocused) {
       focusAt.current = performance.now();
       setHiWanted(true);
@@ -406,10 +465,11 @@ function CanvasSurface({
     }
     const id = setTimeout(() => setHiWanted(false), HIRES_LINGER_MS);
     return () => clearTimeout(id);
-  }, [isFocused, hiUrl, baseUrl]);
+  }, [isFocused, hiUrl, baseUrl, wantUrl]);
   const hi = useStreamedTexture(hiWanted ? hiUrl : null, {
     track: false,
     notBefore: focusAt.current + INSPECT_TWEEN_MS,
+    hold: isInspectFlying,
   });
 
   const geometry = useMemo(() => canvasGeometry(w, h, depth), [w, h, depth]);
@@ -434,7 +494,7 @@ function CanvasSurface({
   }, [theme.era, theme.light.spot]);
   useEffect(() => () => material.dispose(), [material]);
 
-  const map = hi ?? base ?? placeholderTexture();
+  const map = withheld ? (panel ?? primedCanvasTexture()) : (hi ?? base ?? placeholderTexture());
   useEffect(() => {
     if (material.map !== map) {
       material.map = map;
@@ -462,11 +522,13 @@ function Placard({
   artistName,
   title,
   year,
+  copyrighted,
   position,
 }: {
   artistName: string;
   title: string;
   year: number | null;
+  copyrighted: boolean;
   position: [number, number, number];
 }) {
   const invalidate = useThree((s) => s.invalidate);
@@ -491,7 +553,7 @@ function Placard({
     let tex: THREE.CanvasTexture | null = null;
     placardFontsReady().then(() => {
       if (!alive) return;
-      tex = drawPlacard(artistName, title, year);
+      tex = drawPlacard(artistName, title, year, copyrighted);
       material.map = tex;
       material.emissiveMap = tex;
       invalidate();
@@ -504,7 +566,7 @@ function Placard({
         tex.dispose();
       }
     };
-  }, [artistName, title, year, material, invalidate]);
+  }, [artistName, title, year, copyrighted, material, invalidate]);
 
   return <mesh geometry={geometry} material={material} position={position} layers={PROP_LAYER} />;
 }

@@ -34,6 +34,15 @@ const browser = await chromium.launch({
   args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", "--autoplay-policy=no-user-gesture-required"],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H } });
+// Never take a real pointer lock: on Windows even a headless Chrome's lock can
+// trap the user's mouse. The stub keeps the app's pointer-lock flow working.
+await page.addInitScript(() => {
+  let locked = null;
+  Object.defineProperty(Document.prototype, "pointerLockElement", { configurable: true, get() { return locked; } });
+  const fire = () => queueMicrotask(() => document.dispatchEvent(new Event("pointerlockchange")));
+  Element.prototype.requestPointerLock = function () { locked = this; fire(); return Promise.resolve(); };
+  Document.prototype.exitPointerLock = function () { locked = null; fire(); };
+});
 const errors = [];
 page.on("console", (m) => m.type() === "error" && errors.push(m.text().slice(0, 160)));
 // Start un-muted (as a first-time visitor would) so the music button and

@@ -1,10 +1,110 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import gsap from "gsap";
 import { INSPECT_SHEET_BREAKPOINT, type Placement } from "./layout";
 import { displayTitle } from "./exhibit-placard";
+import { wikiFilePage } from "@/lib/img";
+import type { Painting } from "@/lib/types";
 import styles from "./museum.module.css";
+
+/** Attribution of the image Wikipedia shows (Wikimedia Commons file page data). */
+interface ImageCredit {
+  author: string | null;
+  license: string;
+  licenseUrl: string | null;
+  page: string;
+}
+
+const TEXT_LICENSE_URL = "https://creativecommons.org/licenses/by-sa/4.0/";
+const ext = { target: "_blank", rel: "noopener noreferrer" } as const;
+
+const isPublicDomain = (license: string) => /^\s*(pd\b|public[\s-]*domain)/i.test(license);
+
+/** "Wikimedia Commons" or "Wikipedia", from the file page's host. */
+function sourceName(page: string): string {
+  try {
+    return new URL(page).hostname === "commons.wikimedia.org" ? "Wikimedia Commons" : "Wikipedia";
+  } catch {
+    return "Wikimedia Commons";
+  }
+}
+
+/** Image and text attribution under the story: who made the photograph or
+ *  scan and under what licence, and the licence of Wikipedia's text. */
+function Credits({ painting: p }: { painting: Painting }) {
+  const credit = (p as Painting & { imageCredit?: ImageCredit | null }).imageCredit ?? null;
+  const page = credit?.page || (p.imageUrl ? wikiFilePage(p.imageUrl) : null);
+  let image: ReactNode = null;
+  if (p.imageUrl && p.copyrighted) {
+    image = (
+      <>
+        Image: as shown on{" "}
+        {page ? (
+          <a href={page} {...ext}>
+            Wikipedia
+          </a>
+        ) : (
+          "Wikipedia"
+        )}{" "}
+        (fair use)
+      </>
+    );
+  } else if (p.imageUrl) {
+    const license = credit?.license?.trim() || "";
+    const pd = license !== "" && isPublicDomain(license);
+    const parts: ReactNode[] = [];
+    if (credit?.author) parts.push(<span key="a">{credit.author}</span>);
+    if (pd) parts.push(<span key="l">Public domain</span>);
+    else if (license)
+      parts.push(
+        credit?.licenseUrl ? (
+          <a key="l" href={credit.licenseUrl} {...ext}>
+            {license}
+          </a>
+        ) : (
+          <span key="l">{license}</span>
+        )
+      );
+    if (page)
+      parts.push(
+        <a key="s" href={page} {...ext}>
+          {sourceName(page)}
+        </a>
+      );
+    if (parts.length)
+      image = (
+        <>
+          Image:{" "}
+          {parts.map((x, i) => (
+            <span key={i}>
+              {i > 0 && " · "}
+              {x}
+            </span>
+          ))}
+        </>
+      );
+  }
+  return (
+    <div className={styles.credits}>
+      {image && <p>{image}</p>}
+      <p>
+        Text:{" "}
+        {p.wikipediaUrl ? (
+          <a href={p.wikipediaUrl} {...ext}>
+            Wikipedia
+          </a>
+        ) : (
+          "Wikipedia"
+        )}
+        ,{" "}
+        <a href={TEXT_LICENSE_URL} {...ext}>
+          CC BY-SA 4.0
+        </a>
+      </p>
+    </div>
+  );
+}
 
 /** The story card beside an inspected painting: a right-hand column on wide
  *  screens, a bottom sheet on narrow ones (see inspectPanelInset in layout.ts,
@@ -97,6 +197,18 @@ export function InspectPanel({
           </button>
           <div className="insp-scroll" ref={scrollRef} key={p.slug}>
             <div className="insp-eyebrow">From the collection</div>
+            {p.copyrighted && (
+              <div
+                className={styles.copyrightTag}
+                title={
+                  p.imageUrl
+                    ? "This work is still in copyright. Image as shown on Wikipedia, for education only."
+                    : "This work is still in copyright: its image isn't shown here"
+                }
+              >
+                © In copyright
+              </div>
+            )}
             <h2 className="insp-title">{displayTitle(p.title, artistName)}</h2>
             {p.year && <div className="insp-year">{p.year}</div>}
             <p className="insp-story">{p.story}</p>
@@ -110,11 +222,17 @@ export function InspectPanel({
                 ))}
               </div>
             )}
-            {p.wikipediaUrl && (
+            {p.wikipediaUrl && p.copyrighted && !p.imageUrl && (
+              <a className={`insp-wiki ${styles.wikiView}`} href={p.wikipediaUrl} target="_blank" rel="noreferrer">
+                View on Wikipedia ↗
+              </a>
+            )}
+            {p.wikipediaUrl && (!p.copyrighted || p.imageUrl) && (
               <a className="insp-wiki" href={p.wikipediaUrl} target="_blank" rel="noreferrer">
                 Source · Wikipedia
               </a>
             )}
+            <Credits painting={p} />
           </div>
           <div className="insp-zoom-hint">
             {touch ? "Pinch to lean in · ✕ to step back" : "Scroll to lean in · Esc to step back"}

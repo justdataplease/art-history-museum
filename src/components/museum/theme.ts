@@ -7,9 +7,12 @@
 export type EraKey =
   | "sacred"
   | "old-master"
+  | "northern"
   | "eighteenth"
   | "nineteenth"
+  | "victorian"
   | "impressionist"
+  | "secession"
   | "early-modern"
   | "postwar";
 
@@ -140,6 +143,32 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       wallWash: 0,
     },
   },
+  // Dutch Golden Age: the Rijksmuseum's slate-blue galleries and the black
+  // ebonised mouldings Rembrandt's and Vermeer's contemporaries framed in.
+  northern: {
+    era: "northern",
+    wall: { color: "#3e4951", roughness: 0.94 },
+    trim: "#252a2d",
+    ceiling: "#e4e0d8",
+    floor: { kind: "oak-dark", tint: "#6a523a" },
+    frame: { style: "wood", color: "#15110e", metalness: 0, roughness: 0.32, width: 0.1 },
+    light: { spot: "#ffdcb0", ambient: "#e9e2d4" },
+    room: {
+      ceiling: "laylight",
+      wallFinish: "plaster",
+      classical: true,
+      pictureRail: true,
+      daylight: "#f7f3ec",
+      daylightLevel: 1.6,
+      track: "#1b1c1d",
+      bench: "leather",
+      benchSeat: "#2a2522",
+      benchFrame: "#1d1916",
+      floorRoughness: 0.32,
+      plankWidth: 0.18,
+      wallWash: 0,
+    },
+  },
   // 18th century: sage-green silk and cream boiserie trim (Wallace Collection).
   eighteenth: {
     era: "eighteenth",
@@ -190,6 +219,32 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       wallWash: 0,
     },
   },
+  // Victorian: peacock-blue silk and carved gilt — the Aesthetic interiors
+  // (Leighton House) the Pre-Raphaelites and Salon painters were hung in.
+  victorian: {
+    era: "victorian",
+    wall: { color: "#26474f", roughness: 0.92 },
+    trim: "#1c2224",
+    ceiling: "#e6e0d3",
+    floor: { kind: "oak-dark", tint: "#6c4f36" },
+    frame: { style: "baroque", color: "#d6ad5c", metalness: 1, roughness: 0.3, width: 0.12 },
+    light: { spot: "#ffdab0", ambient: "#ebe2cf" },
+    room: {
+      ceiling: "laylight",
+      wallFinish: "damask",
+      classical: true,
+      pictureRail: true,
+      daylight: "#fff4e6",
+      daylightLevel: 1.6,
+      track: "#1d1c1a",
+      bench: "leather",
+      benchSeat: "#3a2a24",
+      benchFrame: "#241a14",
+      floorRoughness: 0.3,
+      plankWidth: 0.17,
+      wallWash: 0,
+    },
+  },
   // Impressionists: Orsay-style warm grey under a glazed skylight, pale oak.
   impressionist: {
     era: "impressionist",
@@ -211,6 +266,32 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       benchSeat: "#3a3632",
       benchFrame: "#5a4632",
       floorRoughness: 0.34,
+      plankWidth: 0.2,
+      wallWash: 0,
+    },
+  },
+  // Vienna Secession: deep charcoal walls so the gold reads (the Belvedere's
+  // Klimt room), flat gilt frames, gilded bands for trim.
+  secession: {
+    era: "secession",
+    wall: { color: "#2f2d2b", roughness: 0.9 },
+    trim: "#a8864a",
+    ceiling: "#ecebe7",
+    floor: { kind: "oak-light", tint: "#a58a66" },
+    frame: { style: "tabernacle", color: "#d9b25a", metalness: 1, roughness: 0.3, width: 0.08 },
+    light: { spot: "#ffe0b8", ambient: "#ece6da" },
+    room: {
+      ceiling: "laylight",
+      wallFinish: "paint",
+      classical: false,
+      pictureRail: true,
+      daylight: "#f8f6f0",
+      daylightLevel: 1.6,
+      track: "#1d1c1a",
+      bench: "modern-leather",
+      benchSeat: "#1c1a18",
+      benchFrame: "#a8864a",
+      floorRoughness: 0.32,
       plankWidth: 0.2,
       wallWash: 0,
     },
@@ -270,17 +351,25 @@ const THEMES: Record<EraKey, GalleryTheme> = {
 const ERA_BY_PERIOD: Record<string, EraKey> = {
   "medieval-gothic": "sacred",
   "early-renaissance": "sacred",
+  "northern-renaissance": "sacred",
   "high-renaissance": "old-master",
   mannerism: "old-master",
   baroque: "old-master",
+  "dutch-golden-age": "northern",
   rococo: "eighteenth",
   neoclassicism: "eighteenth",
   romanticism: "nineteenth",
+  "hudson-river-school": "nineteenth",
+  "academic-art": "victorian",
   realism: "nineteenth",
+  "pre-raphaelites": "victorian",
   impressionism: "impressionist",
   "post-impressionism": "impressionist",
+  symbolism: "secession",
+  fauvism: "early-modern",
   expressionism: "early-modern",
   cubism: "early-modern",
+  "abstract-art": "early-modern",
   surrealism: "early-modern",
   "american-modernism": "early-modern",
   "abstract-expressionism": "postwar",

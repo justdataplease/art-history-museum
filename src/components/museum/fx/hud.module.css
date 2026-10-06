@@ -1,0 +1,727 @@
+/* Studio HUD: the tool palette, the tally, the ring round the crosshair.
+   Same language as the museum HUD (MuseumAudio.module.css): dark smoked
+   glass, hairline ivory borders, small spaced capitals, gold accents.
+
+   Stacking: the palette sits above the "click to step inside" overlay
+   (.mus-click-to-start, z 30) so it stays usable while the cursor is free,
+   below the inspect panel (z 25 → hidden while inspecting anyway) and the
+   entry doors (z 200). */
+
+/* --------------------------------------------------------------- palette */
+
+.palette {
+  position: fixed;
+  right: 20px;
+  top: 50%;
+  z-index: 33;
+  width: 188px;
+  padding: 14px 14px 12px;
+  border: 1px solid rgba(233, 221, 194, 0.2);
+  border-radius: 14px;
+  background: rgba(20, 16, 12, 0.66);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #e9ddc2;
+  font-family: var(--sans, system-ui, sans-serif);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  transform: translate(16px, -50%);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease,
+    visibility 0s linear 0.3s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.palette[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(0, -50%);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease,
+    visibility 0s;
+}
+
+.eyebrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 0 8px;
+  font-size: 9px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--gold-soft, #c9ab6e);
+}
+
+.eyebrow small {
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: rgba(233, 221, 194, 0.45);
+}
+
+.section + .section {
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(233, 221, 194, 0.1);
+}
+
+.tools {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.tool {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  height: 52px;
+  padding: 6px 0 5px;
+  border: 1px solid rgba(233, 221, 194, 0.16);
+  border-radius: 10px;
+  background: rgba(233, 221, 194, 0.04);
+  color: rgba(233, 221, 194, 0.75);
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    color 0.2s;
+}
+
+.tool svg {
+  width: 22px;
+  height: 22px;
+}
+
+.tool:hover {
+  border-color: rgba(233, 221, 194, 0.42);
+  color: #f1e7cf;
+}
+
+.tool[data-active="true"] {
+  border-color: var(--gold-soft, #c9ab6e);
+  background: rgba(201, 171, 110, 0.16);
+  color: #f6edd6;
+}
+
+.key {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  font-size: 8px;
+  letter-spacing: 0;
+  color: rgba(233, 221, 194, 0.35);
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 7px;
+}
+
+.swatch {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 50% 46% 52% 44% / 48% 54% 44% 52%;
+  background: var(--c);
+  box-shadow:
+    inset -3px -4px 6px rgba(0, 0, 0, 0.28),
+    inset 2px 3px 4px rgba(255, 255, 255, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+  transition: transform 0.15s;
+}
+
+.swatch:hover {
+  transform: scale(1.12);
+}
+
+.swatch[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1.5px solid #f1e7cf;
+  border-radius: 50%;
+}
+
+.custom {
+  overflow: hidden;
+  background: conic-gradient(from 30deg, #d7261e, #f4c20d, #138a4c, #1d3594, #c4166d, #d7261e);
+}
+
+.custom input {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sizes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.size {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 28px;
+  border: 1px solid rgba(233, 221, 194, 0.16);
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+
+.size span {
+  display: block;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.size[data-active="true"] {
+  border-color: var(--gold-soft, #c9ab6e);
+}
+
+.conservator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(233, 221, 194, 0.24);
+  border-radius: 999px;
+  background: rgba(233, 221, 194, 0.06);
+  color: #e9ddc2;
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  white-space: nowrap;
+  text-transform: uppercase;
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    opacity 0.2s;
+}
+
+.conservator svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.conservator:hover:not(:disabled) {
+  border-color: rgba(233, 221, 194, 0.6);
+  background: rgba(233, 221, 194, 0.12);
+}
+
+.conservator:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.conservator[data-busy="true"] {
+  opacity: 1;
+  border-color: var(--gold-soft, #c9ab6e);
+}
+
+.down {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 4px 0;
+  color: rgba(233, 221, 194, 0.55);
+  font-size: 8.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  transition: color 0.2s;
+}
+
+.down:hover {
+  color: #f1e7cf;
+}
+
+.hint {
+  margin-top: 6px;
+  font-size: 8px;
+  line-height: 1.6;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: center;
+  color: rgba(233, 221, 194, 0.38);
+}
+
+.palette button:focus-visible {
+  outline: 2px solid var(--gold-soft, #c9ab6e);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------- reticle */
+
+/* A ring around the museum's crosshair in the tool's colour. */
+.reticle {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 21;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 2px solid var(--c);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 8px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.2s,
+    transform 0.2s,
+    border-color 0.2s;
+}
+
+.reticle[data-on="true"] {
+  opacity: 0.9;
+  transform: none;
+}
+
+.reticle[data-tool="brush"] {
+  border-style: dashed;
+}
+
+/* held tools (marker, sword): four ticks instead of a ring */
+.reticle[data-held="true"] {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.reticle i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 7px;
+  margin: -3.5px 0 0 -1px;
+  background: var(--c);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+}
+
+.reticle i:nth-child(1) {
+  transform: translateY(-8px);
+}
+.reticle i:nth-child(2) {
+  transform: translateY(8px);
+}
+.reticle i:nth-child(3) {
+  transform: translateX(-8px) rotate(90deg);
+}
+.reticle i:nth-child(4) {
+  transform: translateX(8px) rotate(90deg);
+}
+
+.reticle[data-tool="sword"] i {
+  height: 5px;
+}
+
+/* the marker's hopper, bottom right */
+.balls {
+  position: fixed;
+  right: 26px;
+  bottom: 22px;
+  z-index: 31;
+  font-family: var(--serif, Georgia, serif);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #f1e7cf;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.balls small {
+  margin-left: 3px;
+  font-size: 13px;
+  color: rgba(233, 221, 194, 0.55);
+}
+
+.balls[data-low="true"] {
+  color: #e4826a;
+}
+
+.refilling {
+  font-family: var(--sans, system-ui, sans-serif);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--gold-soft, #c9ab6e);
+}
+
+.hopper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.count {
+  font-family: var(--serif, Georgia, serif);
+  font-size: 20px;
+  font-weight: 600;
+  color: #f1e7cf;
+  font-variant-numeric: tabular-nums;
+}
+
+.count small {
+  font-size: 12px;
+  color: rgba(233, 221, 194, 0.5);
+}
+
+.refill {
+  padding: 6px 12px;
+  border: 1px solid rgba(233, 221, 194, 0.24);
+  border-radius: 999px;
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #e9ddc2;
+  transition: border-color 0.2s;
+}
+
+.refill:hover:not(:disabled) {
+  border-color: rgba(233, 221, 194, 0.6);
+}
+
+.refill:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.team {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 9px;
+  padding: 5px 8px;
+  border: 1px solid rgba(233, 221, 194, 0.16);
+  border-radius: 999px;
+  color: rgba(233, 221, 194, 0.75);
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.team span {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--g);
+  box-shadow: inset -2px -2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.team[data-active="true"] {
+  border-color: var(--gold-soft, #c9ab6e);
+  color: #f6edd6;
+}
+
+/* ---------------------------------------------------------------- tally */
+
+/* What has been done this visit: a slim ledger, top right. */
+.tally {
+  position: fixed;
+  top: 58px;
+  right: 24px;
+  z-index: 31;
+  display: flex;
+  gap: 2px;
+  padding: 6px 4px;
+  border: 1px solid rgba(233, 221, 194, 0.16);
+  border-radius: 10px;
+  background: rgba(14, 11, 8, 0.52);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #e9ddc2;
+  font-family: var(--sans, system-ui, sans-serif);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.tally[data-show="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+.cell {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  min-width: 44px;
+  padding: 0 7px;
+}
+
+.cell + .cell {
+  border-left: 1px solid rgba(233, 221, 194, 0.1);
+}
+
+.cell span {
+  font-size: 7.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--gold-soft, #c9ab6e);
+}
+
+.cell b {
+  font-family: var(--serif, Georgia, serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: #f1e7cf;
+}
+
+.reticle[data-tool="egg"] {
+  border-radius: 50% 50% 46% 46% / 58% 58% 42% 42%;
+}
+
+.tallyInline {
+  display: none;
+}
+
+.tallyInline .cell {
+  min-width: 0;
+  flex: 1;
+}
+
+/* -------------------------------------------------------------- caption */
+
+/* While the panel is out, a subtitle-like line at the bottom: why this only
+   happens here. Never takes a click; the museum's bottom hint yields. */
+.caption {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 32;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 46px 24px calc(env(safe-area-inset-bottom, 0px) + 66px);
+  background: linear-gradient(to top, rgba(8, 6, 4, 0.62), rgba(8, 6, 4, 0.34) 55%, rgba(8, 6, 4, 0));
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 0.45s ease,
+    transform 0.45s ease;
+}
+
+.caption[data-show="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+.caption p {
+  max-width: 860px;
+  margin: 0;
+  font-family: var(--serif, Georgia, serif);
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.55;
+  letter-spacing: 0.02em;
+  text-align: center;
+  text-wrap: balance;
+  color: rgba(233, 229, 222, 0.86);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+}
+
+/* the sign-off: its own line, in the gold accent */
+.caption b {
+  font-family: var(--serif, Georgia, serif);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--gold-soft, #c9ab6e);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+}
+
+.panelOpen :global(.mus-hint),
+.panelOpen :global([data-music-toggle] + div) {
+  opacity: 0 !important;
+  visibility: hidden;
+  transition: opacity 0.3s ease;
+}
+
+/* after the conservator: a short note that fades */
+.toast {
+  position: fixed;
+  left: 50%;
+  top: 30%;
+  z-index: 33;
+  padding: 10px 22px;
+  border: 1px solid rgba(201, 171, 110, 0.35);
+  border-radius: 999px;
+  background: rgba(14, 11, 8, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #efe5cd;
+  font-family: var(--serif, Georgia, serif);
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity 0.6s ease,
+    transform 0.6s ease;
+}
+
+.toast b {
+  font-weight: 500;
+  color: var(--gold-soft, #c9ab6e);
+}
+
+.toast[data-on="true"] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* --------------------------------------------------------- narrow screens */
+
+@media (max-width: 760px) {
+  /* a compact strip above the touch hint: tools, colours, sizes, clean */
+  .palette {
+    top: auto;
+    right: 50%;
+    /* above the caption, which keeps the bottom edge */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 124px);
+    width: min(380px, calc(100vw - 20px));
+    padding: 8px 10px 6px;
+    border-radius: 12px;
+    transform: translate(50%, 12px);
+  }
+  .palette[data-open="true"] {
+    transform: translate(50%, 0);
+  }
+  .eyebrow,
+  .key,
+  .hint {
+    display: none;
+  }
+  .section + .section {
+    margin-top: 7px;
+    padding-top: 7px;
+  }
+  .tools {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+  }
+  .tool {
+    gap: 2px;
+    height: 42px;
+    padding: 4px 0 3px;
+    font-size: 7px;
+    letter-spacing: 0.12em;
+  }
+  .tool svg {
+    width: 18px;
+    height: 18px;
+  }
+  .swatches {
+    grid-template-columns: repeat(9, 1fr);
+    gap: 4px;
+    justify-items: center;
+  }
+  .swatch {
+    width: 26px;
+    height: 26px;
+  }
+  .sizes {
+    justify-content: center;
+  }
+  .conservator {
+    padding: 7px 10px;
+  }
+  .down {
+    margin-top: 2px;
+  }
+  .caption {
+    padding: 30px 14px calc(env(safe-area-inset-bottom, 0px) + 8px);
+  }
+  /* on a phone the caption needs the bottom edge: the music toggle steps aside */
+  .panelOpen :global(div:has(> [data-music-toggle])) {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .caption p {
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+  .caption b {
+    font-size: 12.5px;
+  }
+  .toast {
+    top: 22%;
+    font-size: 13px;
+  }
+  /* the palette shows the hopper here; the top of the screen is the museum's */
+  .balls {
+    display: none;
+  }
+  /* the tally rides in the palette here (the top of the screen is the museum's) */
+  .tally {
+    display: none;
+  }
+  .tallyInline {
+    display: flex;
+    justify-content: center;
+    margin: 0 0 6px;
+  }
+  .cell {
+    min-width: 36px;
+    padding: 0 4px;
+  }
+  .cell b {
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette,
+  .reticle,
+  .tally,
+  .caption,
+  .toast {
+    transition: none;
+    transform: none;
+  }
+  .toast[data-on="true"],
+  .caption[data-show="true"] {
+    transform: none;
+  }
+  .toast {
+    transform: translateX(-50%);
+  }
+  .toast[data-on="true"] {
+    transform: translateX(-50%);
+  }
+}

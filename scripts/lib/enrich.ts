@@ -8,17 +8,21 @@
 //     can be re-uploaded at another resolution under the same URL)
 //   - optionally, out-of-lifetime years replaced by the Wikidata inception (P571)
 //     or cleared when Wikidata has nothing better.
+//   - small sizes cross-checked against the article infobox (Wikidata values
+//     entered in the wrong unit: a 107 cm canvas recorded as 107 mm)
+//   - credit lines (author, licence, file page) for every image and portrait
 // Nothing is invented: every value written is copied from Wikidata / Wikimedia
 // (a multi-panel work recorded per panel is multiplied out), or left null when
 // the sources have nothing usable.
 
 import { fetchJson, sleep } from "./wiki";
+import { fetchFileMeta, type FileMeta, type ImageCredit } from "./credits";
 
 export interface EnrichablePainting {
   slug: string;
   title: string;
   year: number | null;
-  imageUrl: string;
+  imageUrl: string | null;
   imageWidth: number | null;
   imageHeight: number | null;
   wikipediaUrl: string | null;
@@ -27,6 +31,7 @@ export interface EnrichablePainting {
   pageviews?: number | null;
   qid?: string | null;
   imageBytes?: number | null;
+  imageCredit?: ImageCredit | null;
 }
 
 export interface EnrichableArtist {
@@ -36,6 +41,8 @@ export interface EnrichableArtist {
   birthYear: number | null;
   deathYear: number | null;
   paintings: EnrichablePainting[];
+  portraitUrl?: string | null;
+  portraitCredit?: ImageCredit | null;
 }
 
 export interface EnrichOptions {
@@ -45,6 +52,8 @@ export interface EnrichOptions {
   dropForeign?: boolean;
   log?: (msg: string) => void;
   now?: Date;
+  /** File metadata already fetched (scripts/lib/credits.ts), keyed by image URL. */
+  fileMeta?: Map<string, FileMeta>;
 }
 
 export interface EnrichReport {
@@ -70,6 +79,10 @@ export interface EnrichReport {
    * artist (e.g. "The Magpie (Monet)" in Picasso's gallery). "artistSlug/paintingSlug".
    */
   removed: string[];
+  /** Sizes multiplied out of a Wikidata unit slip, confirmed by the article infobox. */
+  unitFixes: string[];
+  /** Images / portraits with a credit line. */
+  withCredit: number;
   failures: string[];
 }
 
@@ -120,7 +133,7 @@ export function createPacer(maxConcurrent: number, minIntervalMs: number) {
 }
 
 const actionApi = createPacer(2, 250); // MediaWiki action API: serial-ish
-const restApi = createPacer(4, 60); // pageviews REST: low concurrency, modest rate
+const restApi = createPacer(8, 25); // pageviews REST: modest concurrency, well under the API limit
 const sparql = createPacer(1, 1000);
 
 function chunks<T>(xs: T[], n: number): T[][] {
@@ -141,7 +154,8 @@ export function titleFromWikipediaUrl(url: string | null): string | null {
 }
 
 /** Commons file name ("Foo bar.jpg") behind an upload.wikimedia.org URL, or null for non-Commons files. */
-export function commonsFileName(imageUrl: string): string | null {
+export function commonsFileName(imageUrl: string | null): string | null {
+  if (!imageUrl) return null;
   try {
     const u = new URL(imageUrl);
     if (u.hostname !== "upload.wikimedia.org") return null;
@@ -473,7 +487,8 @@ async function pageviews(title: string, redirects: string[], win: { start: strin
 // ---------- 0. image file: byte size + current pixel size ----------
 
 /** Wiki project ("commons", "en") and file name behind an upload.wikimedia.org URL (original or thumb). */
-export function wikiFileOf(imageUrl: string): { project: string; file: string } | null {
+export function wikiFileOf(imageUrl: string | null): { project: string; file: string } | null {
+  if (!imageUrl) return null;
   try {
     const u = new URL(imageUrl);
     if (u.hostname !== "upload.wikimedia.org") return null;
@@ -620,6 +635,8 @@ export async function enrichArtists(
     yearChanges: [],
     creatorMismatch: [],
     removed: [],
+    unitFixes: [],
+    withCredit: 0,
     failures: [],
   };
 
@@ -761,6 +778,15 @@ export async function enrichArtists(
   for (let i = all.length - 1; i >= 0; i--) if (!kept.has(all[i].p)) all.splice(i, 1);
   report.paintings = all.length;
 
+  // 3c. sizes far too small for the work: a unit slip in Wikidata?
+  await crossCheckSmallDims(
+    all.map((x) => ({ artistSlug: x.artist.slug, p: x.p })),
+    report
+  );
+
+  // 3d. credit lines for every image and portrait
+  await attachImageCredits(artists, report, opts.fileMeta, log);
+
   // 4. pageviews (articles only)
   const canonTitles = [...new Set(canonicalOf.values())];
   let redirects = new Map<string, string[]>();
@@ -797,7 +823,7 @@ export async function enrichArtists(
   // Stable key order for the new fields (appended after the ingest fields).
   for (const x of all) {
     const p = x.p as unknown as Record<string, unknown>;
-    for (const k of ["widthCm", "heightCm", "pageviews", "qid", "imageBytes"]) {
+    for (const k of ["widthCm", "heightCm", "pageviews", "qid", "imageBytes", "imageCredit"]) {
       const v = p[k] === undefined ? null : p[k];
       delete p[k];
       p[k] = v;
@@ -813,4 +839,98 @@ export async function enrichArtists(
     if (x.p.imageBytes != null) report.withImageBytes++;
   }
   return report;
+}
+
+// ---------- unit slips ----------
+
+const WIKI_API_EN = "https://en.wikipedia.org/w/api.php";
+
+/** Height x width (cm) from an article's Infobox artwork, or null. */
+export function infoboxSizeCm(wikitext: string): { h: number; w: number } | null {
+  const num = (k: string) => {
+    const m = new RegExp(String.raw`\|\s*${k}\s*=\s*([\d.,]+)`, "i").exec(wikitext);
+    return m ? parseFloat(m[1].replace(/,/g, ".")) : null;
+  };
+  const unit = /\|\s*metric_unit\s*=\s*(mm|cm|m)\b/i.exec(wikitext)?.[1]?.toLowerCase() ?? "cm";
+  const f = unit === "mm" ? 0.1 : unit === "m" ? 100 : 1;
+  const h = num("height_metric");
+  const w = num("width_metric");
+  if (h && w) return { h: h * f, w: w * f };
+  const d = /(\d+(?:[.,]\d+)?)\s*(?:cm)?\s*[×x]\s*(\d+(?:[.,]\d+)?)\s*cm\b/i.exec(wikitext);
+  return d ? { h: parseFloat(d[1].replace(",", ".")), w: parseFloat(d[2].replace(",", ".")) } : null;
+}
+
+/**
+ * Works whose Wikidata size makes them smaller than 20 cm: when the article
+ * infobox gives the same proportions ten (or a hundred) times larger, the
+ * Wikidata value was entered in the wrong unit — multiply it out.
+ */
+export async function crossCheckSmallDims(
+  rows: { artistSlug: string; p: EnrichablePainting }[],
+  report: Pick<EnrichReport, "unitFixes" | "failures">
+): Promise<void> {
+  const small = rows.filter(
+    (r) => r.p.widthCm != null && r.p.heightCm != null && Math.max(r.p.widthCm, r.p.heightCm) < 20 && r.p.wikipediaUrl
+  );
+  for (const r of small) {
+    const title = titleFromWikipediaUrl(r.p.wikipediaUrl);
+    if (!title) continue;
+    let wikitext: string | null = null;
+    try {
+      const data = await actionApi(() =>
+        fetchJson<{ parse?: { wikitext?: string } }>(
+          `${WIKI_API_EN}?action=parse&format=json&formatversion=2&redirects=1&prop=wikitext&section=0&page=${encodeURIComponent(title)}`
+        )
+      );
+      wikitext = data?.parse?.wikitext ?? null;
+    } catch (err) {
+      report.failures.push(`infobox ${title}: ${err}`);
+      continue;
+    }
+    const box = wikitext ? infoboxSizeCm(wikitext) : null;
+    if (!box) continue;
+    const ours = Math.max(r.p.widthCm!, r.p.heightCm!);
+    const theirs = Math.max(box.h, box.w);
+    const ratio = theirs / ours;
+    const factor = ratio > 8 && ratio < 12.5 ? 10 : ratio > 80 && ratio < 125 ? 100 : null;
+    if (!factor) continue;
+    const before = `${r.p.widthCm}x${r.p.heightCm}`;
+    r.p.widthCm = round1(r.p.widthCm! * factor);
+    r.p.heightCm = round1(r.p.heightCm! * factor);
+    report.unitFixes.push(
+      `${r.artistSlug}/${r.p.slug}: ${before} -> ${r.p.widthCm}x${r.p.heightCm}cm (Wikidata unit slip; infobox ${box.h}x${box.w}cm)`
+    );
+  }
+}
+
+// ---------- credits ----------
+
+/** imageCredit / portraitCredit from each file's description page; a failed lookup keeps the previous credit. */
+export async function attachImageCredits(
+  artists: EnrichableArtist[],
+  report: Pick<EnrichReport, "withCredit" | "failures">,
+  known: Map<string, FileMeta> = new Map(),
+  log: (m: string) => void = () => {}
+): Promise<Map<string, FileMeta>> {
+  const urls = artists.flatMap((a) => [a.portraitUrl, ...a.paintings.map((p) => p.imageUrl)]).filter((u): u is string => !!u);
+  const need = [...new Set(urls.filter((u) => !known.has(u)))];
+  let meta = known;
+  if (need.length) {
+    log(`fetching credit lines for ${need.length} images (extmetadata, 50/request)`);
+    try {
+      meta = new Map([...known, ...(await fetchFileMeta(need))]);
+    } catch (err) {
+      report.failures.push(`extmetadata: ${err}`);
+      return known;
+    }
+  }
+  const credit = (u: string | null | undefined) => (u ? meta.get(u)?.credit ?? null : null);
+  for (const a of artists) {
+    if ("portraitUrl" in a) a.portraitCredit = credit(a.portraitUrl);
+    for (const p of a.paintings) {
+      p.imageCredit = credit(p.imageUrl);
+      if (p.imageCredit) report.withCredit++;
+    }
+  }
+  return meta;
 }

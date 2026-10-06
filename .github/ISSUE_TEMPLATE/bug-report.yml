@@ -1,0 +1,27 @@
+name: Bug report
+description: Something looks or behaves wrong.
+labels: ["bug"]
+body:
+  - type: input
+    id: url
+    attributes:
+      label: Page
+      placeholder: https://the-virtual-art-gallery.vercel.app/museum/caravaggio
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Browser, OS and GPU / device
+      placeholder: Chrome 140 on Windows 11, RTX 4070
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output or screenshot
+      description: Paste any errors from the browser console, or drop a screenshot.

@@ -3,8 +3,8 @@ import { preload } from "react-dom";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getArtist, getArtistSlugs } from "@/lib/data";
-import { paintingTextureUrl, wallTexturePx } from "@/lib/img";
-import { buildLayout, entryGateSlugs } from "@/components/museum/layout";
+import { FLAGSHIP_THUMB_PX, paintingTextureUrl, wallTexturePx } from "@/lib/img";
+import { buildLayout, entryPreloads } from "@/components/museum/layout";
 import { MuseumApp } from "@/components/museum/MuseumApp";
 
 // Every gallery is prerendered at build time (from the JSON cache when the
@@ -49,17 +49,19 @@ export default async function MuseumPage({ params }: Props) {
   const artist = await loadArtist(slug);
   if (!artist || artist.paintings.length === 0) notFound();
 
-  // Start the first wall textures downloading while the JS bundle loads:
-  // the far-wall flagship plus the two works nearest the doors, with the
-  // exact URLs the gallery will request. PaintingExhibit loads them with
-  // fetch(url, { mode: "cors", credentials: "same-origin" }), which a
-  // crossorigin="anonymous" as="fetch" preload matches.
+  // Start the textures the entry doors wait for downloading while the JS
+  // bundle loads: the flagship (at wall resolution where it hangs in the
+  // entrance room, as a thumbnail rooms away) plus the two works nearest the
+  // doors, with the exact URLs the gallery will request. PaintingExhibit
+  // loads them with fetch(url, { mode: "cors", credentials: "same-origin" }),
+  // which a crossorigin="anonymous" as="fetch" preload matches.
   const layout = buildLayout(artist.paintings);
   const bySlug = new Map(artist.paintings.map((p) => [p.slug, p]));
-  entryGateSlugs(layout, 2).forEach((s, i) => {
+  entryPreloads(layout, 2).forEach(({ slug: s, thumb }, i) => {
     const p = bySlug.get(s);
-    if (!p) return;
-    preload(paintingTextureUrl(p, wallTexturePx(p)), {
+    const url = p && paintingTextureUrl(p, thumb ? FLAGSHIP_THUMB_PX : wallTexturePx(p));
+    if (!url) return; // no image (© canvas): nothing to fetch
+    preload(url, {
       as: "fetch",
       crossOrigin: "anonymous",
       fetchPriority: i === 0 ? "high" : "auto",

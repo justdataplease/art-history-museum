@@ -119,12 +119,17 @@ export interface RailItem {
   want: number;
   /** x of the band point a callout's leader line points at */
   anchor: number;
+  /** where along the band the leader may land (its visible extent) */
+  a0?: number;
+  a1?: number;
 }
 
 export interface RailSpot {
   x: number;
   row: number;
   callout: boolean;
+  /** x where the callout's leader meets the band */
+  lx: number;
 }
 
 type Interval = [number, number];
@@ -136,22 +141,24 @@ function overlaps(iv: Interval[], a: number, b: number): boolean {
 
 function nearestFree(
   iv: Interval[],
+  posts: number[],
   want: number,
   width: number,
   lo: number,
   hi: number,
-  gap: number
+  gap: number,
+  postGap: number
 ): number | null {
   const maxX = hi - width;
   if (maxX < lo) return null;
   const cands = [Math.min(maxX, Math.max(lo, want))];
-  for (const [s, e] of iv) {
-    cands.push(s - gap - width, e + gap);
-  }
+  for (const [s, e] of iv) cands.push(s - gap - width, e + gap);
+  for (const p of posts) cands.push(p - postGap - width, p + postGap);
   let best: number | null = null;
   for (const c of cands) {
     if (c < lo || c > maxX) continue;
     if (overlaps(iv, c - gap, c + width + gap)) continue;
+    if (posts.some((p) => p > c - postGap && p < c + width + postGap)) continue;
     if (best === null || Math.abs(c - want) < Math.abs(best - want)) best = c;
   }
   return best;
@@ -161,8 +168,11 @@ function nearestFree(
  * Place one lane's period titles on a rail of `rows` rows above the bands.
  * Titles that fit inside their band sit on row 0 over it; the rest become
  * callouts, nudged sideways/up to the nearest free slot (never overlapping)
- * and joined to their band by a leader. Titles that cannot be placed within
- * `maxShift` are dropped (they reappear as the user zooms in).
+ * and joined to their band by a leader. Narrow bands are served first (they
+ * have the least room to give), a callout never leaves its own band by more
+ * than `reach` px (or it would read as a neighbour's title), and a raised
+ * callout's leader keeps a clear path down through the rows below it. Titles
+ * that find no such spot are dropped: they reappear as the user zooms in.
  */
 export function placeRail(
   items: RailItem[],
@@ -170,38 +180,59 @@ export function placeRail(
   rows: number,
   gap = 14,
   margin = 8,
-  maxShift = 360
+  reach = 26
 ): Map<string, RailSpot> {
   const out = new Map<string, RailSpot>();
   const occ: Interval[][] = Array.from({ length: rows }, () => []);
+  /** x of leaders rising through each row */
+  const posts: number[][] = Array.from({ length: rows }, () => []);
   const callouts: RailItem[] = [];
   for (const it of items) {
     if (it.inside !== null && !overlaps(occ[0], it.inside - gap, it.inside + it.width + gap)) {
       occ[0].push([it.inside, it.inside + it.width]);
-      out.set(it.id, { x: it.inside, row: 0, callout: false });
+      out.set(it.id, { x: it.inside, row: 0, callout: false, lx: it.anchor });
     } else {
       callouts.push(it);
     }
   }
-  callouts.sort((a, b) => a.anchor - b.anchor);
+  const span = (it: RailItem) => (it.a1 ?? it.anchor) - (it.a0 ?? it.anchor);
+  callouts.sort((a, b) => span(a) - span(b) || a.anchor - b.anchor);
   for (const it of callouts) {
-    let best: { x: number; row: number; cost: number } | null = null;
+    const a0 = it.a0 ?? it.anchor;
+    const a1 = Math.max(a0, it.a1 ?? it.anchor);
+    const lo = Math.max(margin, a0 - reach - it.width);
+    const hi = Math.min(width - margin, a1 + reach + it.width);
+    let best: { x: number; row: number; cost: number; lx: number } | null = null;
     for (let r = 0; r < rows; r++) {
-      const x = nearestFree(occ[r], it.want, it.width, margin, width - margin, gap);
+      const x = nearestFree(occ[r], posts[r], it.want, it.width, lo, hi, gap, 5);
       if (x === null) continue;
-      let cost = Math.abs(x - it.want) + r * 36;
+      const cost = Math.abs(x - it.want) + r * 36;
+      if (best && cost >= best.cost) continue;
+      // the leader lands on the band as close under the title as it can...
+      const target = Math.min(Math.max(x + it.width / 2, a0), a1);
+      let lx: number | null = target;
       if (r > 0) {
-        // the leader drops through the lower rows: keep it off their labels
-        const lx = Math.min(Math.max(it.anchor, x + 6), x + it.width - 6);
-        const a = Math.min(lx, it.anchor) - 3;
-        const b = Math.max(lx, it.anchor) + 3;
-        for (let q = 0; q < r; q++) if (overlaps(occ[q], a, b)) cost += 400;
+        // ...and rises through the lower rows somewhere off their labels
+        const blocked = (c: number) => {
+          for (let q = 0; q < r; q++) if (overlaps(occ[q], c - 3, c + 3)) return true;
+          return false;
+        };
+        if (blocked(target)) {
+          lx = null;
+          for (let q = 0; q < r; q++)
+            for (const [s, e] of occ[q])
+              for (const c of [s - 5, e + 5])
+                if (c >= a0 && c <= a1 && !blocked(c) && (lx === null || Math.abs(c - target) < Math.abs(lx - target)))
+                  lx = c;
+        }
       }
-      if (!best || cost < best.cost) best = { x, row: r, cost };
+      if (lx === null) continue;
+      best = { x, row: r, cost, lx };
     }
-    if (best && best.cost <= maxShift) {
+    if (best) {
       occ[best.row].push([best.x, best.x + it.width]);
-      out.set(it.id, { x: best.x, row: best.row, callout: true });
+      for (let q = 0; q < best.row; q++) posts[q].push(best.lx);
+      out.set(it.id, { x: best.x, row: best.row, callout: true, lx: best.lx });
     }
   }
   return out;

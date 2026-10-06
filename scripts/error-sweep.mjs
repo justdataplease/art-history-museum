@@ -11,6 +11,15 @@ const browser = await chromium.launch({
   args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11"],
 });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+// Never take a real pointer lock: on Windows even a headless Chrome's lock can
+// trap the user's mouse. The stub keeps the app's pointer-lock flow working.
+await page.addInitScript(() => {
+  let locked = null;
+  Object.defineProperty(Document.prototype, "pointerLockElement", { configurable: true, get() { return locked; } });
+  const fire = () => queueMicrotask(() => document.dispatchEvent(new Event("pointerlockchange")));
+  Element.prototype.requestPointerLock = function () { locked = this; fire(); return Promise.resolve(); };
+  Document.prototype.exitPointerLock = function () { locked = null; fire(); };
+});
 page.on("console", (msg) => {
   if (msg.type() === "error" || msg.type() === "warning")
     messages.push(`[${msg.type()}] ${msg.text().slice(0, 260)}`);

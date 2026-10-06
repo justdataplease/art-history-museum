@@ -264,6 +264,30 @@ export function frameScale(w: number, h: number): number {
   return THREE.MathUtils.clamp(0.45 + 0.3 * Math.max(w, h), 0.55, 2.4);
 }
 
+/** A frame's dimensions without its geometry (exactly what buildFrame returns). */
+export function frameMetrics(
+  style: FrameStyle,
+  w: number,
+  h: number,
+  width: number,
+  maxOuter = Infinity,
+): Omit<FrameBuild, "geometry"> {
+  const prof = PROFILES[style] ?? GILT_SIMPLE;
+  const k = prof.fixedScale ? 1 : frameScale(w, h);
+  const sw = prof.fixedScale ? 1 : Math.max(0.4, width / prof.nominalWidth);
+  const lastD = prof.pts[prof.pts.length - 1].d;
+  const sd = Math.min(k * sw, maxOuter / lastD);
+  const sz = k * Math.sqrt(sw);
+  let depth = 0;
+  for (const p of prof.pts) depth = Math.max(depth, p.z * sz);
+  return {
+    canvasZ: prof.canvasZ * sz - WALL_GAP,
+    canvasDepth: (prof.canvasDepth ?? 0) * sz,
+    outer: Math.max(0, lastD * sd),
+    depth,
+  };
+}
+
 /**
  * Sweep the style's profile around a w × h canvas.
  * `width` is the theme's moulding width in metres (ignored for floaters);

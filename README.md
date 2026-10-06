@@ -1,124 +1,124 @@
 # The Timeline Museum
 
-An interactive 3D museum of art history that runs in the browser.
+**An interactive 3D museum of art history that runs in your browser.**
+Zoom through eight centuries on a timeline, open an artist's placard, and walk
+into a first-person gallery hung with their real paintings — every work,
+every date and every word taken from Wikipedia.
 
 **Live:** https://the-virtual-art-gallery.vercel.app
 
-- **The Timeline** — a zoomable, infinite-canvas timeline of 18 art-history periods
-  (Medieval & Gothic → Contemporary) with 72 artists placed at the dates they
-  actually worked. Two switchable views: **Gallery Wall** (period bands with each
-  artist's lifeline, collision-free labels and Wikipedia wall text when you zoom
-  into a period) and **Star Map** (each period a constellation, stars sized by the
-  number of works). Filter by period or artist from the Explore dropdown; click an
-  artist for their museum-placard card.
-- **The Museum** — from any artist card, walk through the doors into a first-person
-  3D gallery hung with their real paintings:
-  - **Era-themed rooms.** Seven gallery styles follow the artist's period: grey
-    stone for gold-ground altarpieces, crimson silk damask for the Baroque, sage
-    silk for the 18th century, deep green distemper for Romanticism, Orsay grey
-    for the Impressionists, off-white for early modernism and a concrete-floored
-    white cube for post-war art. Walls, trim, floor, ceiling (laylight or modern
-    lightbox), benches and frames (tabernacle, carved baroque gilt, slim gilt,
-    hardwood, floater tray) all change with the era.
-  - **Real-scale hanging.** Paintings are hung at their physical size from
-    Wikidata dimensions (width × height, with the photo's proportions as a
-    sanity check). Room size follows the collection: Vermeer gets an intimate
-    7 m room, Veronese's *Wedding at Cana* an 8.6 m wall. The most-viewed work
-    (12 months of Wikipedia pageviews) hangs on the far wall.
-  - **Lighting.** Every work has its own track spotlight, clamped onto the
-    ceiling rail and aimed at the painting (monumental works get two heads);
-    soft analytic wall shadows, a reflection probe of the finished room, a
-    reflective floor, Khronos PBR Neutral tone mapping. No shadow maps.
-  - **Music.** Era-matched recordings from Wikimedia Commons (real performances,
-    freely licensed); each track is credited on screen with composer, performer,
-    licence and a link to its Commons page. Press **M** to mute.
-  - Click a painting to glide into an inspect view with the story and verbatim
-    fun facts; the high-resolution scan loads only then.
+- **26 periods, 233 artists, 7,010 works**, from Cimabue to Banksy
+- **Every illustrated painting article** on English Wikipedia for each artist,
+  hung chronologically at real physical size
+- **Multi-room galleries** for prolific artists — Turner, Titian and Rubens
+  each fill a suite of 16 rooms
+- **Era-styled rooms**, period lighting and era music
+- **Open source** (MIT) — contributions welcome
 
-## Demo
+## The museum
 
-[**demo/museum-demo.mp4**](demo/museum-demo.mp4) (2 min, 1600×900, with sound):
-the Gallery Wall and Star Map, the Explore filter, Caravaggio's placard, then
-walking his Baroque hall and inspecting *The Crucifixion of Saint Peter*, Monet's
-Impressionist room and Rothko's white cube. Recorded from a production build with
-`npm run build` + `node scripts/record-demo.mjs <url> demo/museum-demo.mp4`
-(needs an ffmpeg with libx264 via `FFMPEG=`; set `DEMO_AUDIO_DIR` to mix in each
-room's music).
+### The timeline
 
-Soundtrack — the first track of each room's playlist, as the app plays it, from
-Wikimedia Commons:
+A zoomable, infinite-canvas timeline of 26 art-history periods, Medieval &
+Gothic to Contemporary, with 233 artists placed at the dates they actually
+worked. Two views:
 
-- Giovanni Pierluigi da Palestrina, *Kyrie* from *Missa Sicut lilium inter
-  spinas* — The Tudor Consort,
-  [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)
-  ([source](https://commons.wikimedia.org/wiki/File:The_Tudor_Consort_-_02_-_Palestrina_-_Kyrie_-_Missa_Sicut_lilium_inter_spinas.ogg))
-- Claude Debussy, *Clair de lune* — Laurens Goedhart,
-  [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)
-  ([source](https://commons.wikimedia.org/wiki/File:Clair_de_lune_(Claude_Debussy)_Suite_bergamasque.ogg))
-- Chris Zabriskie, *Prelude No. 10* — Chris Zabriskie,
-  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
-  ([source](https://commons.wikimedia.org/wiki/File:Chris_Zabriskie_-_10_-_Prelude_No_10.ogg))
+- **Gallery Wall** — period bands with each artist's lifeline, collision-free
+  labels, and the period's Wikipedia wall text when you dive in.
+- **Star Map** — each period a constellation; a star's size follows the
+  number of works.
 
-Excerpts are trimmed and faded at the start and end of each room visit.
+Filter by period or search artists from **Explore**; click an artist for their
+museum placard, then **Enter the Gallery**.
+
+### The galleries
+
+- **Every work, in order.** An artist's gallery holds every painting that has
+  an illustrated English Wikipedia article (frescoes, altarpieces and series
+  included). Works hang chronologically; collections over twelve works become a
+  suite of rooms joined by aligned doorways, each signed with its years
+  ("II · 1460 – 1490"), with a room navigator to jump between them.
+- **Real scale.** Paintings hang at their physical size from Wikidata
+  dimensions (5,918 works), with the photo's proportions as a sanity check.
+  The most-viewed work (12 months of Wikipedia pageviews) is the flagship.
+- **Era rooms.** Ten gallery styles follow the artist's period — grey stone for
+  gold-ground altarpieces, crimson damask for the Baroque, the Rijksmuseum's
+  slate blue and black ebony frames for the Dutch Golden Age, sage silk for the
+  18th century, deep green for Romanticism, peacock-blue silk for the
+  Pre-Raphaelites, Orsay grey for the Impressionists, charcoal and gold for
+  Klimt's Vienna, off-white for early modernism and a concrete white cube for
+  post-war art. Walls, trim, floor, ceiling, benches and frames all change.
+- **Lighting.** Each work is lit by a track spotlight aimed at it (big works get
+  two), under a laylight; soft analytic wall shadows, a reflection probe of the
+  finished room, a reflective floor and Khronos PBR Neutral tone mapping.
+- **Up close.** Textures sharpen as you approach a work; click it to glide into
+  an inspect view with the story and verbatim facts from its article, loading
+  the scan at up to 3840 px.
+- **Music.** Era-matched recordings from Wikimedia Commons — real performances,
+  freely licensed, credited on screen (**M** mutes).
+
+### Works still in copyright
+
+557 works are still in copyright — much of Picasso's later work, Dalí,
+Magritte, Pollock, Warhol and others. They hang like every other work, with the
+image Wikipedia shows for them and **"© In copyright"** on the wall label and
+in the inspect view. Where Wikipedia's article has no image at all (128 works),
+a © placard canvas with the title, year and a link to the article hangs in its
+place.
+
+This museum is a non-commercial, educational project built entirely from
+Wikipedia. **Rights holders:** if you'd like an image removed, open a
+[takedown request](https://github.com/justdataplease/museum/issues/new?template=takedown-request.yml)
+and we'll withhold it promptly (the work keeps its place as a © placard; see
+[`src/lib/takedowns.ts`](src/lib/takedowns.ts)).
 
 ## Data — all from Wikipedia
 
-Every period description, artist bio, portrait, painting image, date, story and fun
-fact is pulled from **English Wikipedia, Wikidata and Wikimedia Commons** at ingest
-time. Nothing is AI-generated: stories are article leads, fun facts are verbatim
-sentences from article bodies. 795 paintings across 72 artists; 704 have physical
-dimensions from Wikidata and 764 have pageview counts.
+Every period description, artist bio, portrait, painting, date, story and fact
+is pulled from **English Wikipedia, Wikidata and Wikimedia Commons** by the
+ingest scripts. Nothing is written by hand and nothing is AI-generated:
+stories are article leads, facts are verbatim sentences from article bodies.
 
-## Setup
+- Artists and periods are listed in [`scripts/seed.ts`](scripts/seed.ts) (names
+  only).
+- Works come from Wikidata (creator + painting classes, most-linked first) and
+  each artist's "Paintings by …" category on Wikipedia.
+- Enrichment adds physical size (Wikidata P2049/P2048), 12-month pageviews,
+  Wikidata ids and date sanity checks.
+- Licences: images on Commons are free; files on English Wikipedia are checked
+  for the `NonFree` flag, and those works are labelled "© In copyright".
+
+The snapshot is committed in [`data/cache/museum.json`](data/cache/museum.json),
+so the app runs without network access to Wikipedia or a database.
+
+## Getting started
 
 ```bash
 npm install
-
-# 1. Pull the collection from Wikipedia (resumable; caches per-artist).
-#    A normal ingest also runs the enrichment below.
-npm run ingest
-
-# 1b. Refresh only the Wikidata enrichment (physical size, pageviews, Wikidata
-#     ids, out-of-lifetime date fixes) on the existing cache:
-npm run enrich            # --dry-run, --keep-years, --keep-foreign
-
-# 2. Create .env.local with your Neon Postgres connection string:
-#    DATABASE_URL=postgres://...
-# then load the database (adds width_cm / height_cm / pageviews columns):
-npm run load-db
-
-# 3. Run
-npm run dev
+npm run dev            # http://localhost:3000
 ```
 
-Without `.env.local`, the app transparently falls back to the local ingest cache
-(`data/cache/museum.json`), so it runs end-to-end either way. With `DATABASE_URL`
-set, all reads go through Neon Postgres (`periods`, `artists`, `paintings`).
-Every gallery is prerendered at build time and revalidated hourly.
-
-`load-db` fills staging tables first and then swaps them in with one short
-transaction, so it can run against the live database: readers always see either
-the old collection or the new one in full. Existing galleries pick up reloaded
-data within the hour, but only prerendered slugs are served, so an artist that is
-new to the database gets a gallery at the next build or deploy (`load-db` lists
-new and removed slugs).
-
-## Deploy (Vercel)
-
-Production runs on Vercel: team **JustDataPlease**, project
-**virtual-art-gallery**, domain `the-virtual-art-gallery.vercel.app`. Without
-`DATABASE_URL` it serves the bundled Wikipedia cache; add `DATABASE_URL` in the
-project's environment variables to read from Neon instead.
-
-On the Hobby plan Vercel blocks a CLI deploy whose latest commit author isn't the
-Vercel account owner, so deploy a clean export of `main` (no git metadata):
+That's it — the app reads the bundled snapshot. Optional extras:
 
 ```bash
-mkdir ../vag-deploy && git archive HEAD | tar -x -C ../vag-deploy
-cd ../vag-deploy
-npx vercel link --yes --scope just-data-please --project virtual-art-gallery
-npx vercel deploy --prod --scope just-data-please
+# Re-pull the collection from Wikipedia (resumable; per-artist cache in
+# data/cache/artists). Set WIKI_USER_AGENT first (see .env.example).
+npm run ingest
+
+# Refresh only the enrichment (sizes, pageviews, ids, dates) on the cache.
+npm run enrich             # --dry-run, --keep-years, --keep-foreign
+
+# Mirror the gallery music into public/audio (needs ffmpeg with AAC).
+npm run fetch-music
+
+# Load the snapshot into Postgres (e.g. Neon) and read from it instead:
+# put DATABASE_URL in .env.local, then
+npm run load-db
 ```
+
+`load-db` fills staging tables and swaps them in with one short transaction,
+so it can run against a live database. Every gallery is prerendered at build
+time and revalidated hourly.
 
 ## Controls
 
@@ -126,39 +126,68 @@ npx vercel deploy --prod --scope just-data-please
 |---|---|---|
 | Timeline | scroll / pinch, drag | zoom through time, pan |
 | Timeline | arrows, + / −, 0 | pan, zoom, reset |
-| Timeline | click period band | dive into that period |
-| Timeline | click artist (or Tab + Enter) | open placard card → Enter the Gallery |
-| Museum (desktop) | click "step inside" | lock cursor |
-| Museum (desktop) | W A S D / mouse | walk / look |
-| Museum (desktop) | click painting | inspect (scroll = lean in, Esc = step back) |
-| Museum (touch) | drag | look |
-| Museum (touch) | tap floor / tap painting | walk there / inspect (pinch = lean in) |
-| Museum | M | music on / off |
+| Timeline | click a period | dive into it |
+| Timeline | click an artist (or Tab + Enter) | placard → Enter the Gallery |
+| Gallery (desktop) | click "step inside" | capture the mouse |
+| Gallery (desktop) | W A S D / mouse | walk / look |
+| Gallery | [ ] or Page Up / Page Down | previous / next room |
+| Gallery | click a painting | inspect (scroll = lean in, Esc = step back) |
+| Gallery (touch) | drag | look |
+| Gallery (touch) | tap floor / tap painting | walk there / inspect (pinch = lean in) |
+| Gallery | M | music on / off |
+
+## How it's built
+
+- **Next.js 16** (App Router): the timeline and all 233 galleries are
+  prerendered; data comes from the JSON snapshot or Postgres.
+- **React Three Fiber / three.js** galleries rendered on demand
+  (`frameloop="demand"`): a still visitor costs no frames.
+- **Suites** draw only what can be seen: neighbouring rooms by draw range,
+  exhibits mounted by distance, a fixed pool of spotlights handed to the
+  works in view (no shader recompiles while walking), and textures streamed by
+  distance in tiers (thumbnail → wall → close-up → inspect).
+- **Images** load straight from Wikimedia's CDN at fixed thumbnail widths
+  ([`src/lib/img.ts`](src/lib/img.ts)); nothing is proxied.
 
 ## Performance
 
-Measured with `node scripts/perf-probe.mjs <slug> <baseUrl>` on a production
-build (RTX 4070, headless Chrome, 1600×900). The gallery renders on demand, so
-an idle hall draws nothing; the per-frame numbers are taken while walking.
+Measure with `node scripts/perf-probe.mjs <slug> <baseUrl>` on a production
+build: draw calls per frame, framebuffer binds and idle frames (a still visitor
+should cost 0 frames).
 
-| | Before | Now (caravaggio / monet / rothko) |
-|---|---|---|
-| Draw calls per frame | 368 standing, 297 walking | 72 / 61 / 72 |
-| Framebuffer binds per frame | 14 | 7 |
-| Frames rendered while standing still | every display frame | none (on-demand rendering) |
-| Painting images downloaded | 5.10 MB | 3.18 / 3.64 / 0.24 MB |
-| Last painting image loaded | 7.9 s | 1.4 s |
-| Doors start opening / fully open | 9.0 s / 11.3 s | 2.8–3.0 s / 5.1–5.2 s |
+## Deploy
 
-## Notes
+Any Node host works (`npm run build && npm start`, or the Dockerfile). On
+Vercel, the project builds as-is; set `DATABASE_URL` only if you use Postgres.
 
-- Wikimedia thumbnails are restricted to fixed width buckets; `src/lib/img.ts`
-  snaps every request to an allowed size and sizes wall textures by the work's
-  physical size.
-- Three artists hold fewer than 8 works (de Kooning 6, Hockney 7, Haring 6) — the
-  hard ceiling of illustrated painting articles on Wikipedia for late-modern,
-  still-copyrighted art. Every other gallery hangs 8–12.
-- `node scripts/verify-e2e.mjs [baseUrl]` drives the timeline in Chrome, asserts
-  its behaviour (37 checks) and drops evidence screenshots into
-  `verify-artifacts/`; `node scripts/shot-museum.mjs <slug> <prefix> [baseUrl]`
-  captures a gallery; `node scripts/error-sweep.mjs [baseUrl]` hunts console errors.
+## Tests and tools
+
+- `node scripts/verify-e2e.mjs [baseUrl]` — timeline behaviour checks.
+- `node scripts/suite-check.mjs` — walks a gallery suite: collision, doorways,
+  navigator, inspect.
+- `node scripts/perf-probe.mjs <slug> [baseUrl] [label]` — rendering cost.
+- `node scripts/shot-museum.mjs <slug> <prefix> [baseUrl]` — gallery screenshots.
+- `node scripts/error-sweep.mjs [baseUrl]` — console-error sweep.
+
+## Contributing
+
+Missing an artist or a painting? Found a bug? See
+[CONTRIBUTING.md](CONTRIBUTING.md) — the short version: content comes only
+from Wikipedia, so fixes go into the ingest or the seed list, never into the
+data by hand.
+
+## Licence and credits
+
+Code: [MIT](LICENSE). Content keeps its own licences ([NOTICE.md](NOTICE.md)):
+
+- Text from English Wikipedia — [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/);
+  every artist and work links to its source article.
+- Images from Wikimedia Commons / Wikipedia, each under the licence on its file
+  page. Images of works still in copyright remain the property of their rights
+  holders; they're shown as on Wikipedia, for education, and withheld on request.
+- Music from Wikimedia Commons — public domain, CC0, CC BY and CC BY-SA
+  recordings, credited in the gallery and in
+  [`public/audio/CREDITS.md`](public/audio/CREDITS.md).
+
+With thanks to the Wikipedia, Wikidata and Wikimedia Commons communities, and
+to the musicians who released their recordings freely.

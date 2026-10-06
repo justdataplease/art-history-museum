@@ -8,14 +8,16 @@ import gsap from "gsap";
 import {
   confine,
   EYE_HEIGHT,
+  firstWallHit,
   inspectMaxDist,
   inspectPanelInset,
   inspectPose,
+  planRoute,
   spawnZ,
   type GalleryLayout,
   type Placement,
 } from "./layout";
-import { setMoving } from "./renderer-motion";
+import { setInspectFlying, setMoving } from "./renderer-motion";
 
 // Camera behaviour: the entry walk, first-person movement (pointer lock on
 // desktop, drag-to-look + tap-to-walk on touch), and the inspect fly-to.
@@ -44,6 +46,8 @@ const _floorHit = new THREE.Vector3();
 const _FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const _flat = { x: 0, z: 0 };
 const _hits: THREE.Intersection[] = [];
+/** Waypoints closer than this are reached (the last one eases in instead). */
+const WAYPOINT_REACH = 0.12;
 const _meshes: THREE.Object3D[] = [];
 
 function collect(registry: Map<string, THREE.Mesh>): THREE.Object3D[] {
@@ -53,11 +57,13 @@ function collect(registry: Map<string, THREE.Mesh>): THREE.Object3D[] {
 }
 
 /** Nearest painting under a ray, within `range` (monumental canvases can be
- *  picked from further away, in proportion to their size). */
+ *  picked from further away, in proportion to their size) and not behind a
+ *  suite's cross wall (only through a doorway). */
 function pickPainting(
   ray: THREE.Raycaster,
   registry: Map<string, THREE.Mesh>,
-  range: number
+  range: number,
+  layout: GalleryLayout
 ): { placement: Placement; distance: number } | null {
   _hits.length = 0;
   ray.far = range * 3;
@@ -66,7 +72,41 @@ function pickPainting(
   const placement = hit?.object.userData.placement as Placement | undefined;
   if (!hit || !placement) return null;
   if (hit.distance > Math.max(range, 1.8 * Math.max(placement.w, placement.h))) return null;
+  if (firstWallHit(ray.ray.origin, hit.point, layout)) return null;
   return { placement, distance: hit.distance };
+}
+
+/**
+ * The camera's flight from `from` to `to`: straight when nothing is in the
+ * way (as in a single room), else a smooth curve through the doorways
+ * (planRoute's floor waypoints, the height eased from start to end).
+ */
+function flightPath(
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  layout: GalleryLayout
+): { curve: THREE.Curve<THREE.Vector3> | null; length: number } {
+  if (!firstWallHit(from, to, layout)) return { curve: null, length: from.distanceTo(to) };
+  const floor = planRoute({ x: from.x, z: from.z }, { x: to.x, z: to.z }, layout);
+  const plan = [{ x: from.x, z: from.z }, ...floor];
+  let total = 0;
+  const at = [0];
+  for (let i = 1; i < plan.length; i++) {
+    total += Math.hypot(plan[i].x - plan[i - 1].x, plan[i].z - plan[i - 1].z);
+    at.push(total);
+  }
+  const pts = plan.map((p, i) => {
+    const k = total > 0 ? at[i] / total : 1;
+    return new THREE.Vector3(p.x, THREE.MathUtils.lerp(from.y, to.y, k), p.z);
+  });
+  pts[pts.length - 1].copy(to);
+  const curve = new THREE.CatmullRomCurve3(pts, false, "centripetal");
+  return { curve, length: curve.getLength() };
+}
+
+/** A flight's duration: the usual for a hop within a room, longer through doorways. */
+function flightSeconds(base: number, length: number): number {
+  return base * THREE.MathUtils.clamp(Math.sqrt(length / 7), 1, 1.9);
 }
 
 /** Move the camera to (x, z) on the floor, kept inside the hall and off the benches. */
@@ -249,9 +289,13 @@ export function Player({
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (e.button !== 0 || !walkRef.current || !isLocked()) return;
+      // the click on "step inside" that took the lock, or on a HUD control,
+      // is not aim
+      const t = e.target as Element | null;
+      if (t?.closest?.(".mus-click-to-start, button, a, nav, input")) return;
       camera.updateMatrixWorld();
       ray.setFromCamera(_CENTER, camera);
-      const hit = pickPainting(ray, registry, AIM_RANGE);
+      const hit = pickPainting(ray, registry, AIM_RANGE, layout);
       if (!hit) return;
       halt();
       document.exitPointerLock?.();
@@ -259,7 +303,7 @@ export function Player({
     };
     window.addEventListener("click", onClick);
     return () => window.removeEventListener("click", onClick);
-  }, [camera, onSelect, ray, registry]);
+  }, [camera, layout, onSelect, ray, registry]);
 
   useFrame((_, rawDt) => {
     const ctl = controls.current;
@@ -303,7 +347,7 @@ export function Player({
       aimQuat.current.copy(camera.quaternion);
       camera.updateMatrixWorld();
       ray.setFromCamera(_CENTER, camera);
-      const a = !!pickPainting(ray, registry, AIM_RANGE);
+      const a = !!pickPainting(ray, registry, AIM_RANGE, layout);
       if (a !== aimed.current) {
         aimed.current = a;
         onAim(a);
@@ -338,12 +382,13 @@ export function TouchPlayer({
   const gl = useThree((s) => s.gl);
   const invalidate = useThree((s) => s.invalidate);
   const ray = useMemo(() => new THREE.Raycaster(), []);
-  const target = useRef<THREE.Vector3 | null>(null);
+  /** Remaining waypoints of a tap-to-walk (through doorways, round benches). */
+  const route = useRef<THREE.Vector3[]>([]);
   const enabled = useRef(false);
   useEffect(() => {
     enabled.current = walkEnabled && active;
     if (!enabled.current) {
-      target.current = null;
+      route.current = [];
       setMoving(false);
     }
   }, [walkEnabled, active]);
@@ -371,11 +416,11 @@ export function TouchPlayer({
       _ndc.set(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
       camera.updateMatrixWorld();
       ray.setFromCamera(_ndc, camera);
-      const hit = pickPainting(ray, registry, TAP_RANGE);
+      const hit = pickPainting(ray, registry, TAP_RANGE, layout);
       const floor = ray.ray.intersectPlane(_FLOOR, _floorHit);
       const floorDist = floor ? ray.ray.origin.distanceTo(floor) : Infinity;
       if (hit && hit.distance <= floorDist) {
-        target.current = null;
+        route.current = [];
         setMoving(false);
         onSelect(hit.placement);
         return;
@@ -383,9 +428,18 @@ export function TouchPlayer({
       if (floor) {
         _flat.x = floor.x;
         _flat.z = floor.z;
+        // a tap on a cross wall: walk up to the foot of the wall instead
+        const wall = firstWallHit(ray.ray.origin, floor, layout);
+        if (wall) {
+          _flat.x = wall.x;
+          _flat.z = wall.z + wall.facing * 0.6;
+        }
         confine(_flat, layout);
-        target.current = new THREE.Vector3(_flat.x, EYE_HEIGHT, _flat.z);
-        setMoving(true);
+        const p = camera.position;
+        route.current = planRoute({ x: p.x, z: p.z }, _flat, layout).map(
+          (q) => new THREE.Vector3(q.x, EYE_HEIGHT, q.z)
+        );
+        setMoving(route.current.length > 0);
         invalidate();
       }
     };
@@ -446,27 +500,38 @@ export function TouchPlayer({
     };
   }, [camera, gl, invalidate, layout, onSelect, ray, registry]);
 
+  const lastPos = useRef(new THREE.Vector3());
   useFrame((_, rawDt) => {
-    const t = target.current;
+    const p = camera.position;
+    // a jump to another room (the navigator) cancels a walk in progress
+    const jumped = p.distanceToSquared(lastPos.current) > 4;
+    lastPos.current.copy(p);
+    if (jumped && route.current.length) {
+      route.current = [];
+      setMoving(false);
+    }
+    const t = route.current[0];
     if (!t) return;
     const dt = Math.min(rawDt, MAX_DT);
-    const p = camera.position;
+    const last = route.current.length === 1;
     const dx = t.x - p.x;
     const dz = t.z - p.z;
     const dist = Math.hypot(dx, dz);
-    if (dist < 0.03) {
-      target.current = null;
-      setMoving(false);
+    if (dist < (last ? 0.03 : WAYPOINT_REACH)) {
+      route.current.shift();
+      if (!route.current.length) setMoving(false);
+      invalidate();
       return;
     }
-    // ease out over the last metre or so
-    const step = Math.min(dist, Math.min(TAP_WALK_SPEED, dist * 2.2 + 0.35) * dt);
+    // full pace past waypoints; ease out over the last metre or so
+    const pace = last ? Math.min(TAP_WALK_SPEED, dist * 2.2 + 0.35) : TAP_WALK_SPEED;
+    const step = Math.min(dist, pace * dt);
     const px = p.x;
     const pz = p.z;
     placeOnFloor(camera, px + (dx / dist) * step, pz + (dz / dist) * step, layout);
     if (Math.hypot(p.x - px, p.z - pz) < step * 0.2) {
       // blocked by a bench or wall: stop rather than grind against it
-      target.current = null;
+      route.current = [];
       setMoving(false);
     }
     invalidate();
@@ -559,6 +624,7 @@ export function InspectCamera({
     tween.current?.kill();
     tween.current = null;
     flyEnd.current = null;
+    setInspectFlying(false);
     if (inspect) {
       if (!saved.current) {
         saved.current = { pos: camera.position.clone(), quat: camera.quaternion.clone() };
@@ -570,22 +636,31 @@ export function InspectCamera({
       const startPos = camera.position.clone();
       const startQuat = camera.quaternion.clone();
       const startK = offsetK.current;
+      // through the doorways when the work hangs in another room
+      const path = flightPath(startPos, end.pos, layout);
+      const planned = end.pos.clone();
+      setInspectFlying(true);
       tween.current = gsap.fromTo(
         prog.current,
         { p: 0 },
         {
           p: 1,
-          duration: 1.35,
+          duration: flightSeconds(1.35, path.length),
           ease: "power3.inOut",
           onUpdate: () => {
             const p = prog.current.p;
-            camera.position.lerpVectors(startPos, end.pos, p);
+            if (path.curve) {
+              // follow the curve; a resize retargeting the end blends in
+              path.curve.getPointAt(p, camera.position);
+              camera.position.addScaledVector(_dir.subVectors(end.pos, planned), p);
+            } else camera.position.lerpVectors(startPos, end.pos, p);
             camera.quaternion.slerpQuaternions(startQuat, end.quat, p);
             applyOffset(startK + (1 - startK) * p);
             invalidate();
           },
           onComplete: () => {
             tween.current = null;
+            setInspectFlying(false);
             if (flyEnd.current === end) flyEnd.current = null;
           },
         }
@@ -597,22 +672,26 @@ export function InspectCamera({
       const startPos = camera.position.clone();
       const startQuat = camera.quaternion.clone();
       const startK = offsetK.current;
+      const path = flightPath(startPos, s.pos, layout);
+      setInspectFlying(true);
       tween.current = gsap.fromTo(
         prog.current,
         { p: 0 },
         {
           p: 1,
-          duration: 1.1,
+          duration: flightSeconds(1.1, path.length),
           ease: "power3.inOut",
           onUpdate: () => {
             const p = prog.current.p;
-            camera.position.lerpVectors(startPos, s.pos, p);
+            if (path.curve) path.curve.getPointAt(p, camera.position);
+            else camera.position.lerpVectors(startPos, s.pos, p);
             camera.quaternion.slerpQuaternions(startQuat, s.quat, p);
             applyOffset(startK * (1 - p));
             invalidate();
           },
           onComplete: () => {
             tween.current = null;
+            setInspectFlying(false);
             applyOffset(0);
             onReturnedRef.current();
           },
@@ -626,6 +705,7 @@ export function InspectCamera({
     () => () => {
       tween.current?.kill();
       tween.current = null;
+      setInspectFlying(false);
       if (camera.view?.enabled) camera.clearViewOffset();
     },
     [camera]

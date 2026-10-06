@@ -11,6 +11,7 @@
 // metres-scale distances, so no tile can be spotted on a 28 m wall.
 
 import * as THREE from "three";
+import type { GalleryLayout } from "./layout";
 
 export const ROOM_NOISE_GLSL = /* glsl */ `
 float roomHash(vec3 p) {
@@ -39,19 +40,70 @@ float roomHash2(vec2 p) {
 export const ROOM_AO_PARS = /* glsl */ `
 uniform vec3 uRoomHalf;  // (hallWidth/2, wallHeight, hallLength/2)
 uniform vec3 uRoomAO;    // (strength, radius m, share applied to direct light)
+uniform vec4 uCross;     // the suite's cross walls nearest the visitor: centre planes (far away when absent)
+uniform vec3 uDoor;      // their doorways: half width, height; the walls' half depth
 varying vec3 vRoomPos;
 varying vec3 vRoomNrm;
 float roomEdge(float d) {
   return 1.0 - uRoomAO.x * exp(-max(d, 0.0) / uRoomAO.y);
 }
+// distance to the solid part of the cross wall centred on plane c (the
+// doorway opening excepted; nothing from within the wall's own depth)
+float roomCrossDist(float c, vec3 p) {
+  float dz = abs(p.z - c) - uDoor.z;
+  if (dz < 0.0) return 1e4;
+  float dx = p.y < uDoor.y ? max(0.0, uDoor.x - abs(p.x)) : 0.0;
+  return length(vec2(dz, dx));
+}
+// distance to the nearest cross-wall face
+float roomCrossFace(vec3 p) {
+  return min(min(abs(p.z - uCross.x), abs(p.z - uCross.y)), min(abs(p.z - uCross.z), abs(p.z - uCross.w))) - uDoor.z;
+}
 float roomAO(vec3 p, vec3 n) {
   vec3 an = abs(n);
   float ax = roomEdge(uRoomHalf.x - abs(p.x));
   float ay = roomEdge(p.y) * roomEdge(uRoomHalf.y - p.y);
-  float az = roomEdge(uRoomHalf.z - abs(p.z));
+  float az = roomEdge(uRoomHalf.z - abs(p.z))
+    * roomEdge(roomCrossDist(uCross.x, p))
+    * roomEdge(roomCrossDist(uCross.y, p))
+    * roomEdge(roomCrossDist(uCross.z, p))
+    * roomEdge(roomCrossDist(uCross.w, p));
   return mix(ax, 1.0, an.x) * mix(ay, 1.0, an.y) * mix(az, 1.0, an.z);
 }
 `;
+
+/**
+ * Where the suite's cross walls stand, for ROOM_AO_PARS (uCross / uDoor).
+ * The same two vectors are shared by every room material, so moving the
+ * window of four walls nearest the visitor (setCrossWindow) updates them
+ * all at once; a single room keeps them far away.
+ */
+export interface CrossWalls {
+  cross: THREE.Vector4;
+  door: THREE.Vector3;
+}
+
+const FAR_AWAY = 1e4;
+
+/** Cross walls (doorways) the AO window holds at once. */
+export const CROSS_SLOTS = 4;
+
+/** uCross / uDoor for a layout, holding its first CROSS_SLOTS cross walls. */
+export function crossWalls(layout: Pick<GalleryLayout, "doorways">): CrossWalls {
+  const d0 = layout.doorways[0];
+  const cw: CrossWalls = {
+    cross: new THREE.Vector4(FAR_AWAY, FAR_AWAY, FAR_AWAY, FAR_AWAY),
+    door: new THREE.Vector3(d0?.halfWidth ?? 0, d0?.height ?? 0, d0 ? d0.thickness / 2 : 0),
+  };
+  setCrossWindow(cw, layout, 0);
+  return cw;
+}
+
+/** Point the AO at the cross walls first..first+CROSS_SLOTS-1 (far away past the end). */
+export function setCrossWindow(cw: CrossWalls, layout: Pick<GalleryLayout, "doorways">, first: number): void {
+  const z = (i: number) => layout.doorways[first + i]?.z ?? FAR_AWAY;
+  cw.cross.set(z(0), z(1), z(2), z(3));
+}
 
 export const ROOM_AO_APPLY = /* glsl */ `
 {
@@ -76,6 +128,8 @@ export interface RoomPatchOptions {
   /** Unique key per shader variant (three caches programs by it). */
   key: string;
   roomHalf: THREE.Vector3;
+  /** A suite's cross walls (see crossWalls); none when omitted. */
+  cross?: CrossWalls;
   /** strength, radius (m), share of direct light affected */
   ao: [number, number, number];
   /** Albedo mottle amplitude (0 = off). */
@@ -108,6 +162,9 @@ export function patchRoomMaterial<T extends THREE.MeshStandardMaterial>(
   const uniforms: Record<string, THREE.IUniform> = {
     uRoomHalf: { value: opts.roomHalf.clone() },
     uRoomAO: { value: new THREE.Vector3(...opts.ao) },
+    // shared by reference: the window of cross walls moves for all materials
+    uCross: { value: (opts.cross ?? crossWalls({ doorways: [] })).cross },
+    uDoor: { value: (opts.cross ?? crossWalls({ doorways: [] })).door },
     uMottle: { value: new THREE.Vector2(opts.mottle ?? 0, opts.mottleScale ?? 0.45) },
     uShadowGap: {
       value: new THREE.Vector2(opts.shadowGap?.bottom ?? 0, opts.shadowGap?.top ?? 0),

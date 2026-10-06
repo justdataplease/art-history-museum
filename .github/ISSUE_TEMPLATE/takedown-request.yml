@@ -1,0 +1,30 @@
+name: Copyright / takedown request
+description: You hold the rights to a work shown here and want its image removed.
+title: "Takedown: "
+labels: ["takedown"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The Timeline Museum is a non-commercial, educational project built from Wikipedia.
+        Works still in copyright are shown with the image Wikipedia uses and labelled "© In copyright".
+        We withhold an image promptly on the rights holder's request; the work keeps its place as a © placard.
+  - type: input
+    id: work
+    attributes:
+      label: Work
+      description: English Wikipedia article of the work
+      placeholder: https://en.wikipedia.org/wiki/...
+    validations:
+      required: true
+  - type: input
+    id: holder
+    attributes:
+      label: Rights holder
+      description: Who holds the rights (you, or whom you represent)
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else

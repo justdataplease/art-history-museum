@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { BlurPass } from "@react-three/drei/materials/BlurPass";
-import { ROOM_AO_APPLY, ROOM_AO_PARS, ROOM_NOISE_GLSL } from "./room-shading";
+import { crossWalls, ROOM_AO_APPLY, ROOM_AO_PARS, ROOM_NOISE_GLSL, type CrossWalls } from "./room-shading";
 import { concreteTexture, woodGrainTexture } from "./textures";
 import type { GalleryTheme } from "./theme";
 
@@ -40,10 +40,12 @@ interface FloorProps {
   theme: GalleryTheme;
   /** A wooden floor's grain, owned by the caller (the benches share it). */
   grain?: THREE.Texture;
+  /** A suite's cross walls (room AO along their foot). */
+  cross?: CrossWalls;
 }
 
 function createFloorMaterial(
-  { W, L, H, theme, grain }: FloorProps,
+  { W, L, H, theme, grain, cross }: FloorProps,
   tReflect: THREE.Texture,
   tReflectBlur: THREE.Texture,
   textureMatrix: THREE.Matrix4
@@ -77,6 +79,9 @@ function createFloorMaterial(
     uOrigin: { value: new THREE.Vector2(-W / 2, -L / 2) },
     uRoomHalf: { value: new THREE.Vector3(W / 2, H, L / 2) },
     uRoomAO: { value: new THREE.Vector3(0.55, 0.32, 0.25) },
+    // shared with the room materials (Room moves the window of cross walls)
+    uCross: { value: (cross ?? crossWalls({ doorways: [] })).cross },
+    uDoor: { value: (cross ?? crossWalls({ doorways: [] })).door },
   };
 
   mat.onBeforeCompile = (shader) => {
@@ -236,7 +241,7 @@ export function ReflectiveFloor(props: FloorProps) {
     const { mat, ownMap, uniforms } = createFloorMaterial(props, fbo1.texture, fbo2.texture, tmp.textureMatrix);
     return { fbo1, fbo2, blur, mat, ownMap, uniforms };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gl, props.W, props.L, props.H, props.theme, props.grain, tmp]);
+  }, [gl, props.W, props.L, props.H, props.theme, props.grain, props.cross, tmp]);
 
   useEffect(() => {
     const entry = { uniforms: res.uniforms, mix: res.uniforms.uReflectMix.value };

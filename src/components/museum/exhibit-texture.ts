@@ -10,8 +10,17 @@
 // - Ref-counted cache with a short release delay: StrictMode's double effects
 //   and quick back-navigation reuse the decoded image; unused textures are
 //   disposed (and their bitmaps closed) shortly after the last user leaves.
-// - Failures reject (no Suspense, no thrown render errors) and are not cached,
-//   so a later visit retries.
+// - Transient failures (HTTP 429 / 5xx, network errors: Wikimedia answers
+//   bursts with 429s) are retried with exponential backoff and jitter,
+//   honouring Retry-After when the response exposes it: MAX_ATTEMPTS over
+//   roughly a minute and a half. The backoff is kept per URL, not per
+//   exhibit, so remounts and other users of the same image wait their turn
+//   instead of hammering it. Once the budget is spent the load rejects (no
+//   Suspense, no thrown render errors) and is not cached; the next acquire
+//   (the visitor coming back) starts a new budget after a short cool-off.
+// - A load nobody wants any more (its exhibit unmounted, its tier changed) is
+//   aborted after a short grace, which StrictMode's double effects and a quick
+//   tier flip back fall within.
 
 import * as THREE from "three";
 
@@ -21,33 +30,126 @@ interface Entry {
   texture: THREE.Texture | null;
   bitmap: ImageBitmap | null;
   timer: ReturnType<typeof setTimeout> | null;
+  /** Aborts the fetch (and any backoff wait) while still loading. */
+  abort: AbortController;
+  loading: boolean;
+  /** A transient failure happened: retries are under way. */
+  stalled: boolean;
+  stallSubs: Set<() => void>;
 }
 
 const entries = new Map<string, Entry>();
 const RELEASE_DELAY_MS = 4000;
+/** A load whose last user left is aborted after this grace. */
+const ABORT_GRACE_MS = 300;
+
+// ---- retry budget, per URL
+/** Fetch attempts per approach (the first included). */
+const MAX_ATTEMPTS = 6;
+/** First backoff step; doubles per failure (3, 6, 12, 24, 48 s; ~1-1.5 min with jitter). */
+const BACKOFF_BASE_MS = 3000;
+const BACKOFF_MAX_MS = 60000;
+/** Wait before a new approach may retry a URL that spent its budget. */
+const COOL_OFF_MS = 15000;
+
+interface Backoff {
+  failures: number;
+  /** performance.now() before which the URL is not fetched again. */
+  nextAt: number;
+}
+const backoff = new Map<string, Backoff>();
+
+export type FetchPriority = "high" | "low" | "auto";
 
 export interface LoadOptions {
   /** Report progress to three's DefaultLoadingManager (drei useProgress). */
   track?: boolean;
+  /** Fetch priority hint: the doors' gate works first, far rooms' thumbnails last. */
+  priority?: FetchPriority;
   /** Longest side allowed (renderer maxTextureSize); larger images are downscaled while decoding. */
   maxSize?: number;
   anisotropy?: number;
+}
+
+/** A response that was not ok, with the server's Retry-After (ms) when readable. */
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number | null,
+    url: string,
+  ) {
+    super(`HTTP ${status} loading ${url}`);
+  }
+}
+
+/** Decoding (not fetching) failed: retrying would not help. */
+class DecodeError extends Error {}
+
+function parseRetryAfter(v: string | null): number | null {
+  if (!v) return null;
+  const secs = Number(v);
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  const at = Date.parse(v);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
+function isAbort(err: unknown): boolean {
+  return (err as { name?: string } | null)?.name === "AbortError";
+}
+
+function retryable(err: unknown): boolean {
+  if (isAbort(err) || err instanceof DecodeError) return false;
+  if (err instanceof HttpError) {
+    return err.status === 408 || err.status === 425 || err.status === 429 || err.status >= 500;
+  }
+  return true; // a network error (fetch's TypeError, or an <img> error)
+}
+
+function abortError(): Error {
+  const e = new Error("aborted");
+  e.name = "AbortError";
+  return e;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(abortError());
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(abortError());
+    };
+    const t = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function hasBitmapDecode(): boolean {
   return typeof createImageBitmap === "function" && typeof fetch === "function";
 }
 
-async function decodeBitmap(url: string, maxSize: number): Promise<ImageBitmap> {
-  const res = await fetch(url, { mode: "cors", credentials: "same-origin" });
-  if (!res.ok) throw new Error(`HTTP ${res.status} loading ${url}`);
+async function decodeBitmap(
+  url: string,
+  maxSize: number,
+  priority: FetchPriority,
+  signal: AbortSignal,
+): Promise<ImageBitmap> {
+  const res = await fetch(url, { mode: "cors", credentials: "same-origin", priority, signal });
+  if (!res.ok) throw new HttpError(res.status, parseRetryAfter(res.headers.get("Retry-After")), url);
   const blob = await res.blob();
   const opts: ImageBitmapOptions = {
     imageOrientation: "flipY",
     premultiplyAlpha: "none",
     colorSpaceConversion: "default",
   };
-  let bmp = await createImageBitmap(blob, opts);
+  let bmp: ImageBitmap;
+  try {
+    bmp = await createImageBitmap(blob, opts);
+  } catch (err) {
+    throw new DecodeError(`Could not decode ${url}: ${(err as Error)?.message ?? err}`);
+  }
   const long = Math.max(bmp.width, bmp.height);
   if (long > maxSize) {
     // Downscale off-thread rather than letting three resize on a 2D canvas.
@@ -89,9 +191,14 @@ function hasImagePreload(url: string): boolean {
   return false;
 }
 
-async function decodeSource(url: string, maxSize: number): Promise<ImageBitmap | HTMLImageElement> {
+async function decodeSource(
+  url: string,
+  maxSize: number,
+  priority: FetchPriority,
+  signal: AbortSignal,
+): Promise<ImageBitmap | HTMLImageElement> {
   if (!hasBitmapDecode()) return decodeImage(url);
-  if (!hasImagePreload(url)) return decodeBitmap(url, maxSize);
+  if (!hasImagePreload(url)) return decodeBitmap(url, maxSize, priority, signal);
   // An image preload only matches an <img> request: load through one, then
   // convert to a flipped bitmap so the upload stays a plain copy.
   const img = await decodeImage(url);
@@ -115,22 +222,53 @@ async function decodeSource(url: string, maxSize: number): Promise<ImageBitmap |
   }
 }
 
-function makeTexture(src: ImageBitmap | HTMLImageElement, anisotropy: number): THREE.Texture {
-  const t = new THREE.Texture(src as unknown as HTMLImageElement);
-  // ImageBitmaps were flipped by the decoder; <img> sources flip on upload.
-  t.flipY = !(typeof ImageBitmap !== "undefined" && src instanceof ImageBitmap);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = anisotropy;
-  t.generateMipmaps = true;
-  t.minFilter = THREE.LinearMipmapLinearFilter;
-  t.magFilter = THREE.LinearFilter;
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.needsUpdate = true;
-  return t;
+/**
+ * Fetch and decode `url`, retrying transient failures within the URL's
+ * budget (see the header). Rejects with the last error once it is spent, at
+ * once for a permanent one, and with an AbortError when aborted.
+ */
+async function loadWithRetry(
+  url: string,
+  maxSize: number,
+  priority: FetchPriority,
+  signal: AbortSignal,
+  onStall: () => void,
+): Promise<ImageBitmap | HTMLImageElement> {
+  for (let attempt = 1; ; attempt++) {
+    const b = backoff.get(url);
+    const now = performance.now();
+    if (b && b.nextAt > now) await sleep(b.nextAt - now, signal);
+    try {
+      const src = await decodeSource(url, maxSize, priority, signal);
+      backoff.delete(url);
+      return src;
+    } catch (err) {
+      if (signal.aborted || isAbort(err)) throw abortError();
+      if (!retryable(err)) throw err;
+      const st = backoff.get(url) ?? { failures: 0, nextAt: 0 };
+      st.failures++;
+      const step = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (st.failures - 1));
+      // "equal jitter": half the step fixed, half random
+      let wait = step / 2 + Math.random() * (step / 2);
+      const ra = err instanceof HttpError ? err.retryAfterMs : null;
+      if (ra != null) wait = Math.min(2 * BACKOFF_MAX_MS, Math.max(wait, ra));
+      const spent = attempt >= MAX_ATTEMPTS;
+      // a spent budget: the next approach starts afresh after a cool-off
+      if (spent) st.failures = 0;
+      st.nextAt = performance.now() + (spent ? Math.max(COOL_OFF_MS, ra ?? 0) : wait);
+      backoff.set(url, st);
+      if (spent) throw err;
+      onStall();
+    }
+  }
 }
 
-/** Load (or reuse) the texture for `url`. Pair every call with releaseTexture(url). */
-export function acquireTexture(url: string, opts: LoadOptions = {}): Promise<THREE.Texture> {
+/**
+ * Load (or reuse) the texture for `url`. Pair every call with releaseTexture(url).
+ * `onStall` fires (once) when a transient failure has the load retrying,
+ * so a caller waiting on it can stop waiting while the retries go on.
+ */
+export function acquireTexture(url: string, opts: LoadOptions = {}, onStall?: () => void): Promise<THREE.Texture> {
   const existing = entries.get(url);
   if (existing) {
     existing.refs++;
@@ -138,16 +276,39 @@ export function acquireTexture(url: string, opts: LoadOptions = {}): Promise<THR
       clearTimeout(existing.timer);
       existing.timer = null;
     }
+    if (onStall) {
+      if (existing.stalled && existing.loading) queueMicrotask(onStall);
+      else if (existing.loading) existing.stallSubs.add(onStall);
+    }
     return existing.promise;
   }
   const manager = THREE.DefaultLoadingManager;
   const track = !!opts.track;
   if (track) manager.itemStart(url);
-  const entry: Entry = { refs: 1, promise: null as unknown as Promise<THREE.Texture>, texture: null, bitmap: null, timer: null };
+  const entry: Entry = {
+    refs: 1,
+    promise: null as unknown as Promise<THREE.Texture>,
+    texture: null,
+    bitmap: null,
+    timer: null,
+    abort: new AbortController(),
+    loading: true,
+    stalled: false,
+    stallSubs: new Set(onStall ? [onStall] : []),
+  };
+  const stall = () => {
+    if (entry.stalled) return;
+    entry.stalled = true;
+    const subs = [...entry.stallSubs];
+    entry.stallSubs.clear();
+    subs.forEach((cb) => cb());
+  };
   entry.promise = (async () => {
     try {
       const maxSize = opts.maxSize ?? 4096;
-      const src = await decodeSource(url, maxSize);
+      const src = await loadWithRetry(url, maxSize, opts.priority ?? "auto", entry.abort.signal, stall);
+      entry.loading = false;
+      entry.stallSubs.clear();
       if (typeof ImageBitmap !== "undefined" && src instanceof ImageBitmap) entry.bitmap = src;
       const tex = makeTexture(src, opts.anisotropy ?? 8);
       tex.name = url;
@@ -164,9 +325,15 @@ export function acquireTexture(url: string, opts: LoadOptions = {}): Promise<THR
       }
       return tex;
     } catch (err) {
+      entry.loading = false;
+      entry.stallSubs.clear();
+      if (entry.timer) {
+        clearTimeout(entry.timer);
+        entry.timer = null;
+      }
       if (entries.get(url) === entry) entries.delete(url); // don't cache failures
       if (track) {
-        manager.itemError(url);
+        if (!isAbort(err)) manager.itemError(url);
         manager.itemEnd(url);
       }
       throw err;
@@ -176,8 +343,32 @@ export function acquireTexture(url: string, opts: LoadOptions = {}): Promise<THR
   return entry.promise;
 }
 
+function makeTexture(src: ImageBitmap | HTMLImageElement, anisotropy: number): THREE.Texture {
+  const t = new THREE.Texture(src as unknown as HTMLImageElement);
+  // ImageBitmaps were flipped by the decoder; <img> sources flip on upload.
+  t.flipY = !(typeof ImageBitmap !== "undefined" && src instanceof ImageBitmap);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = anisotropy;
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.needsUpdate = true;
+  return t;
+}
+
 function scheduleRelease(url: string, entry: Entry) {
   if (entry.timer) clearTimeout(entry.timer);
+  if (entry.loading) {
+    // nobody wants it any more: stop the download (and any backoff wait)
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      if (entry.refs > 0 || !entry.loading) return;
+      if (entries.get(url) === entry) entries.delete(url);
+      entry.abort.abort();
+    }, ABORT_GRACE_MS);
+    return;
+  }
   entry.timer = setTimeout(() => {
     entry.timer = null;
     if (entry.refs > 0 || entries.get(url) !== entry) return;
@@ -197,6 +388,24 @@ function scheduleRelease(url: string, entry: Entry) {
  */
 export function disposeCachedTextures(): void {
   for (const e of entries.values()) if (e.refs === 0) e.texture?.dispose();
+}
+
+/** Painting textures alive in the cache and their estimated GPU bytes
+ *  (RGBA8 with mipmaps): what the gallery holds right now. */
+export function textureStats(): { textures: number; held: number; mb: number; loading: number; backoff: number } {
+  let textures = 0;
+  let held = 0;
+  let bytes = 0;
+  let loading = 0;
+  for (const e of entries.values()) {
+    if (e.loading) loading++;
+    const img = e.texture?.image as { width?: number; height?: number } | undefined;
+    if (!img?.width || !img.height) continue;
+    textures++;
+    if (e.refs > 0) held++;
+    bytes += img.width * img.height * 4 * (4 / 3);
+  }
+  return { textures, held, mb: +(bytes / 1e6).toFixed(1), loading, backoff: backoff.size };
 }
 
 export function releaseTexture(url: string): void {

@@ -120,6 +120,7 @@ const Star = memo(function Star(s: StarProps) {
     );
   }
   const hit = Math.max(22, s.P + 6);
+  const halo = Math.min(s.r * 9, 26 + s.r * 4);
   return (
     <button
       type="button"
@@ -133,7 +134,8 @@ const Star = memo(function Star(s: StarProps) {
       }}
     >
       <span className="hit" style={{ width: hit, height: hit }} />
-      <span className="halo" style={{ width: s.r * 9, height: s.r * 9, animationDelay: s.tw }} />
+      {/* the glow grows more slowly than the star, so the brightest don't flood their neighbours */}
+      <span className="halo" style={{ width: halo, height: halo, animationDelay: s.tw }} />
       <span className="core" style={{ width: s.r * 2.2, height: s.r * 2.2 }} />
       {s.P > 0 && (
         <span className="ring" style={{ width: s.P, height: s.P }}>

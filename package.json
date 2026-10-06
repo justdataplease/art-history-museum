@@ -1,14 +1,26 @@
 {
-  "name": "museum",
+  "name": "timeline-museum",
   "version": "0.1.0",
   "private": true,
+  "description": "An interactive 3D museum of art history in the browser: a zoomable timeline of 26 periods and walkable galleries of real paintings, all from Wikipedia.",
+  "license": "MIT",
+  "homepage": "https://the-virtual-art-gallery.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/justdataplease/museum.git"
+  },
+  "bugs": {
+    "url": "https://github.com/justdataplease/museum/issues"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "ingest": "tsx scripts/ingest.ts",
     "load-db": "tsx scripts/load-db.ts",
-    "enrich": "tsx scripts/enrich.ts"
+    "enrich": "tsx scripts/enrich.ts",
+    "repair-data": "tsx scripts/repair-data.ts",
+    "fetch-music": "tsx scripts/fetch-music.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

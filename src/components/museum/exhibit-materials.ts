@@ -391,12 +391,15 @@ export function canvasRoughness(era: EraKey): number {
     case "sacred":
       return 0.5;
     case "old-master":
+    case "northern":
       return 0.5;
     case "eighteenth":
       return 0.52;
     case "nineteenth":
+    case "victorian":
       return 0.54;
     case "impressionist":
+    case "secession":
       return 0.6;
     case "early-modern":
       return 0.62;

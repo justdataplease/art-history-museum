@@ -1,0 +1,82 @@
+/* A slim, unlabeled field near the bottom centre: smoked glass, a hairline
+   ivory border, typed characters masked. Above the click-to-start overlay,
+   below the entry doors. */
+
+.field {
+  position: fixed;
+  left: 50%;
+  bottom: 92px;
+  z-index: 60;
+  width: 128px;
+  height: 26px;
+  padding: 0 14px;
+  border: 1px solid rgba(233, 221, 194, 0.22);
+  border-radius: 999px;
+  background: rgba(8, 6, 3, 0.58);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #e9ddc2;
+  caret-color: var(--gold-soft, #c9ab6e);
+  font: 500 13px/24px var(--sans, system-ui, sans-serif);
+  letter-spacing: 0.32em;
+  text-align: center;
+  outline: none;
+  -webkit-text-security: disc;
+  transform: translateX(-50%) translateY(6px);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease,
+    border-color 0.2s;
+}
+
+.field[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
+.field:focus {
+  border-color: rgba(233, 221, 194, 0.42);
+}
+
+.field[data-wrong="true"] {
+  animation: shudder 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  border-color: rgba(200, 80, 60, 0.6);
+}
+
+@keyframes shudder {
+  10%,
+  90% {
+    transform: translateX(calc(-50% - 1px));
+  }
+  20%,
+  80% {
+    transform: translateX(calc(-50% + 3px));
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(calc(-50% - 6px));
+  }
+  40%,
+  60% {
+    transform: translateX(calc(-50% + 6px));
+  }
+}
+
+@media (max-width: 760px) {
+  .field {
+    bottom: 140px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field {
+    transition: none;
+  }
+  .field[data-wrong="true"] {
+    animation: none;
+  }
+}

@@ -41,6 +41,22 @@ export function frameYears(startYear: number, endYear: number, width: number): T
   return { k, x: width / 2 - ((mid - YEAR_MIN) / YEAR_SPAN) * width * k, y: 0 };
 }
 
+/** The years a dive into `p` frames: the period and a slim margin either side. */
+export function diveYears(p: Period): [number, number] {
+  const pad = Math.max(1.5, (p.endYear - p.startYear) * 0.07);
+  return [p.startYear - pad, p.endYear + pad];
+}
+
+/**
+ * How much of the screen's width `p` fills once dived into: most of it, but
+ * less for the shortest periods (Fauvism's six years), where the zoom tops out.
+ */
+export function diveFill(p: Period): number {
+  const [a, b] = diveYears(p);
+  const k = Math.min(K_MAX * 0.9, Math.max(K_MIN, YEAR_SPAN / Math.max(1, b - a)));
+  return Math.min(1, ((p.endYear - p.startYear) * k) / YEAR_SPAN);
+}
+
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 export function smoothstep(e0: number, e1: number, v: number): number {
@@ -50,24 +66,75 @@ export function smoothstep(e0: number, e1: number, v: number): number {
 
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-/** Greedy interval lane packing so overlapping periods stack vertically. */
-export function assignLanes(periods: Period[]): {
+/**
+ * Interval lane packing so overlapping periods stack vertically. A lane is as
+ * tall as its biggest period, so periods are placed biggest first, each into
+ * the lane it fits whose tallest period is the closest above it (best fit):
+ * small periods fill the gaps beside big ones instead of opening lanes of
+ * their own. Lanes are then ordered by their earliest period. Pure and
+ * deterministic (no zoom input), so both views keep one stable arrangement.
+ */
+export function assignLanes(
+  periods: Period[],
+  sizes?: Map<string, number>
+): {
   lanes: Map<string, number>;
   laneCount: number;
 } {
-  const sorted = [...periods].sort((a, b) => a.startYear - b.startYear);
-  const laneEnds: number[] = [];
-  const lanes = new Map<string, number>();
-  for (const p of sorted) {
-    let lane = laneEnds.findIndex((end) => end <= p.startYear + 2);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(0);
+  const n = (p: Period) => sizes?.get(p.slug) ?? 0;
+  const span = (p: Period) => p.endYear - p.startYear;
+  const order = [...periods].sort(
+    (a, b) => n(b) - n(a) || span(b) - span(a) || a.startYear - b.startYear || a.slug.localeCompare(b.slug)
+  );
+  // two periods may share a lane when they overlap by at most two years
+  const fits = (l: Period[], p: Period) =>
+    l.every((q) => q.endYear <= p.startYear + 2 || p.endYear <= q.startYear + 2);
+  const packed: { list: Period[]; max: number }[] = [];
+  for (const p of order) {
+    let best: (typeof packed)[number] | null = null;
+    for (const l of packed) {
+      if (!fits(l.list, p)) continue;
+      if (!best || l.max - n(p) < best.max - n(p)) best = l;
     }
-    laneEnds[lane] = p.endYear;
-    lanes.set(p.slug, lane);
+    if (!best) {
+      best = { list: [], max: n(p) };
+      packed.push(best);
+    }
+    best.list.push(p);
   }
-  return { lanes, laneCount: Math.max(1, laneEnds.length) };
+  const first = (l: Period[]) => Math.min(...l.map((p) => p.startYear));
+  packed.sort((a, b) => first(a.list) - first(b.list) || b.max - a.max);
+  const lanes = new Map<string, number>();
+  packed.forEach((l, i) => l.list.forEach((p) => lanes.set(p.slug, i)));
+  return { lanes, laneCount: Math.max(1, packed.length) };
+}
+
+/**
+ * Each period's own stretch of its lane, in years: split at the midpoint of
+ * the gap (or overlap) to the neighbouring periods in the same lane, open
+ * (±Infinity) at the lane's ends. Rows and stars stay inside it, so the
+ * neighbours' artists can never interleave.
+ */
+export function laneSlots(
+  periods: Period[],
+  lanes: Map<string, number>,
+  laneCount: number
+): Map<string, { fs: number; fe: number }> {
+  const byLane: Period[][] = Array.from({ length: laneCount }, () => []);
+  for (const p of periods) byLane[lanes.get(p.slug) ?? 0].push(p);
+  const out = new Map<string, { fs: number; fe: number }>();
+  for (const list of byLane) {
+    list.sort((a, b) => a.startYear - b.startYear);
+    list.forEach((p, i) => {
+      const prev = list[i - 1];
+      const next = list[i + 1];
+      out.set(p.slug, {
+        fs: prev ? (prev.endYear + p.startYear) / 2 : -Infinity,
+        fe: next ? (p.endYear + next.startYear) / 2 : Infinity,
+      });
+    });
+  }
+  return out;
 }
 
 /** The stretch of years an artist was plausibly active (from Wikipedia dates). */

@@ -64,3 +64,15 @@ export function createSettleTracker(): SettleTracker {
     },
   };
 }
+
+// ------------------------------------------------------- inspect flight
+
+/** The inspect camera is flying (to a work or back). A hi-res scan holds its
+ *  GPU upload until the flight has landed: a 4K texture's upload and mipmap
+ *  generation would otherwise drop frames mid-flight (a cross-room fly-in
+ *  takes up to ~2.5 s). Per-frame readers poll it; no React subscription. */
+let flying = false;
+export function setInspectFlying(next: boolean): void {
+  flying = next;
+}
+export const isInspectFlying = (): boolean => flying;

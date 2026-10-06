@@ -1,11 +1,55 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import gsap from "gsap";
 import type { Artist, Period } from "@/lib/types";
 import { wikiSrcSet } from "@/lib/img";
 import { artistYears } from "./artist-meta";
+
+/** Who made the portrait and under what licence (Wikimedia Commons). */
+interface PortraitCredit {
+  author: string | null;
+  license: string;
+  licenseUrl: string | null;
+  page: string;
+}
+
+/** The credit, when the data carries one (read defensively: older snapshots don't). */
+function portraitCredit(a: Artist): PortraitCredit | null {
+  const c = (a as Artist & { portraitCredit?: PortraitCredit | null }).portraitCredit;
+  if (!c || typeof c !== "object" || typeof c.page !== "string" || !c.page) return null;
+  return {
+    author: typeof c.author === "string" && c.author.trim() ? c.author.trim() : null,
+    license: typeof c.license === "string" ? c.license.trim() : "",
+    licenseUrl: typeof c.licenseUrl === "string" && c.licenseUrl ? c.licenseUrl : null,
+    page: c.page,
+  };
+}
+
+const isPublicDomain = (license: string) => /public\s*domain|^pd(\b|-)/i.test(license);
+
+/** "Portrait: {author} · {licence}", the author linked to the file page, the licence to its text. */
+function Credit({ c }: { c: PortraitCredit }) {
+  const pd = isPublicDomain(c.license);
+  const license = pd ? "Public domain" : c.license || "see file page";
+  return (
+    <p className="card-credit">
+      Portrait:{" "}
+      <a href={c.page} target="_blank" rel="noopener noreferrer">
+        {c.author ?? "Wikimedia Commons"}
+      </a>
+      {" · "}
+      {!pd && c.licenseUrl ? (
+        <a href={c.licenseUrl} target="_blank" rel="noopener noreferrer license">
+          {license}
+        </a>
+      ) : (
+        license
+      )}
+    </p>
+  );
+}
 
 // Warm the 3D gallery's JavaScript (three.js + r3f + drei) once per session
 // while the visitor reads the placard, so "Enter the Gallery" is instant.
@@ -30,6 +74,8 @@ export function ArtistCard({
   const backdropRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const enterRef = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
   const closingRef = useRef(false);
   const router = useRouter();
   const titleId = useId();
@@ -54,7 +100,7 @@ export function ArtistCard({
         "-=0.2"
       )
       .fromTo(
-        cardRef.current!.querySelectorAll(".card-inner > *"),
+        cardRef.current!.querySelectorAll(".card-body > *, .card-actions"),
         { opacity: 0, y: 14 },
         { opacity: 1, y: 0, duration: 0.4, stagger: 0.05, ease: "power2.out" },
         "-=0.3"
@@ -90,6 +136,21 @@ export function ArtistCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artist.slug]);
 
+  // "more below": the body scrolls on under the actions
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const check = () => setMore(el.scrollTop + el.clientHeight < el.scrollHeight - 2);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", check);
+      ro.disconnect();
+    };
+  }, [artist.slug]);
+
   function close() {
     if (closingRef.current) return;
     closingRef.current = true;
@@ -116,6 +177,7 @@ export function ArtistCard({
   const showYears = !!years && !/\b1\d{3}\b|\b20\d{2}\b/.test(artist.tagline);
   // 168 x 200 arch, object-fit: cover -> ~200 css px wide is plenty at 1x
   const portrait = artist.portraitUrl ? wikiSrcSet(artist.portraitUrl, 200, artist.portraitWidth) : null;
+  const credit = portrait ? portraitCredit(artist) : null;
 
   return (
     <div
@@ -135,53 +197,58 @@ export function ArtistCard({
         <button type="button" className="card-close" onClick={close} aria-label="Close">
           ✕
         </button>
-        <div className="card-inner">
-          <div className="card-portrait">
-            {portrait && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={portrait.src}
-                srcSet={portrait.srcSet}
-                width={168}
-                height={200}
-                alt={`Portrait of ${artist.name}`}
-                decoding="async"
-              />
+        {/* the frame holds a scrolling body and the actions, which stay in view */}
+        <div className={`card-inner${more ? " more" : ""}`}>
+          <div className="card-body" ref={bodyRef}>
+            <div className="card-portrait">
+              {portrait && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={portrait.src}
+                  srcSet={portrait.srcSet}
+                  width={168}
+                  height={200}
+                  alt={`Portrait of ${artist.name}`}
+                  decoding="async"
+                />
+              )}
+            </div>
+            {credit && <Credit c={credit} />}
+            <h2 className="card-name" id={titleId}>
+              {artist.name}
+            </h2>
+            <div className="card-sub">
+              {artist.tagline}
+              {showYears && (
+                <>
+                  <br />
+                  {years}
+                </>
+              )}
+            </div>
+            <div className="card-rule" aria-hidden>
+              ❦
+            </div>
+            <p className="card-bio">{bioShort}</p>
+            {period && (
+              <span
+                className="card-period-tag"
+                style={{ color: period.color, borderColor: `${period.color}88` }}
+              >
+                {period.name}
+              </span>
             )}
           </div>
-          <h2 className="card-name" id={titleId}>
-            {artist.name}
-          </h2>
-          <div className="card-sub">
-            {artist.tagline}
-            {showYears && (
-              <>
-                <br />
-                {years}
-              </>
+          <div className="card-actions">
+            <button ref={enterRef} type="button" className="card-enter" onClick={enter}>
+              Enter the Gallery →
+            </button>
+            {artist.wikipediaUrl && (
+              <a className="card-wiki" href={artist.wikipediaUrl} target="_blank" rel="noreferrer">
+                Source · Wikipedia
+              </a>
             )}
           </div>
-          <div className="card-rule" aria-hidden>
-            ❦
-          </div>
-          <p className="card-bio">{bioShort}</p>
-          {period && (
-            <span
-              className="card-period-tag"
-              style={{ color: period.color, borderColor: `${period.color}88` }}
-            >
-              {period.name}
-            </span>
-          )}
-          <button ref={enterRef} type="button" className="card-enter" onClick={enter}>
-            Enter the Gallery →
-          </button>
-          <br />
-          {artist.wikipediaUrl && (
-            <a className="card-wiki" href={artist.wikipediaUrl} target="_blank" rel="noreferrer">
-              Source · Wikipedia
-            </a>
-          )}
         </div>
       </div>
     </div>

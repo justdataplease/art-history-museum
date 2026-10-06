@@ -67,3 +67,272 @@
     padding: 10px 22px;
   }
 }
+
+/* A suite's room navigator ("‹ Room 4 of 16 · 1530–1535 ›"): a child of the
+   top bar, hung just below it, so it clears the title card however tall that
+   grows (a long name wraps on a phone). The bar sits above the "step inside"
+   overlay (z 30), so it stays usable there. The pill is dark enough for its
+   gold label to keep >= 4.5:1 over the brightest laylight behind it (the
+   blur's backdrop is replaced by a solid pseudo-element so the open list can
+   blur the page itself). */
+.roomNav {
+  position: absolute;
+  top: calc(100% - 6px);
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  color: var(--light);
+  border: 1px solid rgba(199, 169, 122, 0.4);
+  border-radius: 999px;
+  isolation: isolate;
+  transform: translateX(-50%);
+  transition: opacity 0.4s ease;
+  pointer-events: auto;
+}
+
+.roomNav::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: rgba(10, 9, 8, 0.8);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.roomNavHidden.roomNavHidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.roomNav button:focus-visible {
+  outline: 2px solid var(--gold-soft);
+  outline-offset: 2px;
+}
+
+.roomNavBtn {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gold-soft);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.roomNavBtn:hover:not(:disabled),
+.roomNavLabel:hover:not(:disabled) {
+  background: rgba(199, 169, 122, 0.14);
+}
+
+.roomNavBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.roomNavLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.roomNavLabel b {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  color: var(--gold-soft);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  /* the serif's old-style "1" reads as a dotless ı at this size */
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.roomNavOf {
+  font-family: var(--sans, inherit);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: var(--light);
+  opacity: 0.7;
+}
+
+.roomNavYears {
+  opacity: 0.85;
+}
+
+/* entering a room: the label glows up for a moment */
+.roomNavPulse {
+  animation: roomNavPulse 2.4s ease;
+}
+
+@keyframes roomNavPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(199, 169, 122, 0.55);
+    background: rgba(199, 169, 122, 0.22);
+  }
+  100% {
+    box-shadow: 0 0 0 14px rgba(199, 169, 122, 0);
+    background: transparent;
+  }
+}
+
+/* The open list stands above everything under the bar (the "step inside"
+   title included): near-opaque, and blurred where it is not. */
+.roomList {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 1;
+  width: 260px;
+  max-width: calc(100vw - 32px);
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid rgba(199, 169, 122, 0.4);
+  border-radius: 12px;
+  background: rgba(12, 11, 9, 0.96);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  transform: translateX(-50%);
+}
+
+.roomList button {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--light);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.roomList button b {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--gold-soft);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.roomList button:hover,
+.roomList button:focus-visible,
+.roomList button[aria-current="location"] {
+  background: rgba(199, 169, 122, 0.16);
+}
+
+.roomList button:focus-visible {
+  outline-offset: -2px;
+}
+
+/* the jump between rooms: a quick fade through black */
+.teleportFade {
+  position: absolute;
+  inset: 0;
+  z-index: 35;
+  background: #050403;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.26s ease;
+}
+
+.teleportFadeOn {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roomNavPulse {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .roomNav {
+    top: calc(100% - 10px);
+    gap: 0;
+    padding: 2px;
+  }
+  .roomNavLabel {
+    gap: 8px;
+    padding: 6px 8px;
+    letter-spacing: 0.16em;
+  }
+  .roomNavBtn {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+/* Inspect panel, a work still in copyright: the tag above the title and a
+   clear way to see the image on Wikipedia. */
+.copyrightTag {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 4px 10px;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--gold-ink);
+  border: 1px solid rgba(165, 127, 70, 0.45);
+  border-radius: 999px;
+}
+
+.wikiView.wikiView {
+  margin-top: 20px;
+  font-size: 11.5px;
+  color: var(--gold-ink);
+  border-bottom-color: rgba(165, 127, 70, 0.75);
+}
+
+/* Inspect panel: image and text attribution, a quiet footnote under the
+   source link (--ink-soft: 5.9:1 on the panel). */
+.credits {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(165, 127, 70, 0.22);
+  font-size: 11px;
+  line-height: 1.55;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.credits p + p {
+  margin-top: 3px;
+}
+
+.credits a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(165, 127, 70, 0.45);
+}
+
+.credits a:hover,
+.credits a:focus-visible {
+  color: var(--ink);
+  border-bottom-color: var(--gold-ink);
+}

@@ -9,7 +9,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { TRACK_DROP, TRACK_INSET, type GalleryLayout } from "./layout";
+import { roomAt, TRACK_DROP, TRACK_INSET, type GalleryLayout } from "./layout";
 import type { GalleryTheme } from "./theme";
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -266,15 +266,18 @@ export interface CeilingSpec {
   beamW: number;
   beamDepth: number;
   panes: [number, number];
+  /** The room's own extent along the hall (its far and near wall faces). */
+  z0: number;
+  z1: number;
 }
 
-export function ceilingSpec(layout: GalleryLayout, theme: GalleryTheme): CeilingSpec {
-  const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
+/** The ceiling of one room spanning z0..z1 (far and near wall faces). */
+function roomCeilingSpec(W: number, H: number, z0: number, z1: number, theme: GalleryTheme): CeilingSpec {
   const railX = W / 2 - TRACK_INSET;
   if (theme.room.ceiling === "laylight") {
     const wellX = Math.min(railX - 0.42, W / 2 - 1.6);
-    const wellZ0 = -L / 2 + TRACK_INSET + 0.75;
-    const wellZ1 = L / 2 - TRACK_INSET - 0.75;
+    const wellZ0 = z0 + TRACK_INSET + 0.75;
+    const wellZ1 = z1 - TRACK_INSET - 0.75;
     const len = wellZ1 - wellZ0;
     const n = Math.max(2, Math.round(len / 3.5));
     const beamW = 0.22;
@@ -294,12 +297,14 @@ export function ceilingSpec(layout: GalleryLayout, theme: GalleryTheme): Ceiling
       beamW,
       beamDepth: 0.34,
       panes: [4, 3],
+      z0,
+      z1,
     };
   }
   // lightbox: one long shallow diffuser down the middle of a flat ceiling
   const wellX = 0.75;
-  const wellZ0 = -L / 2 + TRACK_INSET + 0.6;
-  const wellZ1 = L / 2 - TRACK_INSET - 0.6;
+  const wellZ0 = z0 + TRACK_INSET + 0.6;
+  const wellZ1 = z1 - TRACK_INSET - 0.6;
   const len = wellZ1 - wellZ0;
   const n = Math.max(2, Math.round(len / 2.4));
   const bays: { z0: number; z1: number }[] = [];
@@ -318,30 +323,44 @@ export function ceilingSpec(layout: GalleryLayout, theme: GalleryTheme): Ceiling
     beamW: 0,
     beamDepth: 0,
     panes: [1, 1],
+    z0,
+    z1,
   };
 }
 
+/** One ceiling (laylight well or lightbox) per room of the suite, entrance first. */
+export function ceilingSpecs(layout: GalleryLayout, theme: GalleryTheme): CeilingSpec[] {
+  return layout.rooms.map((r) => roomCeilingSpec(layout.hallWidth, layout.wallHeight, r.z0, r.z1, theme));
+}
+
+/** The entrance room's ceiling (the whole hall's, for a single room). */
+export function ceilingSpec(layout: GalleryLayout, theme: GalleryTheme): CeilingSpec {
+  return ceilingSpecs(layout, theme)[0];
+}
+
 /** The emissive glass (laylight panes / lightbox diffuser), one quad per bay. */
-export function buildGlass(spec: CeilingSpec): THREE.BufferGeometry {
+export function buildGlass(specs: CeilingSpec | CeilingSpec[]): THREE.BufferGeometry {
   const b = new GeoBatch();
-  const halfBeam = spec.beamW / 2;
-  spec.bays.forEach((bay, i) => {
-    const z0 = bay.z0 + (i === 0 ? 0 : halfBeam);
-    const z1 = bay.z1 - (i === spec.bays.length - 1 ? 0 : halfBeam);
-    const g = new THREE.BufferGeometry();
-    const x0 = -spec.wellX;
-    const x1 = spec.wellX;
-    const y = spec.yGlass;
-    g.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute([x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1], 3)
-    );
-    g.setAttribute("normal", new THREE.Float32BufferAttribute([0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0], 3));
-    g.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
-    // (x0,z0)→(x1,z0)→(x1,z1): +x × +z = -y, so the quad faces down
-    g.setIndex([0, 1, 2, 0, 2, 3]);
-    b.add(g);
-  });
+  for (const spec of Array.isArray(specs) ? specs : [specs]) {
+    const halfBeam = spec.beamW / 2;
+    spec.bays.forEach((bay, i) => {
+      const z0 = bay.z0 + (i === 0 ? 0 : halfBeam);
+      const z1 = bay.z1 - (i === spec.bays.length - 1 ? 0 : halfBeam);
+      const g = new THREE.BufferGeometry();
+      const x0 = -spec.wellX;
+      const x1 = spec.wellX;
+      const y = spec.yGlass;
+      g.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute([x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1], 3)
+      );
+      g.setAttribute("normal", new THREE.Float32BufferAttribute([0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0], 3));
+      g.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+      // (x0,z0)→(x1,z0)→(x1,z1): +x × +z = -y, so the quad faces down
+      g.setIndex([0, 1, 2, 0, 2, 3]);
+      b.add(g);
+    });
+  }
   return b.build();
 }
 
@@ -357,33 +376,144 @@ export interface HallGeometry {
   benchFrame: THREE.BufferGeometry;
   /** Soft contact shadows under the benches (custom attributes aLocal/aHalf). */
   benchShadow: THREE.BufferGeometry;
+  /** The entrance room's ceiling. */
   spec: CeilingSpec;
+  /** Every room's ceiling, entrance first. */
+  specs: CeilingSpec[];
+  /** Each merged geometry's index range per room (see setRoomWindow). */
+  ranges: Record<HallPart, IndexRange[]>;
 }
 
 export const DOOR = { width: 1.9, height: 3.05, depth: 0.32 };
 
+const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
+/**
+ * Moulded door case on a wall face at z whose room side is `facing` (±1 in
+ * z): architrave jambs with plinth blocks, a swept head and a small cornice
+ * (classical), or a slim flat surround (modern).
+ */
+function doorCase(trim: GeoBatch, z: number, facing: 1 | -1, dw: number, dh: number, classical: boolean) {
+  if (classical) {
+    const inward = V(0, 0, facing);
+    for (const s of [-1, 1]) {
+      const x = s * (dw + 0.065);
+      trim.roundedBox(0.13, dh + 0.065, 0.03, x, (dh + 0.065) / 2, z + facing * 0.015, 0.008, 2);
+      trim.roundedBox(0.04, dh + 0.06, 0.018, s * (dw + 0.11), (dh + 0.06) / 2, z + facing * 0.035, 0.008, 2);
+      trim.roundedBox(0.16, 0.26, 0.045, x, 0.13, z + facing * 0.0225, 0.006, 1); // plinth block
+    }
+    trim.sweep(ARCHITRAVE, V(-dw - 0.135, dh, z), V(dw + 0.135, dh, z), inward);
+    // cornice over the door
+    trim.roundedBox(2 * dw + 0.5, 0.07, 0.09, 0, dh + 0.17, z + facing * 0.045, 0.012, 2);
+    trim.roundedBox(2 * dw + 0.36, 0.035, 0.06, 0, dh + 0.12, z + facing * 0.03, 0.008, 1);
+  } else {
+    // flush steel-framed opening: a slim frame
+    for (const s of [-1, 1]) {
+      trim.box(0.04, dh, 0.012, s * (dw + 0.02), dh / 2, z + facing * 0.006);
+    }
+    trim.box(2 * dw + 0.08, 0.04, 0.012, 0, dh + 0.02, z + facing * 0.006);
+  }
+}
+
+/** Top of a door case above the floor (its cornice / frame). */
+export function doorCaseTop(dh: number, classical: boolean): number {
+  return classical ? dh + 0.205 : dh + 0.04;
+}
+
+/** Height of the picture rail's centre (when the theme has one). */
+export function pictureRailY(H: number, coveR: number): number {
+  return H - coveR - 0.32;
+}
+
+/** One room's share of every merged architecture geometry, by material. */
+export const HALL_PARTS = ["walls", "ceiling", "trim", "track", "benchSeat", "benchFrame", "benchShadow"] as const;
+export type HallPart = (typeof HALL_PARTS)[number];
+
+/** A run of indices in a merged geometry (for setDrawRange). */
+export interface IndexRange {
+  start: number;
+  count: number;
+}
+
+/**
+ * Concatenate per-room batches into one geometry per material, room after
+ * room, so any run of consecutive rooms is one contiguous index range: a
+ * long suite draws only the rooms near the visitor with a draw range, at no
+ * extra draw call.
+ */
+function mergeRooms(batches: GeoBatch[]): { geometry: THREE.BufferGeometry; ranges: IndexRange[] } {
+  const built = batches.map((b) => b.build());
+  if (built.length === 1) {
+    const g = built[0];
+    return { geometry: g, ranges: [{ start: 0, count: g.index ? g.index.count : 0 }] };
+  }
+  const ranges: IndexRange[] = [];
+  let start = 0;
+  const parts: THREE.BufferGeometry[] = [];
+  for (const g of built) {
+    const count = g.index ? g.index.count : 0;
+    ranges.push({ start, count });
+    start += count;
+    if (count) parts.push(g);
+  }
+  const merged = parts.length ? mergeGeometries(parts, false) : new GeoBatch().build();
+  built.forEach((g) => g.dispose());
+  if (!merged) throw new Error("room-geometry: room merge failed");
+  merged.computeBoundingBox();
+  merged.computeBoundingSphere();
+  return { geometry: merged, ranges };
+}
+
+/**
+ * Show only rooms lo..hi of a merged hall geometry (all of it for null).
+ */
+export function setRoomWindow(
+  geometry: THREE.BufferGeometry,
+  ranges: IndexRange[],
+  window: [number, number] | null
+): void {
+  if (!window || ranges.length <= 1) {
+    geometry.setDrawRange(0, Infinity);
+    return;
+  }
+  const lo = Math.max(0, Math.min(ranges.length - 1, window[0]));
+  const hi = Math.max(lo, Math.min(ranges.length - 1, window[1]));
+  const start = ranges[lo].start;
+  geometry.setDrawRange(start, ranges[hi].start + ranges[hi].count - start);
+}
+
 export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeometry {
   const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
-  const spec = ceilingSpec(layout, theme);
+  const specs = ceilingSpecs(layout, theme);
+  const spec = specs[0];
   const classical = theme.room.classical;
-  const walls = new GeoBatch();
-  const ceiling = new GeoBatch();
-  const trim = new GeoBatch();
-  const track = new GeoBatch();
-  const seat = new GeoBatch();
-  const frame = new GeoBatch();
+  const last = layout.rooms.length - 1;
+  // every part goes into the batch of the room it belongs to
+  const rooms = layout.rooms.map(() => ({
+    walls: new GeoBatch(),
+    ceiling: new GeoBatch(),
+    trim: new GeoBatch(),
+    track: new GeoBatch(),
+    seat: new GeoBatch(),
+    frame: new GeoBatch(),
+  }));
+  const at = (r: number) => rooms[Math.max(0, Math.min(last, r))];
 
-  const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-
-  // ---- walls (room-facing planes only; UVs in metres)
-  // left wall (x = -W/2), faces +x: edgeU along -z?  need U×V = +x → U = +z? (+z × +y = -x) so U = -z
-  walls.quad(V(-W / 2, 0, L / 2), V(0, 0, -L), V(0, H, 0));
-  // right wall faces -x: U = +z  (+z × +y = -x ✓)
-  walls.quad(V(W / 2, 0, -L / 2), V(0, 0, L), V(0, H, 0));
-  // far wall (z = -L/2) faces +z: U = +x (+x × +y = +z ✓)
-  walls.quad(V(-W / 2, 0, -L / 2), V(W, 0, 0), V(0, H, 0));
+  // ---- walls (room-facing planes only; UVs in metres, continuous down the suite)
+  // Each room has its own stretch of the side walls; the cross walls stand
+  // between them.
+  layout.rooms.forEach((room, ri) => {
+    const { walls } = rooms[ri];
+    // left wall (x = -W/2), faces +x: edgeU along -z?  need U×V = +x → U = +z? (+z × +y = -x) so U = -z
+    walls.quad(V(-W / 2, 0, room.z1), V(0, 0, -(room.z1 - room.z0)), V(0, H, 0), [L / 2 - room.z1, 0]);
+    // right wall faces -x: U = +z  (+z × +y = -x ✓)
+    walls.quad(V(W / 2, 0, room.z0), V(0, 0, room.z1 - room.z0), V(0, H, 0), [room.z0 + L / 2, 0]);
+    // far wall (z = -L/2) faces +z: U = +x (+x × +y = +z ✓)
+    if (ri === last) walls.quad(V(-W / 2, 0, -L / 2), V(W, 0, 0), V(0, H, 0));
+  });
   // near wall (z = +L/2) faces -z: U = -x, with the door opening
   {
+    const { walls } = rooms[0];
     const dw = DOOR.width / 2;
     const dh = DOOR.height;
     walls.quad(V(W / 2, 0, L / 2), V(-(W / 2 - dw), 0, 0), V(0, H, 0)); // right of door (seen from inside: left)
@@ -398,6 +528,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
 
   // ---- doors: a pair of leaves set in the reveal
   {
+    const { trim } = rooms[0];
     const dw = DOOR.width / 2;
     const dh = DOOR.height;
     const zLeaf = L / 2 + DOOR.depth * 0.55;
@@ -416,56 +547,122 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
         trim.roundedBox(0.022, 0.6, 0.04, s * 0.06, 1.1, zLeaf - 0.045, 0.008, 1);
       }
     }
+    // moulded architrave round the opening (classical), or a slim frame
+    doorCase(trim, L / 2, -1, dw, dh, classical);
+  }
+
+  // ---- cross walls between the rooms of a suite: a doorway on the hall
+  // axis, both faces cased, the reveals lined (classical) or plain (modern).
+  // The face toward the entrance belongs to the room before, the other face
+  // to the room after.
+  layout.doorways.forEach((d, i) => {
+    const before = at(i);
+    const after = at(i + 1);
+    const hw = d.halfWidth;
+    const dh = d.height;
+    const zf = d.z + d.thickness / 2; // face toward the entrance (faces +z)
+    const zb = d.z - d.thickness / 2; // face toward the far end (faces -z)
+    const side = W / 2 - hw;
+    // +z face: U = +x
+    before.walls.quad(V(-W / 2, 0, zf), V(side, 0, 0), V(0, H, 0));
+    before.walls.quad(V(hw, 0, zf), V(side, 0, 0), V(0, H, 0), [W / 2 + hw, 0]);
+    before.walls.quad(V(-hw, dh, zf), V(2 * hw, 0, 0), V(0, H - dh, 0), [W / 2 - hw, dh]);
+    // -z face: U = -x
+    after.walls.quad(V(W / 2, 0, zb), V(-side, 0, 0), V(0, H, 0));
+    after.walls.quad(V(-hw, 0, zb), V(-side, 0, 0), V(0, H, 0), [W / 2 + hw, 0]);
+    after.walls.quad(V(hw, dh, zb), V(-2 * hw, 0, 0), V(0, H - dh, 0), [W / 2 - hw, dh]);
+    // reveals through the thickness
+    const reveals = classical ? before.trim : before.walls;
+    const T = d.thickness;
+    reveals.quad(V(-hw, 0, zf), V(0, 0, -T), V(0, dh, 0)); // left jamb faces +x
+    reveals.quad(V(hw, 0, zb), V(0, 0, T), V(0, dh, 0)); // right jamb faces -x
+    reveals.quad(V(-hw, dh, zb), V(2 * hw, 0, 0), V(0, 0, T)); // soffit faces -y
     if (classical) {
-      // moulded architrave round the opening, with plinth blocks
-      const z = L / 2;
-      const inward = V(0, 0, -1);
-      // jambs: sweep vertical runs — profile in (d, across) so build via rotated sweeps
-      // Simplify: the architrave is three straight runs whose "height" axis is
-      // across the face. Use boxes + a sweep for the head.
-      for (const s of [-1, 1]) {
-        const x = s * (dw + 0.065);
-        trim.roundedBox(0.13, dh + 0.065, 0.03, x, (dh + 0.065) / 2, z - 0.015, 0.008, 2);
-        trim.roundedBox(0.04, dh + 0.06, 0.018, s * (dw + 0.11), (dh + 0.06) / 2, z - 0.035, 0.008, 2);
-        trim.roundedBox(0.16, 0.26, 0.045, x, 0.13, z - 0.0225, 0.006, 1); // plinth block
+      // a stone / oak threshold flush with the floor boards
+      before.trim.box(2 * hw, 0.008, T + 0.06, 0, 0.004, d.z);
+    }
+    doorCase(before.trim, zf, 1, hw, dh, classical);
+    doorCase(after.trim, zb, -1, hw, dh, classical);
+  });
+
+  // ---- the flagship's freestanding screen (a long suite's first room)
+  const screen = layout.screen;
+  if (screen) {
+    const { walls, trim } = rooms[0];
+    const sh = screen.halfWidth;
+    const sH = screen.height;
+    const zf = screen.z + screen.thickness / 2;
+    const zb = screen.z - screen.thickness / 2;
+    walls.quad(V(-sh, 0, zf), V(2 * sh, 0, 0), V(0, sH, 0)); // front faces +z
+    walls.quad(V(sh, 0, zb), V(-2 * sh, 0, 0), V(0, sH, 0)); // back faces -z
+    walls.quad(V(-sh, 0, zb), V(0, 0, screen.thickness), V(0, sH, 0)); // end faces -x
+    walls.quad(V(sh, 0, zf), V(0, 0, -screen.thickness), V(0, sH, 0)); // end faces +x
+    walls.quad(V(-sh, sH, zb), V(0, 0, screen.thickness), V(2 * sh, 0, 0)); // top faces +y
+    // a capping moulding, and a plinth / shadow-gap base
+    trim.roundedBox(2 * sh + 0.05, 0.045, screen.thickness + 0.05, 0, sH + 0.0225, screen.z, 0.01, 2);
+    if (classical) {
+      for (const [a, b, n] of [
+        [V(-sh, 0, zf), V(sh, 0, zf), V(0, 0, 1)],
+        [V(sh, 0, zb), V(-sh, 0, zb), V(0, 0, -1)],
+        [V(-sh, 0, zb), V(-sh, 0, zf), V(-1, 0, 0)],
+        [V(sh, 0, zf), V(sh, 0, zb), V(1, 0, 0)],
+      ] as const) {
+        trim.sweep(SKIRTING, a, b, n);
       }
-      trim.sweep(
-        ARCHITRAVE,
-        V(-dw - 0.135, dh, z),
-        V(dw + 0.135, dh, z),
-        inward
-      );
-      // cornice over the door
-      trim.roundedBox(DOOR.width + 0.5, 0.07, 0.09, 0, dh + 0.17, z - 0.045, 0.012, 2);
-      trim.roundedBox(DOOR.width + 0.36, 0.035, 0.06, 0, dh + 0.12, z - 0.03, 0.008, 1);
-    } else {
-      // flush steel-framed opening: a slim frame
-      for (const s of [-1, 1]) {
-        trim.box(0.04, dh, 0.012, s * (dw + 0.02), dh / 2, L / 2 - 0.006);
-      }
-      trim.box(DOOR.width + 0.08, 0.04, 0.012, 0, dh + 0.02, L / 2 - 0.006);
     }
   }
 
-  // ---- skirting / picture rail (classical rooms)
-  const runs: { a: THREE.Vector3; b: THREE.Vector3; n: THREE.Vector3 }[] = [
-    { a: V(-W / 2, 0, -L / 2), b: V(-W / 2, 0, L / 2), n: V(1, 0, 0) },
-    { a: V(W / 2, 0, -L / 2), b: V(W / 2, 0, L / 2), n: V(-1, 0, 0) },
-    { a: V(-W / 2, 0, -L / 2), b: V(W / 2, 0, -L / 2), n: V(0, 0, 1) },
-  ];
-  const nearRuns = [
+  // ---- skirting / picture rail, room by room
+  type Run = { a: THREE.Vector3; b: THREE.Vector3; n: THREE.Vector3 };
+  // side walls (and the far end wall) of each room
+  const runsOf = (ri: number): Run[] => {
+    const { z0, z1 } = layout.rooms[ri];
+    const out: Run[] = [
+      { a: V(-W / 2, 0, z0), b: V(-W / 2, 0, z1), n: V(1, 0, 0) },
+      { a: V(W / 2, 0, z0), b: V(W / 2, 0, z1), n: V(-1, 0, 0) },
+    ];
+    if (ri === last) out.push({ a: V(-W / 2, 0, -L / 2), b: V(W / 2, 0, -L / 2), n: V(0, 0, 1) });
+    return out;
+  };
+  const nearRuns: Run[] = [
     { a: V(-W / 2, 0, L / 2), b: V(-DOOR.width / 2 - 0.2, 0, L / 2), n: V(0, 0, -1) },
     { a: V(DOOR.width / 2 + 0.2, 0, L / 2), b: V(W / 2, 0, L / 2), n: V(0, 0, -1) },
   ];
-  if (classical) {
-    for (const r of [...runs, ...nearRuns]) trim.sweep(SKIRTING, r.a, r.b, r.n);
-    if (theme.room.pictureRail) {
-      const y = H - spec.coveR - 0.32;
-      for (const r of [...runs, { a: V(-W / 2, 0, L / 2), b: V(W / 2, 0, L / 2), n: V(0, 0, -1) }]) {
-        trim.sweep(PICTURE_RAIL, r.a.clone().setY(y), r.b.clone().setY(y), r.n);
+  const nearFull: Run = { a: V(-W / 2, 0, L / 2), b: V(W / 2, 0, L / 2), n: V(0, 0, -1) };
+  // the cross-wall faces each room has: full width (cornice, picture rail)
+  // and either side of the doorway (skirting)
+  const crossFaces = (ri: number): { full: Run[]; split: Run[] } => {
+    const full: Run[] = [];
+    const split: Run[] = [];
+    const faces: [number, number, 1 | -1][] = [];
+    if (ri < last) faces.push([ri, layout.doorways[ri].z + layout.doorways[ri].thickness / 2, 1]);
+    if (ri > 0) faces.push([ri - 1, layout.doorways[ri - 1].z - layout.doorways[ri - 1].thickness / 2, -1]);
+    for (const [di, z, n] of faces) {
+      const d = layout.doorways[di];
+      full.push({ a: V(-W / 2, 0, z), b: V(W / 2, 0, z), n: V(0, 0, n) });
+      const edge = d.halfWidth + (classical ? 0.2 : 0.06);
+      split.push(
+        { a: V(-W / 2, 0, z), b: V(-edge, 0, z), n: V(0, 0, n) },
+        { a: V(edge, 0, z), b: V(W / 2, 0, z), n: V(0, 0, n) }
+      );
+    }
+    return { full, split };
+  };
+  layout.rooms.forEach((_, ri) => {
+    const { trim } = rooms[ri];
+    const cross = crossFaces(ri);
+    if (classical) {
+      for (const q of [...runsOf(ri), ...(ri === 0 ? nearRuns : []), ...cross.split]) {
+        trim.sweep(SKIRTING, q.a, q.b, q.n);
       }
     }
-  }
+    if (theme.room.pictureRail) {
+      const y = pictureRailY(H, spec.coveR);
+      for (const q of [...runsOf(ri), ...(ri === 0 ? [nearFull] : []), ...cross.full]) {
+        trim.sweep(PICTURE_RAIL, q.a.clone().setY(y), q.b.clone().setY(y), q.n);
+      }
+    }
+  });
 
   // ---- ceiling
   const r = spec.coveR;
@@ -482,22 +679,22 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
       [0.045, H - r],
       [0.0, H - r + 0.001],
     ];
-    const all = [
-      ...runs.map((q) => ({ a: q.a, b: q.b, n: q.n })),
-      { a: V(-W / 2, 0, L / 2), b: V(W / 2, 0, L / 2), n: V(0, 0, -1) },
-    ];
-    for (const q of all) {
-      ceiling.sweep(cove, q.a, q.b, q.n, 50);
-      ceiling.sweep(bed, q.a, q.b, q.n);
-    }
+    layout.rooms.forEach((_, ri) => {
+      const { ceiling } = rooms[ri];
+      for (const q of [...runsOf(ri), ...(ri === 0 ? [nearFull] : []), ...crossFaces(ri).full]) {
+        ceiling.sweep(cove, q.a, q.b, q.n, 50);
+        ceiling.sweep(bed, q.a, q.b, q.n);
+      }
+    });
   }
-  // flat band around the opening (faces down)
-  {
+  specs.forEach((sp, ri) => {
+    const { ceiling, trim } = at(ri);
+    // flat band around the opening (faces down)
     const x0 = -W / 2 + r;
     const x1 = W / 2 - r;
-    const z0 = -L / 2 + r;
-    const z1 = L / 2 - r;
-    const wx = spec.wellX;
+    const z0 = sp.z0 + r;
+    const z1 = sp.z1 - r;
+    const wx = sp.wellX;
     const face = (ax: number, bx: number, az: number, bz: number) => {
       if (bx - ax < 1e-4 || bz - az < 1e-4) return;
       // U = +x, V = -z?  (+x × -z = +y) → we need -y: U = +z, V = +x (+z × +x = +y)… use U=+x, V=+z: +x × +z = -y ✓
@@ -505,43 +702,46 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     };
     face(x0, -wx, z0, z1);
     face(wx, x1, z0, z1);
-    face(-wx, wx, z0, spec.wellZ0);
-    face(-wx, wx, spec.wellZ1, z1);
+    face(-wx, wx, z0, sp.wellZ0);
+    face(-wx, wx, sp.wellZ1, z1);
     // well sides (vertical, facing into the well)
-    const dy = spec.yGlass - yC;
-    ceiling.quad(V(-wx, yC, spec.wellZ1), V(0, 0, spec.wellZ0 - spec.wellZ1), V(0, dy, 0)); // faces +x
-    ceiling.quad(V(wx, yC, spec.wellZ0), V(0, 0, spec.wellZ1 - spec.wellZ0), V(0, dy, 0)); // faces -x
-    ceiling.quad(V(-wx, yC, spec.wellZ0), V(2 * wx, 0, 0), V(0, dy, 0)); // faces +z
-    ceiling.quad(V(wx, yC, spec.wellZ1), V(-2 * wx, 0, 0), V(0, dy, 0)); // faces -z
-    if (spec.kind === "laylight") {
+    const dy = sp.yGlass - yC;
+    ceiling.quad(V(-wx, yC, sp.wellZ1), V(0, 0, sp.wellZ0 - sp.wellZ1), V(0, dy, 0)); // faces +x
+    ceiling.quad(V(wx, yC, sp.wellZ0), V(0, 0, sp.wellZ1 - sp.wellZ0), V(0, dy, 0)); // faces -x
+    ceiling.quad(V(-wx, yC, sp.wellZ0), V(2 * wx, 0, 0), V(0, dy, 0)); // faces +z
+    ceiling.quad(V(wx, yC, sp.wellZ1), V(-2 * wx, 0, 0), V(0, dy, 0)); // faces -z
+    if (sp.kind === "laylight") {
       // moulded soffit frame round the opening
       const fw = 0.12;
       const fd = 0.07;
-      const lenZ = spec.wellZ1 - spec.wellZ0 + 2 * fw;
+      const lenZ = sp.wellZ1 - sp.wellZ0 + 2 * fw;
       for (const s of [-1, 1]) {
-        ceiling.roundedBox(fw, fd, lenZ, s * (wx + fw / 2), yC - fd / 2 + 0.002, (spec.wellZ0 + spec.wellZ1) / 2, 0.012, 2);
-        ceiling.roundedBox(2 * wx, fd, fw, 0, yC - fd / 2 + 0.002, s < 0 ? spec.wellZ0 - fw / 2 : spec.wellZ1 + fw / 2, 0.012, 2);
+        ceiling.roundedBox(fw, fd, lenZ, s * (wx + fw / 2), yC - fd / 2 + 0.002, (sp.wellZ0 + sp.wellZ1) / 2, 0.012, 2);
+        ceiling.roundedBox(2 * wx, fd, fw, 0, yC - fd / 2 + 0.002, s < 0 ? sp.wellZ0 - fw / 2 : sp.wellZ1 + fw / 2, 0.012, 2);
       }
       // beams between the bays, spanning the well
-      for (let i = 1; i < spec.bays.length; i++) {
-        const z = spec.bays[i].z0;
-        ceiling.roundedBox(2 * wx, spec.beamDepth, spec.beamW, 0, spec.yGlass - spec.beamDepth / 2, z, 0.02, 2);
+      for (let i = 1; i < sp.bays.length; i++) {
+        const z = sp.bays[i].z0;
+        ceiling.roundedBox(2 * wx, sp.beamDepth, sp.beamW, 0, sp.yGlass - sp.beamDepth / 2, z, 0.02, 2);
       }
     } else {
       // slim aluminium-look reveal round the diffuser
       for (const s of [-1, 1]) {
-        trim.box(0.025, 0.012, spec.wellZ1 - spec.wellZ0, s * (wx + 0.0125), yC - 0.006, (spec.wellZ0 + spec.wellZ1) / 2);
-        trim.box(2 * wx + 0.05, 0.012, 0.025, 0, yC - 0.006, s < 0 ? spec.wellZ0 - 0.0125 : spec.wellZ1 + 0.0125);
+        trim.box(0.025, 0.012, sp.wellZ1 - sp.wellZ0, s * (wx + 0.0125), yC - 0.006, (sp.wellZ0 + sp.wellZ1) / 2);
+        trim.box(2 * wx + 0.05, 0.012, 0.025, 0, yC - 0.006, s < 0 ? sp.wellZ0 - 0.0125 : sp.wellZ1 + 0.0125);
       }
     }
-  }
+  });
 
-  // ---- lighting track (rails + suspension rods + canopies)
-  {
+  // ---- lighting track per room (rails + suspension rods + canopies): side
+  // rails, and a cross rail in front of each room's far wall (and in front
+  // of the flagship's screen)
+  specs.forEach((sp, ri) => {
+    const { track } = at(ri);
     const yR = H - TRACK_DROP;
     const railX = W / 2 - TRACK_INSET;
-    const zCross = -L / 2 + TRACK_INSET;
-    const zEnd = L / 2 - 0.9;
+    const zCross = sp.z0 + TRACK_INSET;
+    const zEnd = sp.z1 - 0.9;
     const RW = 0.034; // rail width
     const RH = 0.026; // rail height
     for (const s of [-1, 1]) {
@@ -565,13 +765,19 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     }
     const nCross = Math.max(1, Math.ceil((2 * railX) / 2.4));
     for (let i = 1; i < nCross; i++) rod(-railX + (2 * railX * i) / nCross, zCross);
-  }
+    if (ri === 0 && screen) {
+      const zs = screen.z + screen.thickness / 2 + TRACK_INSET;
+      track.roundedBox(2 * railX + RW, RH, RW, 0, yR, zs, 0.004, 1);
+      for (let i = 1; i < nCross; i++) rod(-railX + (2 * railX * i) / nCross, zs);
+    }
+  });
 
   // ---- benches
   const shadow = buildBenchShadows(layout);
   for (const b of layout.benches) {
     const [bx, bz] = b.position;
     const [bw, bd] = b.size;
+    const { seat, frame } = at(roomAt(layout, bz));
     switch (theme.room.bench) {
       case "leather": {
         // button-less upholstered top on a dark wood frame with turned legs
@@ -610,15 +816,42 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     }
   }
 
+  const walls = mergeRooms(rooms.map((x) => x.walls));
+  const ceiling = mergeRooms(rooms.map((x) => x.ceiling));
+  const trim = mergeRooms(rooms.map((x) => x.trim));
+  const track = mergeRooms(rooms.map((x) => x.track));
+  const seat = mergeRooms(rooms.map((x) => x.seat));
+  const frame = mergeRooms(rooms.map((x) => x.frame));
+  // bench shadows: one quad (6 indices) per bench, benches in room order
+  const shadowRanges: IndexRange[] = layout.rooms.map(() => ({ start: 0, count: 0 }));
+  layout.benches.forEach((b, i) => {
+    const rr = shadowRanges[Math.max(0, Math.min(last, roomAt(layout, b.position[1])))];
+    if (rr.count === 0) rr.start = i * 6;
+    rr.count += 6;
+  });
+  for (let i = 1; i < shadowRanges.length; i++) {
+    // keep empty rooms' ranges in order for the contiguous window maths
+    if (shadowRanges[i].count === 0) shadowRanges[i].start = shadowRanges[i - 1].start + shadowRanges[i - 1].count;
+  }
   return {
-    walls: walls.build(),
-    ceiling: ceiling.build(),
-    trim: trim.build(),
-    track: track.build(),
-    benchSeat: seat.build(),
-    benchFrame: frame.build(),
+    walls: walls.geometry,
+    ceiling: ceiling.geometry,
+    trim: trim.geometry,
+    track: track.geometry,
+    benchSeat: seat.geometry,
+    benchFrame: frame.geometry,
     benchShadow: shadow,
     spec,
+    specs,
+    ranges: {
+      walls: walls.ranges,
+      ceiling: ceiling.ranges,
+      trim: trim.ranges,
+      track: track.ranges,
+      benchSeat: seat.ranges,
+      benchFrame: frame.ranges,
+      benchShadow: shadowRanges,
+    },
   };
 }
 

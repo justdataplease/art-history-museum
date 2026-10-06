@@ -3,3 +3,6 @@ verify-artifacts
 dev-server.log
 Dockerfile
 compose.yaml
+data/cache/artists
+data/cache/report.json
+data/cache/enrich-report.json
