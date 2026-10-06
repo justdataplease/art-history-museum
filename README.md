@@ -38,7 +38,7 @@ An interactive 3D museum of art history that runs in the browser.
 Every period description, artist bio, portrait, painting image, date, story and fun
 fact is pulled from **English Wikipedia, Wikidata and Wikimedia Commons** at ingest
 time. Nothing is AI-generated: stories are article leads, fun facts are verbatim
-sentences from article bodies. 795 paintings across 72 artists; 702 have physical
+sentences from article bodies. 795 paintings across 72 artists; 704 have physical
 dimensions from Wikidata and 764 have pageview counts.
 
 ## Setup
@@ -67,6 +67,13 @@ Without `.env.local`, the app transparently falls back to the local ingest cache
 (`data/cache/museum.json`), so it runs end-to-end either way. With `DATABASE_URL`
 set, all reads go through Neon Postgres (`periods`, `artists`, `paintings`).
 Every gallery is prerendered at build time and revalidated hourly.
+
+`load-db` fills staging tables first and then swaps them in with one short
+transaction, so it can run against the live database: readers always see either
+the old collection or the new one in full. Existing galleries pick up reloaded
+data within the hour, but only prerendered slugs are served, so an artist that is
+new to the database gets a gallery at the next build or deploy (`load-db` lists
+new and removed slugs).
 
 ## Controls
 
