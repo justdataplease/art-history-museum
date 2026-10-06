@@ -16,7 +16,7 @@ const sans = Jost({
 });
 
 export const metadata: Metadata = {
-  title: "The Timeline Museum — A Walkable History of Art",
+  title: "A Walkable History of Art · Every artist, every work, under one roof",
   description:
     "An interactive 3D museum of art history. Zoom through eight centuries of periods and artists, then walk first-person galleries of their real paintings — all drawn from Wikipedia.",
 };

@@ -40,7 +40,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const life =
     artist.birthYear != null ? ` (${artist.birthYear}–${artist.deathYear ?? ""})` : "";
   return {
-    title: `${artist.name} · The Timeline Museum`,
+    title: `${artist.name} · A Walkable History of Art`,
     description: `Walk a 3D gallery of ${artist.paintingCount} works by ${artist.name}${life}, ${artist.periodName}, with their stories from Wikipedia.`,
   };
 }

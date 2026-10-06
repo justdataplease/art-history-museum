@@ -103,12 +103,14 @@ button {
 
 .tl-title small {
   display: block;
-  font-family: var(--sans);
-  font-weight: 300;
-  font-size: 10px;
-  letter-spacing: 0.42em;
-  margin-top: 4px;
-  opacity: 0.55;
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  margin-top: 5px;
+  opacity: 0.72;
 }
 
 .view-stars .tl-title {
@@ -1578,8 +1580,8 @@ button {
   }
 
   .tl-title small {
-    font-size: 9px;
-    letter-spacing: 0.32em;
+    font-size: 12.5px;
+    letter-spacing: 0.01em;
   }
 
   .tl-switch {
@@ -1600,8 +1602,8 @@ button {
   }
 
   .tl-title small {
-    font-size: 8.5px;
-    letter-spacing: 0.3em;
+    font-size: 12px;
+    letter-spacing: 0.01em;
   }
 
   .tl-switcher {
@@ -1657,13 +1659,13 @@ button {
 /* the smallest phones: a tighter title leaves the Explore button room for its label */
 @media (max-width: 400px) {
   .tl-title {
-    font-size: 13px;
-    letter-spacing: 0.15em;
+    font-size: 12.5px;
+    letter-spacing: 0.1em;
   }
 
   .tl-title small {
-    font-size: 8px;
-    letter-spacing: 0.2em;
+    font-size: 11.5px;
+    letter-spacing: 0;
   }
 }
 

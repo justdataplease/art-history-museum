@@ -75,8 +75,8 @@ const TimelineHeader = memo(function TimelineHeader({
   return (
     <header className="tl-header" inert={inert}>
       <div className="tl-title">
-        The Timeline Museum
-        <small>A walkable history of art</small>
+        A Walkable History of Art
+        <small>Every artist, every work, under one roof.</small>
       </div>
       <nav className="tl-switcher" aria-label="Timeline view">
         {VIEWS.map((v) => (
@@ -783,7 +783,6 @@ export function Timeline({ data }: { data: TimelineData }) {
           height is kept free of content (--foot). */}
       <footer className="tl-foot" inert={!!selected}>
         <p className="tl-note tl-note-l">
-          <span className="tl-note-lead">Every artist, every work, under one roof.</span>{" "}
           <span className="tl-note-src">
             All credit goes to{" "}
             <a href="https://en.wikipedia.org/" target="_blank" rel="noopener noreferrer">
