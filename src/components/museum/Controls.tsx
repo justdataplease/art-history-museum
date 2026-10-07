@@ -28,6 +28,8 @@ import { setInspectFlying, setMoving } from "./renderer-motion";
 
 const MAX_DT = 1 / 30;
 const WALK_SPEED = 3.1; // m/s
+const RUN_SPEED = WALK_SPEED * 2;
+const RUN_AFTER_MS = 3000;
 const TAP_WALK_SPEED = 2.4; // m/s
 const AIM_RANGE = 9; // m: furthest a crosshair click can inspect from
 const TAP_RANGE = 16; // m: furthest a tap can inspect from
@@ -279,6 +281,7 @@ export function Player({
   const invalidate = useThree((s) => s.invalidate);
   const controls = useRef<PLC>(null);
   const pressed = useRef(new Set<string>());
+  const forwardSince = useRef<number | null>(null);
   const vel = useRef(new THREE.Vector3());
   const ray = useMemo(() => new THREE.Raycaster(), []);
   const aimed = useRef(false);
@@ -297,6 +300,7 @@ export function Player({
 
   const halt = () => {
     pressed.current.clear();
+    forwardSince.current = null;
     vel.current.set(0, 0, 0);
     setMoving(false);
   };
@@ -346,11 +350,13 @@ export function Player({
         }, 0);
         return;
       }
-      if (!KEYS[e.code] || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!KEYS[e.code] || e.ctrlKey || e.metaKey || e.altKey || !active(e)) return;
+      if (e.code === "KeyW" && !pressed.current.has(e.code)) forwardSince.current = performance.now();
       pressed.current.add(e.code);
       invalidate();
     };
     const up = (e: KeyboardEvent) => {
+      if (e.code === "KeyW") forwardSince.current = null;
       if (e.key === "Control") {
         if (bareCtrl && active(e)) toggleCrouch();
         bareCtrl = false;
@@ -466,7 +472,9 @@ export function Player({
     _right.crossVectors(_fwd, _UP);
     _dir.set(0, 0, 0).addScaledVector(_fwd, -mz).addScaledVector(_right, mx);
     if (_dir.lengthSq() > 0) {
-      _dir.normalize().multiplyScalar(WALK_SPEED * THREE.MathUtils.lerp(1, CROUCH_SPEED, smooth(b.k)));
+      const running = mz < 0 && pressed.current.has("KeyW") && forwardSince.current !== null
+        && performance.now() - forwardSince.current >= RUN_AFTER_MS && !b.crouch && b.k === 0;
+      _dir.normalize().multiplyScalar((running ? RUN_SPEED : WALK_SPEED) * THREE.MathUtils.lerp(1, CROUCH_SPEED, smooth(b.k)));
     }
     // in the air: the take-off's momentum, no steering
     if (!b.airborne) vel.current.lerp(_dir, 1 - Math.exp(-10 * dt));

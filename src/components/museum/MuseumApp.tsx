@@ -413,6 +413,9 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
                 <b>W A S D</b> walk
               </span>
               <span>
+                <b>Hold W 3s</b> run
+              </span>
+              <span>
                 <b>Mouse</b> look
               </span>
               <span>
