@@ -114,7 +114,8 @@ export function drawPlacard(
   artist: string,
   title: string,
   year: number | null,
-  copyrighted = false
+  copyrighted = false,
+  dimensions = ""
 ): THREE.CanvasTexture {
   const W = PLACARD_TEX_W;
   const H = PLACARD_TEX_H;
@@ -143,7 +144,9 @@ export function drawPlacard(
   ctx.font = TITLE_FONT(serif);
   const lines = wrapLines(ctx, displayTitle(title, artist), W - PAD * 2, 2);
   const ARTIST_CAP = 17; // cap height of the 23 px artist line
-  const block = ARTIST_CAP + 17 + 2 + 50 + (lines.length - 1) * 41 + 9 + 41;
+  ctx.font = `22px ${sans}`;
+  const dimensionLines = dimensions ? wrapLines(ctx, dimensions, W - PAD * 2, 2) : [];
+  const block = ARTIST_CAP + 17 + 2 + 50 + (lines.length - 1) * 41 + 9 + 41 + dimensionLines.length * 30;
   let y = Math.round((H - block) / 2 + ARTIST_CAP);
 
   // artist — spaced capitals
@@ -184,6 +187,13 @@ export function drawPlacard(
     ctx.textAlign = "left";
   }
   ls("0px");
+
+  ctx.font = `22px ${sans}`;
+  ctx.fillStyle = "#645b4b";
+  for (const line of dimensionLines) {
+    y += 30;
+    ctx.fillText(line, PAD, y);
+  }
 
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;

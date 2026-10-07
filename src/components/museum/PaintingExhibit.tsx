@@ -265,7 +265,7 @@ function ExhibitBody({
           artistName={artistName}
         />
         {full && (
-          <Placard artistName={artistName} title={painting.title} year={painting.year} copyrighted={painting.copyrighted === true} position={[card.x, card.y, card.z]} scale={placement.label ?? 1} />
+          <Placard artistName={artistName} title={painting.title} year={painting.year} copyrighted={painting.copyrighted === true} dimensions={placardDimensions(placement)} position={[card.x, card.y, card.z]} scale={placement.label ?? 1} />
         )}
         {full && (
           <mesh geometry={shadowGeo} material={shadowMat} position-z={-WALL_GAP + 0.0012} layers={PROP_LAYER} renderOrder={1} />
@@ -521,11 +521,22 @@ function CanvasSurface({
 
 // ----------------------------------------------------------------- placard
 
+function placardDimensions({ painting, w, h }: Placement): string {
+  const { widthCm, heightCm } = painting;
+  if (!(widthCm && widthCm > 0 && heightCm && heightCm > 0)) {
+    return "Dimensions unavailable (estimated size)";
+  }
+  const ratio = Math.sqrt((w * h * 10_000) / (widthCm * heightCm));
+  const tag = ratio < 0.99 ? "resized to fit" : ratio > 1.01 ? "enlarged to fit" : "original scale";
+  return `${heightCm} × ${widthCm} cm (H × W) · (${tag})`;
+}
+
 function Placard({
   artistName,
   title,
   year,
   copyrighted,
+  dimensions,
   position,
   scale = 1,
 }: {
@@ -533,6 +544,7 @@ function Placard({
   title: string;
   year: number | null;
   copyrighted: boolean;
+  dimensions: string;
   position: [number, number, number];
   /** A smaller card beside prints and miniatures (the layout's label scale). */
   scale?: number;
@@ -559,7 +571,7 @@ function Placard({
     let tex: THREE.CanvasTexture | null = null;
     placardFontsReady().then(() => {
       if (!alive) return;
-      tex = drawPlacard(artistName, title, year, copyrighted);
+      tex = drawPlacard(artistName, title, year, copyrighted, dimensions);
       material.map = tex;
       material.emissiveMap = tex;
       invalidate();
@@ -572,7 +584,7 @@ function Placard({
         tex.dispose();
       }
     };
-  }, [artistName, title, year, copyrighted, material, invalidate]);
+  }, [artistName, title, year, copyrighted, dimensions, material, invalidate]);
 
   return <mesh geometry={geometry} material={material} position={position} scale={[scale, scale, 1]} layers={PROP_LAYER} userData={FX_TARGET} />;
 }
