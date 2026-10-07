@@ -2,7 +2,7 @@
 
 Featured is an editorial introduction to the available collection. It favours painters who shaped movements, developed influential approaches, or provide central examples within an artistic tradition. The choices are qualitative; catalogue size and pageviews do not determine inclusion. They are a starting point for exploration, not an exhaustive ranking or a museum-endorsed list.
 
-The default shows 206 painters across all 35 sections. All artists restores all 526 painters. Every artist retains their complete available sourced catalogue in either view. The browser remembers the selected view.
+The default shows 207 painters across all 35 sections. All artists restores all 526 painters. Every artist retains their complete available sourced catalogue in either view. The browser remembers the selected view.
 
 The selection includes a large European component alongside Chinese, Japanese, Indian, Persian, and American traditions. The existing categories organize a timeline; artists' practices may span several movements. The colonial section is now correctly labelled Colonial Latin American Painting: its current painters are from colonial Mexico, and its internal legacy identifier remains cusco-school.
 
@@ -40,7 +40,7 @@ The selection includes a large European component alongside Chinese, Japanese, I
 | Abstract Art | Wassily Kandinsky, Kazimir Malevich, Piet Mondrian, Paul Klee, Theo van Doesburg, Hilma af Klint, František Kupka |
 | Surrealism | Giorgio de Chirico, Salvador Dalí, René Magritte, Max Ernst, Joan Miró, Frida Kahlo, Leonora Carrington |
 | American Modernism | Edward Hopper, Georgia O'Keeffe, Grant Wood, Andrew Wyeth |
-| Group of Seven | Emily Carr, Tom Thomson |
+| Group of Seven | Emily Carr, Tom Thomson, A. Y. Jackson |
 | Mexican Muralism | Diego Rivera, David Alfaro Siqueiros, José Clemente Orozco |
 | Abstract Expressionism | Jackson Pollock, Mark Rothko, Willem de Kooning, Barnett Newman, Joan Mitchell |
 | Pop Art | Andy Warhol, Roy Lichtenstein, David Hockney, Jasper Johns |
@@ -49,6 +49,8 @@ The selection includes a large European component alongside Chinese, Japanese, I
 ## Museum references
 
 These sources inform movement and tradition coverage; the exact featured list above is our editorial choice.
+
+The Group of Seven section includes associated artists, not just members. A. Y. Jackson represents the founding group; Emily Carr and Tom Thomson represent its wider circle.
 
 - [National Palace Museum: The Art and Aesthetics of Form](https://www.npm.gov.tw/Exhibition-Content.aspx?l=2&sno=04007201) — Chinese painting, including Zhao Mengfu and the Yuan masters.
 - [The Met: Joint Landscape](https://www.metmuseum.org/art/collection/search/39556) — Shen Zhou and his pupil Wen Zhengming.
@@ -60,5 +62,6 @@ These sources inform movement and tradition coverage; the exact featured list ab
 - [The Met: Cubism](https://www.metmuseum.org/essays/cubism) — Picasso, Braque and the movement's development.
 - [MoMA: What Is Cubism?](https://www.moma.org/collection/terms/cubism/what-is-cubism) — Picasso and Braque's new visual language.
 - [Belvedere: Oskar Kokoschka](https://sammlung.belvedere.at/collections/248983/oskar-kokoschka) — Kokoschka's role in Expressionism.
+- [Art Gallery of Ontario: Group of Seven](https://ago.ca/collection/group-of-seven-ago) — founding members, including A. Y. Jackson, and associated artists such as Carr and Thomson.
 - [INAH: Miguel Cabrera, Las tramas de la creación](https://mediateca.inah.gob.mx/islandora_74/islandora/object/exposicion%3A1518) — Cabrera's work in New Spain.
 - [The Met: Immaterial, Chia](https://www.metmuseum.org/zh/perspectives/immaterial-chia) — Juan Correa and Cristóbal de Villalpando in colonial Mexico.

@@ -1352,9 +1352,32 @@ button {
   color: var(--ink);
 }
 
+.filter-help {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 13px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--gold-ink);
+  font-size: 12px;
+  text-align: left;
+}
+
+.filter-help:hover {
+  background: rgba(165, 127, 70, 0.1);
+}
+
+.filter-all {
+  color: var(--gold-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .tl-switch:focus-visible,
 .filter-btn:focus-visible,
 .filter-tab:focus-visible,
+.filter-help:focus-visible,
+.filter-all:focus-visible,
 .filter-clear:focus-visible {
   outline: 2px solid var(--gold-ink);
   outline-offset: 2px;

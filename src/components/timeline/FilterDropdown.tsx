@@ -1,9 +1,10 @@
 "use client";
 
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import type { Artist, Period } from "@/lib/types";
 import { wikiSrcSet } from "@/lib/img";
+import { WelcomeHint, WELCOME_SEEN_KEY } from "./WelcomeHint";
 
 export type Filter =
   | { type: "period"; slug: string }
@@ -95,13 +96,21 @@ export const FilterDropdown = memo(function FilterDropdown({
   artists,
   filter,
   onChange,
+  hidden,
+  showAll,
+  onCollection,
 }: {
   periods: Period[];
   artists: Artist[];
   filter: Filter;
   onChange: (f: Filter) => void;
+  hidden: boolean;
+  showAll: boolean;
+  onCollection: (all: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<"explore" | "welcome" | null>(null);
+  const open = activePanel === "explore";
+  const welcomeRequested = useRef(false);
   const [tab, setTab] = useState<"periods" | "artists">("periods");
   const [query, setQuery] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
@@ -111,6 +120,19 @@ export const FilterDropdown = memo(function FilterDropdown({
   const closingRef = useRef(false);
   const panelId = useId();
   const searchId = useId();
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(WELCOME_SEEN_KEY) === "1") return;
+    } catch {}
+    setActivePanel("welcome");
+  }, []);
+
+  const dismissWelcome = useCallback((refocus: boolean) => {
+    try { localStorage.setItem(WELCOME_SEEN_KEY, "1"); } catch {}
+    setActivePanel(null);
+    if (refocus) btnRef.current?.focus({ preventScroll: true });
+  }, []);
 
   // Keep the panel on screen. It hangs from the button's right edge, but the
   // button is not always at the right of the header (a long selection can
@@ -129,6 +151,7 @@ export const FilterDropdown = memo(function FilterDropdown({
       const right = Math.min(Math.max(0, r.right - (vw - m)), r.right - width - m);
       panel.style.width = `${width}px`;
       panel.style.right = `${right}px`;
+      panel.style.maxHeight = `${Math.min(620, Math.max(120, window.innerHeight - r.bottom - 24))}px`;
       const bx = (btnRef.current?.getBoundingClientRect().left ?? r.left) + (btnRef.current?.offsetWidth ?? 0) / 2;
       panel.style.transformOrigin = `${Math.round(bx - (r.right - right - width))}px 0`;
     };
@@ -188,12 +211,12 @@ export const FilterDropdown = memo(function FilterDropdown({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  function close(refocus: boolean) {
+  function close(refocus: boolean, next: "welcome" | null = null) {
     if (closingRef.current) return;
     closingRef.current = true;
     const panel = panelRef.current;
     const done = () => {
-      setOpen(false);
+      setActivePanel(next);
       setQuery("");
       if (refocus) btnRef.current?.focus({ preventScroll: true });
     };
@@ -257,10 +280,14 @@ export const FilterDropdown = memo(function FilterDropdown({
         ref={btnRef}
         type="button"
         className={`filter-btn${open ? " open" : ""}${filter ? " has-filter" : ""}`}
-        aria-haspopup="true"
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        onClick={() => (open ? close(false) : setOpen(true))}
+        aria-haspopup="dialog"
+        aria-expanded={activePanel !== null && !hidden}
+        aria-controls={hidden ? undefined : open ? panelId : activePanel === "welcome" ? "timeline-welcome" : undefined}
+        onClick={() => {
+          if (open) return close(false);
+          if (activePanel === "welcome") dismissWelcome(false);
+          setActivePanel("explore");
+        }}
       >
         <span className="filter-btn-label">{label ?? "Explore"}</span>
         <span className="chev" aria-hidden>
@@ -295,7 +322,7 @@ export const FilterDropdown = memo(function FilterDropdown({
                 id={searchId}
                 type="search"
                 aria-label="Find an artist"
-                placeholder={`Find one of ${artists.length} artists`}
+                placeholder={showAll ? `Find one of ${artists.length} artists` : "Find a featured artist"}
                 autoComplete="off"
                 spellCheck={false}
                 value={query}
@@ -400,7 +427,14 @@ export const FilterDropdown = memo(function FilterDropdown({
                     ))}
                   </section>
                 ))}
-            {tab === "artists" && !shown.length && <p className="filter-empty">No artist by that name.</p>}
+            {tab === "artists" && !shown.length && (
+              <p className="filter-empty">
+                {showAll ? "No artist by that name." : <>No match in Featured. <button type="button" className="filter-all" onClick={() => {
+                  onCollection(true);
+                  document.getElementById(searchId)?.focus();
+                }}>Search all artists</button></>}
+              </p>
+            )}
           </div>
 
           {filter && (
@@ -412,10 +446,17 @@ export const FilterDropdown = memo(function FilterDropdown({
                 close(e.detail === 0);
               }}
             >
-              Clear · show everything
+              Clear selection
             </button>
           )}
+          <button type="button" className="filter-help" onClick={() => {
+            welcomeRequested.current = true;
+            close(false, "welcome");
+          }}>How to explore <span aria-hidden>→</span></button>
         </div>
+      )}
+      {activePanel === "welcome" && !hidden && (
+        <WelcomeHint focusOnOpen={welcomeRequested.current} onDismiss={dismissWelcome} />
       )}
     </div>
   );

@@ -526,8 +526,10 @@ function placardDimensions({ painting, w, h }: Placement): string {
   if (!(widthCm && widthCm > 0 && heightCm && heightCm > 0)) {
     return "Dimensions unavailable (estimated size)";
   }
-  const ratio = Math.sqrt((w * h * 10_000) / (widthCm * heightCm));
-  const tag = ratio < 0.99 ? "resized to fit" : ratio > 1.01 ? "enlarged to fit" : "original scale";
+  const widthScale = (w * 100) / widthCm;
+  const heightScale = (h * 100) / heightCm;
+  const original = Math.abs(widthScale - 1) <= 0.01 && Math.abs(heightScale - 1) <= 0.01;
+  const tag = original ? "original scale" : widthScale > 1 && heightScale > 1 ? "enlarged to fit" : "resized to fit";
   return `${heightCm} × ${widthCm} cm (H × W) · (${tag})`;
 }
 

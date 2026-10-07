@@ -32,7 +32,7 @@ export const FEATURED_BY_PERIOD: Record<string, readonly string[]> = {
   "abstract-art": ["wassily-kandinsky", "kazimir-malevich", "piet-mondrian", "paul-klee", "theo-van-doesburg", "hilma-af-klint", "frantisek-kupka"],
   "surrealism": ["giorgio-de-chirico", "salvador-dali", "rene-magritte", "max-ernst", "joan-miro", "frida-kahlo", "leonora-carrington"],
   "american-modernism": ["edward-hopper", "georgia-o-keeffe", "grant-wood", "andrew-wyeth"],
-  "group-of-seven": ["emily-carr", "tom-thomson"],
+  "group-of-seven": ["emily-carr", "tom-thomson", "a-y-jackson"],
   "mexican-muralism": ["diego-rivera", "david-alfaro-siqueiros", "jose-clemente-orozco"],
   "abstract-expressionism": ["jackson-pollock", "mark-rothko", "willem-de-kooning", "barnett-newman", "joan-mitchell"],
   "pop-art": ["andy-warhol", "roy-lichtenstein", "david-hockney", "jasper-johns"],

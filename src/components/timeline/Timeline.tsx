@@ -38,7 +38,6 @@ import { Axis } from "./Axis";
 import { FilterDropdown, Filter } from "./FilterDropdown";
 import { ArtistCard } from "./ArtistCard";
 import { SourceLink } from "./SourceLink";
-import { WelcomeHint } from "./WelcomeHint";
 import { FEATURED_ARTIST_SLUGS } from "./featured-artists";
 
 export type ViewName = "wall" | "stars";
@@ -103,7 +102,7 @@ const TimelineHeader = memo(function TimelineHeader({
           <button type="button" aria-pressed={showAll} onClick={() => onCollection(true)}>All artists</button>
         </nav>
       </div>
-      <FilterDropdown periods={periods} artists={artists} filter={filter} onChange={onFilter} />
+      <FilterDropdown periods={periods} artists={artists} filter={filter} onChange={onFilter} hidden={inert} showAll={showAll} onCollection={onCollection} />
     </header>
   );
 });
@@ -849,7 +848,6 @@ export function Timeline({ data }: { data: TimelineData }) {
               </a>
             </span>
             <SourceLink className="tl-source" />
-            <WelcomeHint hidden={!!selected} />
           </span>
         </div>
       </footer>

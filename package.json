@@ -4,7 +4,7 @@
   "private": true,
   "description": "A Walkable History of Art: a zoomable timeline and 3D galleries of real paintings, all from Wikipedia.",
   "license": "MIT",
-  "homepage": "https://art-history.artfrompixels.com",
+  "homepage": "https://artmuseum.artfrompixels.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/justdataplease/art-history-museum.git"

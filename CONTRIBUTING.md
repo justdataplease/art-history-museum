@@ -34,8 +34,9 @@ npm run dev          # http://localhost:3000, reads data/cache/museum.json
 ```
 
 The repo ships with a complete ingest snapshot, so you don't need a database
-or network access to Wikipedia to work on the app. See the README for the
-ingest, the optional Postgres backend and deployment.
+or API access to Wikipedia to start the app; artwork images still load from
+Wikimedia. See the [development guide](docs/DEVELOPMENT.md) for collection
+updates, the optional Postgres backend and deployment.
 
 If you run the ingest, set `WIKI_USER_AGENT` to your own contact (see
 [`.env.example`](.env.example)). Wikimedia's API policy asks every client to

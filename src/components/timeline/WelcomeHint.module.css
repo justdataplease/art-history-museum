@@ -1,21 +1,7 @@
-.help {
-  pointer-events: auto;
-  font-size: inherit;
-  color: var(--gold-ink);
-  padding: 4px 2px;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  white-space: nowrap;
-}
-
-:global(.view-stars) .help {
-  color: var(--gold-soft);
-}
-
 .panel {
   position: fixed;
   right: 24px;
-  bottom: calc(var(--foot, 52px) + 18px);
+  top: var(--top, 122px);
   z-index: 80;
   width: 354px;
   max-width: calc(100% - 36px);
@@ -107,7 +93,6 @@
   color: var(--ink-soft);
 }
 
-.help:focus-visible,
 .panel button:focus-visible {
   outline: 2px solid var(--gold-ink);
   outline-offset: 3px;

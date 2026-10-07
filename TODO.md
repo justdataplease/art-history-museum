@@ -7,7 +7,7 @@ Ticked items are done and verified.
 
 The full catalogue, local production checks and one-minute tour are
 complete. The updated museum is deployed at
-https://art-history.artfrompixels.com. GitHub publicity, launch hosting
+https://artmuseum.artfrompixels.com. GitHub publicity, launch hosting
 changes and social posts are deferred at the owner's request. Painters
 without any usable sourced works still need more source material.
 
@@ -93,7 +93,7 @@ snapshot counts.
 - [x] Jump (Space) and crouch (C / Ctrl) in first person.
 - [x] Room signs, wall labels and light fixtures take surface effects like
       the walls do.
-- [x] Measured perf-probe numbers in the README.
+- [x] Measured perf-probe numbers in the development guide.
 - [x] Gallery era, theme and music for the new periods.
 
 ## Timeline
@@ -118,10 +118,10 @@ snapshot counts.
 
 ## Release
 
-- [x] Custom domain: https://art-history.artfrompixels.com
+- [x] Custom domain: https://artmuseum.artfrompixels.com
 - [x] Rename the repository to justdataplease/art-history-museum.
 - [x] Point the README, package.json homepage and repo homepage at
-      https://art-history.artfrompixels.com.
+      https://artmuseum.artfrompixels.com.
 - [x] Plain-language pass on README / CONTRIBUTING (no em dashes, no
       marketing tone) with the final counts.
 - [x] Full production build + e2e / error-sweep / perf-probe / suite-check
