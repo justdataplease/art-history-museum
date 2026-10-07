@@ -122,7 +122,7 @@ const bands = await page.locator(".band").count();
 const periodGroups = await page.locator(".period-group").count();
 const artistNodes = await page.locator(".artist-node").count();
 check(periodGroups === 35, `all period wrappers rendered: ${periodGroups}`);
-check(artistNodes === 524, `all artist nodes rendered: ${artistNodes}`);
+check(artistNodes === 526, `all artist nodes rendered: ${artistNodes}`);
 check(bands > 0 && bands <= periodGroups, `visible period bands rendered: ${bands}/${periodGroups}`);
 const railLabels = await page.locator(".rail-label:not(.offscreen)").count();
 check(railLabels >= 16, `period titles identifiable at overview: ${railLabels}/${periodGroups}`);

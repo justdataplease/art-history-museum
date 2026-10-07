@@ -9,7 +9,7 @@ Wikimedia Commons.
 
 **One-minute tour:** [`demo/museum-demo.mp4`](demo/museum-demo.mp4)
 
-- 35 periods, 524 artists and 82,134 works, from Li Cheng to Banksy
+- 35 periods, 526 artists and 82,139 works, from Li Cheng to Banksy
 - Each artist's paintings hang in the order they were painted, using their
   recorded physical dimensions where available
 - Big collections get a suite of rooms, with no room-count limit
@@ -42,7 +42,7 @@ open their placard, then **Enter the Gallery**.
   with the doorways lined up, up to 12 paintings or 14 prints per room.
   Each room is signed with its years ("II · 1460 – 1490"), and a room
   navigator jumps between them.
-- **Measured size.** 65,758 works have physical dimensions from Wikidata.
+- **Measured size.** 65,761 works have physical dimensions from Wikidata.
   Monumental works are reduced to fit the hall, and tiny works are enlarged
   enough to see. The work with the most Wikipedia pageviews over the last 12
   months gets the far wall.
@@ -162,7 +162,7 @@ time and refreshed hourly.
 
 ## How it's built
 
-- **Next.js 16** (App Router). The timeline and all 524 galleries are
+- **Next.js 16** (App Router). The timeline and all 526 galleries are
   prerendered; data comes from the JSON snapshot or Postgres.
 - **React Three Fiber / three.js** galleries that only render when something
   changes (`frameloop="demand"`), so standing still costs no frames.

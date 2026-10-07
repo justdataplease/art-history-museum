@@ -7,15 +7,16 @@ Ticked items are done and verified.
 
 The full catalogue, local production checks and one-minute tour are
 complete. The updated museum is deployed at
-https://art-history.artfrompixels.com. Repository, hosting and launch tasks
-remain below. Artists with too few sourced works still need more source
-material.
+https://art-history.artfrompixels.com. GitHub publicity, launch hosting
+changes and social posts are deferred at the owner's request. Painters
+without any usable sourced works still need more source material.
 
 ## Collection: missing artists
 
 Names are checked against Wikidata, Wikipedia articles, Commons images and
-links from period articles. A newly added artist needs at least 5 sourced
-works to get a room. See the README for the verified snapshot counts.
+links from period articles. A painter with any usable sourced works can get
+a room; small catalogues are included too. See the README for the verified
+snapshot counts.
 
 - [x] Add the 76 "tier A" painters any survey covers, e.g. Ghirlandaio,
       Crivelli, Campin, Hugo van der Goes, Cima da Conegliano, Orazio
@@ -42,14 +43,16 @@ works to get a room. See the README for the verified snapshot counts.
       CC BY 3.0 recording on Commons, mirrored locally with attribution.
 - [x] Add Hilma af Klint, František Kupka and Candido Portinari: the full
       source queries now provide enough works for their galleries.
-- [ ] Artists with fewer than 5 sourced works: Qi Baishi (3), Oskar
-      Kokoschka (2), and many living post-war painters. More illustrated
-      Wikidata entries or Wikipedia articles would bring them in.
+- [x] Include small catalogues too: Qi Baishi (3 works) and Oskar
+      Kokoschka (2). A painter no longer needs five sourced works to be
+      included in the seed list.
+- [ ] Further artists without usable Wikimedia work records, including
+      living post-war painters, still need more source material.
 
 - [x] Complete catalogues for every painter in the seed list: hang every
       sourced painting with a usable image, after the usual quality checks.
       The ingest has no catalogue-size cap or small-gallery gate, and all
-      524 artist caches have been regenerated and verified.
+      526 artist caches have been regenerated and verified.
 - [x] Verify each sourced version in series such as Sunflowers, Olive Trees
       and Les Alyscamps. Remove series headings when individual paintings
       are present, while preserving physical diptychs, triptychs,
@@ -125,11 +128,10 @@ works to get a room. See the README for the verified snapshot counts.
       pass on the final snapshot.
 - [x] Record the one-minute tour (`npm run build`, then
       `node scripts/record-demo.mjs`): Star Map, Van Gogh, Fra Angelico.
-- [ ] Commit to `main` (no co-author lines).
+- [x] Commit to `main` (no co-author lines).
 - [x] Redeploy the updated museum to Vercel production.
-- [ ] Push the cleaned git history (Co-Authored-By lines removed; ready in
-      the scratch rewrite, needs a force-push the owner runs or allows)
-      before the repository goes public.
+- [x] Push the cleaned git history (Co-Authored-By lines removed from
+      `main`; verified against the remote).
 - [ ] Make the GitHub repository public; set description, homepage and
       topics; turn on private vulnerability reporting.
 - [ ] Hosting for launch day: Vercel Pro for the month, or serve the music
