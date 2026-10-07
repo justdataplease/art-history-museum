@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Welcome message alternatives · A Walkable History of Art</title>
+  <style>
+    :root { color-scheme: light; --paper:#f3f1ee; --wall:#e7e3e0; --ink:#252220; --soft:#595450; --gold:#7c5d2e; --line:#25222024; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--wall); font:14px/1.5 system-ui,sans-serif; }
+    button,a { -webkit-tap-highlight-color:transparent; }
+    button { font:inherit; cursor:pointer; color:inherit; }
+    button:focus-visible,a:focus-visible { outline:3px solid #a57f46; outline-offset:4px; }
+    button { border:0; background:none; }
+    [hidden] { display:none!important; }
+    h1,h2,h3,p { margin:0; }
+    .serif { font-family:Georgia,serif; }
+    .eyebrow { color:var(--gold); font-size:10px; letter-spacing:.17em; text-transform:uppercase; font-weight:650; }
+    .shell { height:100dvh; display:grid; grid-template-rows:auto minmax(0,1fr) auto; }
+    .preview-bar { padding:15px 24px; background:var(--paper); border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:20px; }
+    .preview-title { font-size:16px; font-weight:500; }
+    .preview-title small { display:block; color:var(--soft); font:11px system-ui,sans-serif; margin-top:3px; }
+    .choices { display:flex; gap:4px; background:#e7e3e0; padding:4px; border-radius:8px; }
+    .choice { padding:9px 14px; border-radius:5px; font-size:12px; white-space:nowrap; }
+    .choice[aria-pressed=true] { background:var(--paper); box-shadow:0 1px 4px #25222015; }
+    .choice b { margin-right:6px; font-size:10px; color:var(--gold); }
+    iframe { display:block; border:0; width:100%; height:100%; background:var(--wall); }
+    .preview-note { padding:12px 24px; display:flex; justify-content:space-between; align-items:center; gap:16px; background:var(--paper); border-top:1px solid var(--line); color:var(--soft); font-size:12px; }
+    .preview-note strong { color:var(--ink); font-weight:500; }
+    .preview-note button { text-decoration:underline; white-space:nowrap; font-size:12px; }
+    .stage { height:100dvh; overflow:hidden; position:relative; background:radial-gradient(ellipse at top,#f7f5f3,transparent 80%),var(--wall); }
+    .site-header { position:absolute; inset:0 0 auto; padding:24px 30px; display:flex; justify-content:space-between; gap:20px; align-items:center; }
+    .site-title { font-family:Georgia,serif; font-size:17px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; }
+    .site-title small { display:block; font-size:13px; text-transform:none; font-style:italic; letter-spacing:0; color:var(--soft); margin-top:5px; }
+    .view-switch { border:1px solid var(--line); border-radius:99px; padding:4px; display:flex; font-size:10px; letter-spacing:.1em; text-transform:uppercase; white-space:nowrap; }
+    .view-switch span { padding:8px 12px; }
+    .view-switch span:first-child { background:#d9d2ca; border-radius:99px; }
+    .timeline { position:absolute; inset:130px 6% 95px; display:flex; flex-direction:column; gap:18px; justify-content:center; opacity:.85; }
+    .period { position:relative; width:82%; padding:13px 20px 15px; border-top:1px solid var(--line); }
+    .period:nth-child(2) { margin-left:12%; }
+    .period:nth-child(3) { margin-left:4%; }
+    .period:nth-child(4) { margin-left:18%; }
+    .period:nth-child(5) { margin-left:9%; }
+    .period h2 { font-family:Georgia,serif; font-weight:500; font-size:23px; margin-bottom:8px; }
+    .artists { display:flex; gap:32px; align-items:center; }
+    .artist { display:flex; gap:8px; align-items:center; font-size:12px; color:var(--soft); white-space:nowrap; }
+    .portrait { width:29px; height:29px; border-radius:50%; background:#c4b7a7; display:grid; place-items:center; font:12px Georgia,serif; color:#463d33; }
+    .lifeline { height:1px; width:64px; background:#a18b6b; margin-left:5px; }
+    .stage.guiding .period { opacity:.22; }
+    .stage.guiding .period.target { opacity:1; background:#f8f5ef; box-shadow:0 0 0 2px #a57f46; border-radius:4px; }
+    .stage.guiding .period.target .artist.target-artist-active { background:#e5d8c6; outline:2px solid #7c5d2e; outline-offset:6px; border-radius:3px; }
+    .axis { position:absolute; bottom:65px; left:6%; right:6%; border-top:1px solid var(--line); display:flex; justify-content:space-between; padding-top:7px; font-size:10px; color:var(--soft); letter-spacing:.06em; }
+    .site-footer { position:absolute; left:30px; right:30px; bottom:20px; display:flex; justify-content:space-between; gap:15px; color:var(--soft); font-size:10px; }
+    .help { color:var(--gold); font-size:11px; text-decoration:underline; }
+    .welcome { width:min(690px,calc(100% - 36px)); max-height:calc(100dvh - 36px); overflow:auto; border:1px solid #bfb5a6; background:#f7f4ee; color:var(--ink); padding:40px; box-shadow:0 24px 100px #25222030; }
+    .welcome::backdrop { background:#25222047; backdrop-filter:blur(3px); }
+    .close { position:absolute; right:16px; top:12px; width:32px; height:32px; font-size:24px; font-weight:300; color:var(--soft); }
+    .welcome h1 { font:400 42px/1.1 Georgia,serif; letter-spacing:-.025em; margin:12px 0 14px; max-width:490px; }
+    .lede { color:var(--soft); max-width:450px; font-size:14px; line-height:1.7; }
+    .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:22px; margin:32px 0; }
+    .step { padding-top:16px; border-top:1px solid #b6a68e; }
+    .step svg { width:100%; height:60px; margin:2px 0 14px; color:#827055; }
+    .step h2 { font:400 19px Georgia,serif; margin-bottom:8px; }
+    .step p { color:var(--soft); font-size:12px; line-height:1.7; }
+    .step-no { display:block; font-size:10px; color:var(--gold); margin-bottom:8px; letter-spacing:.12em; }
+    .actions { display:flex; justify-content:space-between; align-items:center; gap:20px; padding-top:20px; border-top:1px solid var(--line); }
+    .primary { background:var(--ink); color:#f7f4ee; padding:12px 20px; border-radius:2px; font-size:12px; }
+    .quiet { color:var(--soft); font-size:12px; }
+    .once { margin-top:14px; font-size:10px; color:var(--soft); }
+    .corner { position:absolute; z-index:2; bottom:91px; right:30px; width:354px; max-width:calc(100% - 36px); padding:26px; background:#f7f4ee; border:1px solid #bfb5a6; box-shadow:0 10px 45px #2522201d; }
+    .corner h1 { font:400 27px/1.15 Georgia,serif; margin:9px 0 18px; }
+    .corner ol { list-style:none; margin:0; padding:0; counter-reset:steps; }
+    .corner li { position:relative; padding:0 0 15px 31px; counter-increment:steps; font-size:12px; color:var(--soft); line-height:1.6; }
+    .corner li::before { content:counter(steps,decimal-leading-zero); position:absolute; left:0; top:1px; color:var(--gold); font-size:10px; }
+    .corner li strong { display:block; font-weight:600; color:var(--ink); }
+    .corner .primary { width:100%; margin-top:6px; }
+    .corner .once { text-align:center; }
+    .tour { position:absolute; left:6%; top:50%; margin:0; transform:translateY(-50%); width:350px; max-width:calc(100% - 36px); padding:28px; }
+    .tour::backdrop { background:#25222010; }
+    .tour h1 { font-size:29px; margin-top:12px; }
+    .tour .lede { font-size:13px; }
+    .tour .actions { margin-top:22px; padding-top:18px; }
+    .tour .progress { display:flex; gap:5px; margin-top:18px; }
+    .tour .progress i { height:3px; width:25px; background:#d1c8bc; }
+    .tour .progress i.current { background:var(--gold); }
+    .tour .back { color:var(--soft); font-size:12px; }
+    .gallery-demo { position:absolute; inset:120px 6% 100px; display:grid; place-items:center; }
+    .gallery-demo svg { width:min(760px,100%); max-height:100%; }
+    .gallery-demo p { position:absolute; bottom:16px; color:var(--soft); font-size:12px; }
+    @media (max-width:700px) {
+      .preview-bar { padding:12px 14px; display:block; }
+      .preview-title { font-size:14px; margin-bottom:11px; }
+      .choices { width:100%; }
+      .choice { flex:1; padding:9px 5px; font-size:10px; }
+      .choice b { margin-right:3px; }
+      .preview-note { padding:10px 14px; font-size:10px; }
+      .site-header { padding:22px 20px; display:block; }
+      .site-title { font-size:13px; letter-spacing:.06em; }
+      .site-title small { font-size:11px; }
+      .view-switch { display:inline-flex; margin-top:15px; font-size:9px; }
+      .timeline { inset:140px 5% 100px; gap:8px; }
+      .period { width:91%; padding:9px 10px; }
+      .period:nth-child(n) { margin-left:0; }
+      .period h2 { font-size:20px; }
+      .artists { gap:14px; }
+      .artist { font-size:10px; gap:5px; }
+      .portrait { width:23px; height:23px; font-size:10px; }
+      .lifeline { display:none; }
+      .site-footer { left:20px; right:20px; font-size:9px; }
+      .site-footer > span { max-width:200px; }
+      .welcome { padding:25px; }
+      .welcome h1 { font-size:31px; margin:9px 0 12px; }
+      .lede { font-size:12px; }
+      .steps { display:block; margin:20px 0; }
+      .step { padding-top:12px; margin-top:12px; position:relative; padding-left:28px; }
+      .step-no { position:absolute; left:0; top:15px; }
+      .step svg { display:none; }
+      .step h2 { font-size:18px; margin-bottom:4px; }
+      .step p { font-size:11px; }
+      .actions { gap:10px; padding-top:15px; }
+      .primary { padding:11px 15px; font-size:11px; }
+      .quiet { font-size:10px; }
+      .once { font-size:9px; }
+      .corner { right:18px; bottom:94px; padding:22px; }
+      .corner h1 { font-size:25px; }
+      .tour { left:18px; top:auto; bottom:100px; transform:none; width:calc(100% - 36px); }
+      .tour h1 { font-size:27px; }
+      .tour .lede { font-size:12px; }
+      .stage.guiding .timeline { justify-content:flex-start; }
+      .stage.guiding .period:not(.target) { display:none; }
+      .stage.guiding .period.target { margin-top:15px; }
+      .gallery-demo { inset:165px 6% 350px; }
+      .gallery-demo p { display:none; }
+    }
+    @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto; } }
+  </style>
+</head>
+<body>
+  <main class="shell" id="shell">
+    <header class="preview-bar">
+      <h1 class="preview-title serif">A first visit to the museum<small>Three interactive HTML alternatives · preview only</small></h1>
+      <nav class="choices" aria-label="Welcome message alternatives">
+        <button class="choice" data-option="card" aria-pressed="false"><b>01</b> Welcome card</button>
+        <button class="choice" data-option="corner" aria-pressed="true"><b>02</b> Corner hint</button>
+        <button class="choice" data-option="tour" aria-pressed="false"><b>03</b> Guided tour</button>
+      </nav>
+    </header>
+    <iframe id="preview" title="Interactive welcome message preview"></iframe>
+    <footer class="preview-note"><p id="option-note"><strong>Recommended:</strong> a small hint that leaves the timeline visible.</p><button id="replay">Replay first visit</button></footer>
+  </main>
+
+  <main class="stage" id="stage" hidden>
+    <header class="site-header"><div class="site-title">A Walkable History of Art<small>Every artist, every work, under one roof.</small></div><div class="view-switch" aria-hidden="true"><span>Gallery Wall</span><span>Star Map</span></div></header>
+    <section class="timeline" aria-label="Illustrative art history timeline">
+      <div class="period"><h2>Renaissance</h2><div class="artists"><span class="artist"><i class="portrait">L</i> Leonardo da Vinci <i class="lifeline"></i></span><span class="artist"><i class="portrait">M</i> Michelangelo <i class="lifeline"></i></span></div></div>
+      <div class="period"><h2>Baroque</h2><div class="artists"><span class="artist"><i class="portrait">C</i> Caravaggio <i class="lifeline"></i></span><span class="artist"><i class="portrait">R</i> Rembrandt <i class="lifeline"></i></span></div></div>
+      <div class="period"><h2>Romanticism</h2><div class="artists"><span class="artist"><i class="portrait">T</i> J. M. W. Turner <i class="lifeline"></i></span><span class="artist"><i class="portrait">F</i> Caspar David Friedrich</span></div></div>
+      <div class="period target"><h2>Impressionism</h2><div class="artists"><span class="artist target-artist"><i class="portrait">M</i> Claude Monet <i class="lifeline"></i></span><span class="artist"><i class="portrait">R</i> Pierre-Auguste Renoir</span></div></div>
+      <div class="period"><h2>Post-Impressionism</h2><div class="artists"><span class="artist"><i class="portrait">V</i> Vincent van Gogh <i class="lifeline"></i></span><span class="artist"><i class="portrait">C</i> Paul Cézanne</span></div></div>
+    </section>
+    <div class="gallery-demo" id="gallery-demo" hidden>
+      <svg viewBox="0 0 760 390" aria-label="Illustration of a walkable gallery" role="img"><path d="M30 25H730V365H30Z" fill="#dcd7d0"/><path d="M30 25L245 118H515L730 25M30 365L245 265H515L730 365" fill="#eae6df" stroke="#a69c8e"/><path d="M245 118H515V265H245Z" fill="#f0ede7" stroke="#a69c8e"/><path d="M30 25L245 118V265L30 365ZM730 25L515 118V265L730 365Z" fill="#d5cec3" stroke="#a69c8e"/><path d="M66 115L155 141V224L66 248Z" fill="#bdac8f" stroke="#554b3e" stroke-width="7"/><path d="M605 141L694 115V248L605 224Z" fill="#939f96" stroke="#554b3e" stroke-width="7"/><path d="M318 151H443V230H318Z" fill="#a6aaa0" stroke="#554b3e" stroke-width="6"/><path d="M318 199Q350 171 383 199T443 191V230H318Z" fill="#788b78"/><path d="M318 206Q361 213 401 204T443 211V230H318Z" fill="#7d9292"/><path d="M335 320H425" stroke="#8d806d" stroke-width="4"/><path d="M380 346V305M380 305L372 314M380 305L388 314" stroke="#7c5d2e" stroke-width="2" fill="none"/></svg>
+      <p>Move through the rooms and get closer to each work.</p>
+    </div>
+    <div class="axis" aria-hidden="true"><span>1400</span><span>1500</span><span>1600</span><span>1700</span><span>1800</span><span>1900</span></div>
+    <footer class="site-footer"><span>Scroll to zoom · Drag to explore · Choose an artist</span><button class="help" id="help">How to explore</button></footer>
+
+    <dialog class="welcome" id="card" aria-labelledby="card-title">
+      <button class="close" data-dismiss="card" aria-label="Close welcome">×</button>
+      <p class="eyebrow">Welcome to the museum</p>
+      <h1 id="card-title">Art history you can<br>walk through.</h1>
+      <p class="lede">Find a period. Meet an artist. Step into a gallery filled with their work.</p>
+      <div class="steps">
+        <section class="step"><span class="step-no">01</span><svg viewBox="0 0 150 60" aria-hidden="true" fill="none" stroke="currentColor"><path d="M5 30H145M25 25V35M55 25V35M85 25V35M115 25V35"/><rect x="50" y="17" width="40" height="26" rx="3" fill="#e4d8c5"/><circle cx="120" cy="19" r="10"/><path d="M127 27L138 38M114 19H126M120 13V25"/></svg><h2>Zoom into a period</h2><p>Click its name, scroll to zoom, or pinch on your phone.</p></section>
+        <section class="step"><span class="step-no">02</span><svg viewBox="0 0 150 60" aria-hidden="true" fill="none" stroke="currentColor"><circle cx="37" cy="27" r="21" fill="#e4d8c5"/><circle cx="37" cy="21" r="6"/><path d="M25 41Q37 24 49 41M72 18H139M72 29H124M72 40H109"/></svg><h2>Choose an artist</h2><p>Click or tap their portrait, then “Enter the Gallery.”</p></section>
+        <section class="step"><span class="step-no">03</span><svg viewBox="0 0 150 60" aria-hidden="true" fill="none" stroke="currentColor"><path d="M8 4L48 17H102L142 4V55L102 45H48L8 55ZM48 17V45M102 17V45"/><rect x="63" y="22" width="24" height="17" fill="#e4d8c5"/><path d="M75 59V48M75 48L71 52M75 48L79 52"/></svg><h2>Walk through their work</h2><p>Explore the rooms and click a work to take a closer look.</p></section>
+      </div>
+      <div class="actions"><button class="primary" data-dismiss="card">Start exploring →</button><span class="quiet">Take your time. There’s no route to follow.</span></div>
+      <p class="once">Shown once on this browser. Reopen it from “How to explore.”</p>
+    </dialog>
+
+    <aside class="corner" id="corner" aria-labelledby="corner-title" hidden>
+      <button class="close" data-dismiss="corner" aria-label="Close welcome hint">×</button>
+      <p class="eyebrow">Your first visit</p>
+      <h1 id="corner-title">From timeline to gallery.</h1>
+      <ol><li><strong>Zoom into a period</strong>Click a period name, scroll, or pinch.</li><li><strong>Choose an artist</strong>Click their portrait, then “Enter the Gallery.”</li><li><strong>Step inside and explore</strong>Walk among their works in a 3D gallery.</li></ol>
+      <button class="primary" data-dismiss="corner">Got it — let’s explore →</button>
+      <p class="once">Shown once · “How to explore” brings it back</p>
+    </aside>
+
+    <dialog class="welcome tour" id="tour" aria-labelledby="tour-title">
+      <button class="close" data-dismiss="tour" aria-label="Skip welcome tour">×</button>
+      <p class="eyebrow" id="tour-count">A quick look · 1 of 3</p>
+      <h1 id="tour-title">Start with a period.</h1>
+      <p class="lede" id="tour-copy">Click a period name to zoom into it. You can also scroll, or pinch on your phone.</p>
+      <div class="progress" aria-hidden="true"><i class="current"></i><i></i><i></i></div>
+      <div class="actions"><button class="back" id="tour-back">Skip tour</button><button class="primary" id="tour-next">Next →</button></div>
+    </dialog>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const validOptions = ['card', 'corner', 'tour'];
+    const option = validOptions.includes(params.get('option')) ? params.get('option') : 'corner';
+    const embedded = params.get('embed') === '1';
+    const key = `museum-welcome-preview:${option}:v1`;
+    const readSeen = () => { try { return localStorage.getItem(key) === 'seen'; } catch { return false; } };
+    const remember = () => { try { localStorage.setItem(key, 'seen'); } catch {} };
+    if (!embedded) {
+      let selected = 'corner';
+      const notes = {
+        card: '<strong>Welcome card:</strong> the clearest explanation, with one dismissal before exploring.',
+        corner: '<strong>Recommended:</strong> a small hint that leaves the timeline visible.',
+        tour: '<strong>Guided tour:</strong> explain one action at a time; more helpful, but more clicks.'
+      };
+      const load = (force = false) => {
+        document.getElementById('preview').src = `${location.pathname}?embed=1&option=${selected}${force ? '&first=1' : ''}`;
+        document.getElementById('option-note').innerHTML = notes[selected];
+        document.querySelectorAll('.choice').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.option === selected)));
+      };
+      document.querySelectorAll('.choice').forEach(button => button.addEventListener('click', () => { selected = button.dataset.option; load(true); }));
+      document.getElementById('replay').addEventListener('click', () => load(true));
+      load();
+    } else {
+      document.getElementById('shell').remove();
+      document.getElementById('stage').hidden = false;
+      const stage = document.getElementById('stage');
+      const panel = document.getElementById(option);
+      let tourStep = 0;
+      const tourSteps = [
+        ['Start with a period.', 'Click a period name to zoom into it. You can also scroll, or pinch on your phone.'],
+        ['Find someone who interests you.', 'Click or tap an artist’s portrait. Their card opens with an “Enter the Gallery” button.'],
+        ['Step inside their gallery.', 'Walk among their works and click one to inspect it. Use W A S D on a computer, or tap the floor on your phone.']
+      ];
+      const updateTour = () => {
+        document.getElementById('tour-title').textContent = tourSteps[tourStep][0];
+        document.getElementById('tour-copy').textContent = tourSteps[tourStep][1];
+        document.getElementById('tour-count').textContent = `A quick look · ${tourStep + 1} of 3`;
+        document.getElementById('tour-next').textContent = tourStep === 2 ? 'Start exploring →' : 'Next →';
+        document.getElementById('tour-back').textContent = tourStep === 0 ? 'Skip tour' : '← Back';
+        document.querySelectorAll('.progress i').forEach((dot, index) => dot.classList.toggle('current', index === tourStep));
+        document.querySelector('.target-artist').classList.toggle('target-artist-active', tourStep === 1);
+        document.querySelector('.timeline').hidden = tourStep === 2;
+        document.getElementById('gallery-demo').hidden = tourStep !== 2;
+      };
+      const close = () => {
+        remember();
+        if (option === 'corner') panel.hidden = true;
+        else panel.close();
+        stage.classList.remove('guiding');
+        document.querySelector('.timeline').hidden = false;
+        document.getElementById('gallery-demo').hidden = true;
+        document.getElementById('help').focus();
+      };
+      const open = () => {
+        if (option === 'corner') { panel.hidden = false; panel.querySelector('.primary').focus(); }
+        else {
+          if (option === 'tour') { tourStep = 0; stage.classList.add('guiding'); updateTour(); }
+          if (!panel.open) panel.showModal();
+        }
+      };
+      document.querySelectorAll('[data-dismiss]').forEach(button => button.addEventListener('click', close));
+      panel.addEventListener('cancel', event => { event.preventDefault(); close(); });
+      if (option === 'corner') document.addEventListener('keydown', event => { if (event.key === 'Escape' && !panel.hidden) close(); });
+      document.getElementById('help').addEventListener('click', open);
+      document.getElementById('tour-next').addEventListener('click', () => { if (tourStep === 2) close(); else { tourStep++; updateTour(); } });
+      document.getElementById('tour-back').addEventListener('click', () => { if (tourStep === 0) close(); else { tourStep--; updateTour(); } });
+      if (!readSeen() || params.get('first') === '1') open();
+    }
+  </script>
+</body>
+</html>

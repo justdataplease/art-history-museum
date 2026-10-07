@@ -190,6 +190,7 @@ export function computeWallLayout(inp: WallInput): WallLayout {
   // into wins; otherwise the one most wholly on screen, then the most specific
   // (shortest) - in the dense 19th century several periods fill any view.
   {
+    const focused = info.get(inp.focus ?? "");
     let sum = 0;
     const u = new Map<string, number>();
     for (const I of info.values()) {
@@ -198,12 +199,13 @@ export function computeWallLayout(inp: WallInput): WallLayout {
       const v =
         Math.pow(I.f, 6) *
         Math.pow(100 / Math.max(10, I.p.endYear - I.p.startYear), 6) *
-        Math.pow(cover, 12) *
-        (I.p.slug === inp.focus ? 1e4 : 1);
+        Math.pow(cover, 12);
       u.set(I.p.slug, v);
       sum += v;
     }
-    for (const I of info.values()) if (I.f > 0) I.f *= (u.get(I.p.slug) ?? 0) / sum;
+    for (const I of info.values()) if (I.f > 0) {
+      I.f *= focused && focused.f > 0 ? Number(I === focused) : (u.get(I.p.slug) ?? 0) / sum;
+    }
   }
 
   const wL = laneP.map((list) =>

@@ -256,11 +256,10 @@ export function computeStarLayout(inp: StarInput): StarLayout {
         smoothstep(need, need + 0.25 * (need / 0.5), visW / w) *
         smoothstep(Math.min(380, w * need * 0.8), Math.min(460, w * need), visW);
       if (f <= 0) continue;
-      const sc =
+      const sc = p.slug === inp.focus ? Infinity :
         f *
         Math.pow(visW / Math.max(1, x1 - x0), 6) *
-        (100 / Math.max(10, p.endYear - p.startYear)) *
-        (p.slug === inp.focus ? 1e4 : 1);
+        (100 / Math.max(10, p.endYear - p.startYear));
       if (sc > score) {
         score = sc;
         best = f;

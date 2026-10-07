@@ -462,13 +462,21 @@ export function Timeline({ data }: { data: TimelineData }) {
    */
   const diveInto = useCallback(
     (p: Period) => {
-      const [y0, y1] = diveYears(p);
+      const w = wRef.current || 1;
+      let [y0, y1] = diveYears(p);
+      // A tradition spanning centuries would otherwise reopen the overview.
+      // Start near the years already in view, with enough room for artist names.
+      if (p.endYear - p.startYear > 400) {
+        const span = Math.min(y1 - y0, w / 6);
+        const centre = clamp(yearAt(w / 2, w, tRef.current), p.startYear + span / 2, p.endYear - span / 2);
+        y0 = centre - span / 2;
+        y1 = centre + span / 2;
+      }
       setFocusP(p.slug);
       if (view !== "wall") {
         zoomToYears(y0, y1);
         return;
       }
-      const w = wRef.current || 1;
       const h = hRef.current;
       const target = clampTransform(frameYears(y0, y1, w), w, 0);
       const L = wallAt(target, w, h, p.slug);
