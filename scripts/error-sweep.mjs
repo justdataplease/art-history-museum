@@ -26,7 +26,7 @@ page.on("console", (msg) => {
 });
 page.on("pageerror", (err) => messages.push(`[pageerror] ${String(err).slice(0, 260)}`));
 page.on("requestfailed", (req) => {
-  if (!req.url().includes("kaspersky"))
+  if (!req.url().includes("kaspersky") && req.failure()?.errorText !== "net::ERR_ABORTED")
     messages.push(`[reqfail] ${req.failure()?.errorText} ${req.url().slice(0, 120)}`);
 });
 
@@ -52,30 +52,20 @@ for (const v of ["Star Map", "Gallery Wall"]) {
 }
 mark("view switches");
 
-// filter: artists tab, pick one, clear
+// A known artist keeps the gallery-entry path stable as the catalogue grows.
 await page.getByRole("button", { name: "Explore" }).click();
 await page.waitForTimeout(500);
 await page.getByRole("button", { name: "Artists" }).click();
 await page.waitForTimeout(500);
-await page.locator(".filter-item").nth(5).click();
+await page.locator(".filter-search input").fill("Caravaggio");
+await page.locator(".filter-item").filter({ hasText: "Caravaggio" }).click();
 await page.waitForTimeout(1600);
 mark("filter artist");
 
 // open a card via filtered node, then ENTER THE GALLERY (real flow)
-for (let i = 0; i < 10; i++) await page.mouse.wheel(0, -200);
-await page.waitForTimeout(800);
-const nodes = await page.locator(".artist-node:not(.dimmed)").all();
-let clicked = false;
-for (const el of nodes) {
-  const box = await el.boundingBox();
-  if (box && box.x > 40 && box.x < 1500 && box.y > 100 && box.y < 800) {
-    await el.click();
-    clicked = true;
-    break;
-  }
-}
-mark("card open attempt (clicked: " + clicked + ")");
-if (clicked) {
+await page.locator('.artist-node[data-slug="caravaggio"]').click();
+mark("card opened");
+{
   await page.waitForTimeout(1200);
   await page.getByRole("button", { name: /Enter the Gallery/i }).click();
   await page.waitForURL(/\/museum\//, { timeout: 15000 });
@@ -105,8 +95,8 @@ if (clicked) {
   }
 }
 
-// visit the thin galleries + a dense one directly
-for (const slug of ["willem-de-kooning", "david-hockney", "vincent-van-gogh", "rembrandt"]) {
+// Thin and dense collections, worldwide room styles and painted screens.
+for (const slug of ["willem-de-kooning", "david-hockney", "vincent-van-gogh", "rembrandt", "shen-zhou", "hokusai", "reza-abbasi", "maruyama-okyo"]) {
   await page.goto(`${BASE}/museum/${slug}`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(13000);
   mark("museum " + slug);
@@ -117,3 +107,4 @@ const uniq = [...new Set(messages)];
 uniq.forEach((m) => console.log(m));
 console.log(`total: ${messages.length}, unique: ${uniq.length}`);
 await browser.close();
+if (messages.some((m) => /^\[(error|pageerror)\]/.test(m))) process.exitCode = 1;

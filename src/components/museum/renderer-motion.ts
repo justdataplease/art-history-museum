@@ -3,33 +3,14 @@
 // canvas only renders while something changes, so frame-rate sampling (the
 // gallery's adaptive resolution) is only meaningful while this is true.
 
-import { useSyncExternalStore } from "react";
-
 let moving = false;
-const listeners = new Set<() => void>();
 
 export function setMoving(next: boolean): void {
-  if (next === moving) return;
   moving = next;
-  listeners.forEach((l) => l());
 }
-
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
-}
-
-const get = () => moving;
-const getServer = () => false;
 
 /** Current value, for per-frame readers (no React subscription). */
-export const isMoving = get;
-
-export function useMoving(): boolean {
-  return useSyncExternalStore(subscribe, get, getServer);
-}
+export const isMoving = (): boolean => moving;
 
 // --------------------------------------------------------- settle tracker
 

@@ -22,13 +22,18 @@ export function Axis({
   for (const y of ticks.minor) minor += `M${Math.round(xOf(y, w, t)) + 0.5} ${base}v-4`;
   for (const y of ticks.mid) mid += `M${Math.round(xOf(y, w, t)) + 0.5} ${base}v-7`;
   for (const y of ticks.major) major += `M${Math.round(xOf(y, w, t)) + 0.5} ${base}v-10`;
+  // Three- and four-digit years need room on both sides of their tick.
+  const labels = ticks.major.filter((year) => {
+    const x = Math.round(xOf(year, w, t));
+    return x >= 18 && x <= w - 18;
+  });
   return (
     <svg className="tl-axis" width={w} height={36} style={{ top }} aria-hidden>
       <path className="ax-base" d={`M0 ${base + 0.5}H${w}`} />
       <path className="ax-minor" d={minor} />
       <path className="ax-mid" d={mid} />
       <path className="ax-major" d={major} />
-      {ticks.major.map((y) => (
+      {labels.map((y) => (
         <text
           key={y}
           x={Math.round(xOf(y, w, t))}

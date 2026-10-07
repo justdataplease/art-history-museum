@@ -17,6 +17,70 @@ export async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function httpCacheFile(url: string): string | null {
+  const dir = process.env.WIKI_HTTP_CACHE;
+  return dir ? path.join(dir, createHash("sha1").update(url).digest("hex") + ".json") : null;
+}
+
+/** Stable item records within the optional HTTP cache; batch order may change. */
+export function readItemCache<T>(name: string): Record<string, T> {
+  const dir = process.env.WIKI_HTTP_CACHE;
+  const file = dir && path.join(dir, name);
+  if (!file || !fs.existsSync(file)) return {};
+  const data = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error(`Invalid item cache: ${name}`);
+  return data;
+}
+
+export function saveItemCache<T>(name: string, records: Record<string, T>): void {
+  const dir = process.env.WIKI_HTTP_CACHE;
+  if (!dir) return;
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, name);
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(records));
+  fs.renameSync(temporary, file);
+}
+
+export function projectClaims(all: Record<string, any[]> | undefined, props: string[]): Record<string, any[]> {
+  const out: Record<string, any[]> = {};
+  for (const prop of props) if (all?.[prop]) out[prop] = all[prop];
+  return out;
+}
+
+/** Parse each indexed full response once, retaining only requested properties. */
+export function readCachedClaims(qids: string[], props: string[], index: Record<string, string>): Map<string, Record<string, any[]>> {
+  const out = new Map<string, Record<string, any[]>>();
+  const dir = process.env.WIKI_HTTP_CACHE;
+  if (!dir) return out;
+  const byResponse = new Map<string, string[]>();
+  for (const qid of qids) {
+    const file = index[qid];
+    if (!file) continue;
+    if (!/^[0-9a-f]{40}\.json$/.test(file)) throw new Error(`Invalid claims cache reference: ${qid}`);
+    if (!byResponse.has(file)) byResponse.set(file, []);
+    byResponse.get(file)!.push(qid);
+  }
+  for (const [file, ids] of byResponse) {
+    const response = path.join(dir, file);
+    if (!fs.existsSync(response)) continue; // An evicted HTTP body can be fetched again.
+    const data = JSON.parse(fs.readFileSync(response, "utf8"));
+    if (!data?.entities || typeof data.entities !== "object" || Array.isArray(data.entities)) throw new Error("wbgetentities returned nothing");
+    for (const qid of ids) {
+      const entity = data.entities[qid];
+      // An incomplete response is not a cached negative lookup. Wikidata's
+      // explicit { missing: ... } entities still yield the usual empty claims.
+      if (entity && typeof entity === "object" && !Array.isArray(entity)) out.set(qid, projectClaims(entity.claims, props));
+    }
+  }
+  return out;
+}
+
+export function indexClaimsResponse(index: Record<string, string>, qids: string[], url: string): void {
+  const file = httpCacheFile(url);
+  if (file && fs.existsSync(file)) for (const qid of qids) index[qid] = path.basename(file);
+}
+
 /** Milliseconds to wait according to a Retry-After header (seconds or HTTP date). */
 function retryAfterMs(res: Response): number | null {
   const v = res.headers.get("retry-after");
@@ -35,17 +99,17 @@ function retryAfterMs(res: Response): number | null {
 export async function fetchJson<T>(
   url: string,
   init: RequestInit = {},
-  retries = 6
+  retries = 6,
+  pace?: <R>(fn: () => Promise<R>) => Promise<R>
 ): Promise<T | null> {
   // WIKI_HTTP_CACHE=<dir>: keep GET responses on disk, so re-running a script
   // (a --dry-run, then the real run) doesn't ask the APIs twice.
   const cacheDir = process.env.WIKI_HTTP_CACHE;
-  const cacheFile =
-    cacheDir && (!init.method || init.method === "GET")
-      ? path.join(cacheDir, createHash("sha1").update(url).digest("hex") + ".json")
-      : null;
+  const cacheFile = !init.method || init.method === "GET" ? httpCacheFile(url) : null;
   if (cacheFile && fs.existsSync(cacheFile)) return JSON.parse(fs.readFileSync(cacheFile, "utf8")) as T | null;
-  const body = await fetchJsonLive<T>(url, init, retries);
+  // Cached responses make no provider request and consume no paced slot.
+  const request = () => fetchJsonLive<T>(url, init, retries);
+  const body = await (pace ? pace(request) : request());
   if (cacheFile) {
     fs.mkdirSync(cacheDir!, { recursive: true });
     fs.writeFileSync(cacheFile, JSON.stringify(body));
@@ -60,6 +124,7 @@ async function fetchJsonLive<T>(url: string, init: RequestInit, retries: number)
     try {
       res = await fetch(url, {
         ...init,
+        signal: init.signal ?? AbortSignal.timeout(60_000),
         headers: { "user-agent": UA, "api-user-agent": UA, accept: "application/json", ...init.headers },
       });
     } catch (err) {
@@ -99,6 +164,39 @@ export function createLimiter(max: number) {
       queue.shift()?.();
     }
   };
+}
+
+/** Concurrency limiter with a minimum spacing between request starts. */
+export function createPacer(maxConcurrent: number, minIntervalMs: number) {
+  let active = 0;
+  let nextStart = 0;
+  const queue: (() => void)[] = [];
+  return async function run<T>(fn: () => Promise<T>): Promise<T> {
+    if (active >= maxConcurrent) await new Promise<void>((r) => queue.push(r));
+    active++;
+    const wait = nextStart - Date.now();
+    nextStart = Math.max(Date.now(), nextStart) + minIntervalMs;
+    if (wait > 0) await sleep(wait);
+    try {
+      return await fn();
+    } finally {
+      active--;
+      queue.shift()?.();
+    }
+  };
+}
+
+/** Split oversized GETs without changing the URLs of other cached batches. */
+export function splitLongRequest<T>(
+  batch: T[],
+  urlFor: (batch: T[]) => string,
+  maxLength = 6000
+): { batch: T[]; url: string }[] {
+  const url = urlFor(batch);
+  if (url.length <= maxLength) return [{ batch, url }];
+  if (batch.length < 2) throw new Error(`API request exceeds ${maxLength} characters for one item`);
+  const midpoint = Math.ceil(batch.length / 2);
+  return [...splitLongRequest(batch.slice(0, midpoint), urlFor, maxLength), ...splitLongRequest(batch.slice(midpoint), urlFor, maxLength)];
 }
 
 export interface WikiSummary {
@@ -172,7 +270,10 @@ export interface SparqlPainting {
   /** Wikidata time precision of that year: 9 = year, 8 = decade, 7 = century. */
   yearPrecision?: number;
   image?: string; // Commons image URL (PD works)
+  images?: string[]; // Other best-rank files can provide a usable whole-work image.
   article?: string; // English Wikipedia article title
+  museumHeld?: boolean;
+  series?: boolean;
 }
 
 // Wikidata classes hung as a "painting": easel paintings plus the forms many
@@ -282,83 +383,105 @@ export async function nonFreeFiles(files: string[]): Promise<Set<string>> {
   return out;
 }
 
-// Paintings by an artist, most-famous first (sitelink count is the fame proxy):
-// every work with an English Wikipedia article — no cap, the museum hangs all
-// of them — followed by the best-known image-only works (Wikidata item with a
-// Commons image but no article), the fallback pool for thin galleries.
+// Page distinct identities before joining dates, images and articles: a work
+// with several statements must never straddle a page and lose an image.
 export async function getPaintingsByArtist(
   artistQid: string,
   opts: { prints?: boolean } = {}
 ): Promise<SparqlPainting[]> {
+  if (!/^Q\d+$/.test(artistQid)) throw new Error(`Invalid artist QID: ${artistQid}`);
   const classes = opts.prints ? [...PAINTING_CLASSES, ...PRINT_CLASSES] : PAINTING_CLASSES;
-  const head = `
-  VALUES ?class { ${classes.map((q) => `wd:${q}`).join(" ")} }
-  ?item wdt:P170 wd:${artistQid} .
-  ?item wdt:P31 ?class .
+  const PAGE = 500;
+  const works = new Map<string, SparqlPainting>();
+  let cursor = "";
+  for (;;) {
+    const query = `
+SELECT ?item ?itemLabel ?sitelinks ?inception ?incPrecision ?image ?article ?museumHeld ?series WHERE {
+  {
+    SELECT DISTINCT ?item WHERE {
+      hint:Query hint:optimizer "None" .
+      ?item wdt:P170 wd:${artistQid} ; wdt:P31 ?type .
+      ${cursor ? `FILTER(STR(?item) > ${JSON.stringify(cursor)})` : ""}
+      VALUES ?class { ${classes.map((q) => `wd:${q}`).join(" ")} }
+      ?type wdt:P279* ?class .
+      hint:Prior hint:gearing "forward" .
+      FILTER(EXISTS { ?item wdt:P18 ?file } || EXISTS {
+        ?a schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> .
+      })
+    }
+    ORDER BY STR(?item)
+    LIMIT ${PAGE}
+  }
   ?item wikibase:sitelinks ?sitelinks .
   OPTIONAL {
     ?item p:P571 ?incStatement .
     ?incStatement a wikibase:BestRank ; psv:P571 ?incValue .
     ?incValue wikibase:timeValue ?inception ; wikibase:timePrecision ?incPrecision .
-  }`;
-  const withArticle = `
-SELECT ?item ?itemLabel ?sitelinks ?inception ?incPrecision ?image ?article WHERE {${head}
-  ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> .
-  OPTIONAL { ?item wdt:P18 ?image . }
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
-}
-ORDER BY DESC(?sitelinks) DESC(?incPrecision)`;
-  const imageOnly = `
-SELECT ?item ?itemLabel ?sitelinks ?inception ?incPrecision ?image WHERE {${head}
-  ?item wdt:P18 ?image .
-  FILTER NOT EXISTS { ?a schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
-}
-ORDER BY DESC(?sitelinks) DESC(?incPrecision)
-LIMIT 100`;
-  const sparql = (q: string) =>
-    fetchJson<any>("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(q));
-  const rows: any[] = [
-    ...((await sparql(withArticle))?.results?.bindings ?? []),
-    ...((await sparql(imageOnly))?.results?.bindings ?? []),
-  ];
-  const seen = new Set<string>();
-  const out: SparqlPainting[] = [];
-  for (const row of rows) {
-    const qid = row.item?.value?.split("/").pop();
-    if (!qid || seen.has(qid)) continue;
-    seen.add(qid);
-    let year: number | undefined;
-    const t = row.inception?.value;
-    if (t) {
-      const m = /^([+-]?\d{1,4})-/.exec(t);
-      if (m) year = parseInt(m[1], 10);
-    }
-    let article: string | undefined;
-    if (row.article?.value) {
-      article = decodeURIComponent(
-        row.article.value.split("/wiki/").pop()!.replace(/_/g, " ")
-      );
-    }
-    const label = row.itemLabel?.value ?? "";
-    if (!label || /^Q\d+$/.test(label)) continue;
-    out.push({
-      qid,
-      label,
-      sitelinks: parseInt(row.sitelinks?.value ?? "0", 10),
-      year,
-      yearPrecision: row.incPrecision?.value ? parseInt(row.incPrecision.value, 10) : undefined,
-      image: row.image?.value,
-      article,
-    });
   }
-  return out;
+  OPTIONAL { ?item wdt:P18 ?image . }
+  OPTIONAL { ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }
+  OPTIONAL {
+    ?item (wdt:P195|wdt:P276) ?institution .
+    ?institution wdt:P31/wdt:P279* wd:Q33506 .
+    BIND(true AS ?museumHeld)
+  }
+  OPTIONAL {
+    VALUES ?seriesClass { wd:Q15727816 wd:Q18573970 wd:Q19960510 }
+    ?item wdt:P31 ?seriesClass .
+    BIND(true AS ?series)
+  }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+ORDER BY STR(?item) DESC(?incPrecision)`;
+    const data = await fetchJson<any>("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(query));
+    if (!Array.isArray(data?.results?.bindings)) throw new Error(`Incomplete catalogue response for ${artistQid}`);
+    const rows: any[] = data.results.bindings;
+    const identities = new Set<string>();
+    for (const row of rows) {
+      const uri: string | undefined = row.item?.value;
+      const qid = uri?.split("/").pop();
+      if (!uri || !qid || !/^Q\d+$/.test(qid)) throw new Error(`Invalid catalogue identity for ${artistQid}`);
+      identities.add(uri);
+      const existing = works.get(qid);
+      if (existing) {
+        if (row.image?.value && !existing.images!.includes(row.image.value)) existing.images!.push(row.image.value);
+        continue;
+      }
+      const article = row.article?.value ? decodeURIComponent(row.article.value.split("/wiki/").pop()!.replace(/_/g, " ")) : undefined;
+      const sourceFile = row.image?.value ? decodeURIComponent(row.image.value.split("/Special:FilePath/").pop()!).replace(/_/g, " ").replace(/\.[^.]+$/, "") : undefined;
+      const label = row.itemLabel?.value && !/^Q\d+$/.test(row.itemLabel.value)
+        ? row.itemLabel.value : article ?? sourceFile;
+      if (!label) throw new Error(`No source title for catalogue work ${qid}`);
+      const date = row.inception?.value && /^([+-]?\d+)-/.exec(row.inception.value);
+      works.set(qid, {
+        qid,
+        label,
+        sitelinks: parseInt(row.sitelinks?.value ?? "0", 10),
+        year: date ? parseInt(date[1], 10) : undefined,
+        yearPrecision: row.incPrecision?.value ? parseInt(row.incPrecision.value, 10) : undefined,
+        image: row.image?.value,
+        images: row.image?.value ? [row.image.value] : [],
+        article,
+        museumHeld: row.museumHeld?.value === "true",
+        series: row.series?.value === "true",
+      });
+    }
+    if (identities.size < PAGE) break;
+    const last = [...identities].sort().pop()!;
+    if (last <= cursor) throw new Error(`Catalogue pagination stalled for ${artistQid}`);
+    cursor = last;
+  }
+  return [...works.values()].sort((a, b) =>
+    Number(b.museumHeld) - Number(a.museumHeld) || b.sitelinks - a.sitelinks || a.qid.localeCompare(b.qid)
+  );
 }
 
 // Article titles in an English Wikipedia category (e.g. "Category:Paintings
-// by X"), following continuation, plus one level of subcategories named for
+// by X"), following continuation and subcategories named for
 // the same artist ("Category:Self-portraits by Rembrandt").
-export async function getCategoryMembers(category: string, artist?: string): Promise<string[]> {
+export async function getCategoryMembers(category: string, artist?: string, visited = new Set<string>()): Promise<string[]> {
+  if (visited.has(category)) return [];
+  visited.add(category);
   const titles: string[] = [];
   const subcats: string[] = [];
   let cont: string | undefined;
@@ -371,14 +494,15 @@ export async function getCategoryMembers(category: string, artist?: string): Pro
       continue?: { cmcontinue?: string };
       query?: { categorymembers?: { title: string; ns: number }[] };
     }>(url);
-    for (const m of data?.query?.categorymembers ?? []) {
+    if (!Array.isArray(data?.query?.categorymembers)) throw new Error(`Incomplete category response: ${category}`);
+    for (const m of data.query.categorymembers) {
       if (m.ns === 0) titles.push(m.title);
       else if (artist && m.title.includes(`by ${artist}`)) subcats.push(m.title);
     }
     cont = data?.continue?.cmcontinue;
   } while (cont);
   for (const sub of subcats) {
-    for (const t of await getCategoryMembers(sub)) if (!titles.includes(t)) titles.push(t);
+    for (const t of await getCategoryMembers(sub, artist, visited)) if (!titles.includes(t)) titles.push(t);
   }
   return titles;
 }

@@ -24,7 +24,7 @@ ingest or the seed list, never to edit `data/cache/` by hand.
 
 ## Getting started
 
-You need Node.js 20.9 or newer. The browser checks use Playwright with an
+You need Node.js 20.12 or newer. The browser checks use Playwright with an
 installed Google Chrome (they drive real-GPU Chrome); `npx playwright install chrome`
 sets one up if you don't have it.
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, type ComponentRef, type RefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { PointerLockControls } from "@react-three/drei";
+import { PointerLockControls } from "@react-three/drei/core/PointerLockControls";
 import * as THREE from "three";
 import gsap from "gsap";
 import {

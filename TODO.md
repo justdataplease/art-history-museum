@@ -3,24 +3,19 @@
 What's left before and after the public launch. Contributions welcome.
 Ticked items are done and verified.
 
-## Next session: start here
+## Remaining release steps
 
-1. Finish the worldwide ingest. `scripts/seed.ts` already has the new
-   periods and painters and `scripts/lib/wiki.ts` the new painting formats,
-   but `data/cache/` hasn't been regenerated with them yet (it is still the
-   verified 342-artist snapshot). Run the ingest, then `npm run repair-data`,
-   and vet Mughal/Persian/East Asian images (no book covers, bindings,
-   calligraphy-only pages, seals or box lids).
-2. Complete catalogues for the top masters (below).
-3. Re-fit the timeline for the bigger collection, then the cleanup passes.
-4. Final build and checks, record the video, commit and deploy.
+The full catalogue, local production checks and one-minute tour are
+complete. The updated museum is deployed at
+https://art-history.artfrompixels.com. Repository, hosting and launch tasks
+remain below. Artists with too few sourced works still need more source
+material.
 
 ## Collection: missing artists
 
-Added 109 artists (now 27 periods, 342 artists, 8,376 works).
-Checked against Wikidata (painting articles with an English Wikipedia
-article, Commons images, sitelinks, links from the period articles), not from
-memory. An artist needs at least 5 works on Wikipedia to get a room.
+Names are checked against Wikidata, Wikipedia articles, Commons images and
+links from period articles. A newly added artist needs at least 5 sourced
+works to get a room. See the README for the verified snapshot counts.
 
 - [x] Add the 76 "tier A" painters any survey covers, e.g. Ghirlandaio,
       Crivelli, Campin, Hugo van der Goes, Cima da Conegliano, Orazio
@@ -34,8 +29,8 @@ memory. An artist needs at least 5 works on Wikipedia to get a room.
       would have had one artist, so Tamara de Lempicka hangs with Cubism.
 - [x] Fix the wrong QID in `PAINTING_CLASSES` (Q1404472 is "Italian
       Renaissance", not "group of paintings").
-- [ ] Painters from around the world (seed and formats ready, ingest not run yet) (data-backed, 18 regions): all 133
-      tier A plus key names from thin regions (about 190). New periods:
+- [x] Regenerate and verify painters from around the world (18 regions),
+      including key names from thin regions. New periods:
       Chinese painting, Japanese painting, Ukiyo-e, Indian painting, Persian
       miniature, Cretan School, Group of Seven, Cusco School.
 - [x] New painting formats in the ingest: scrolls, screens, miniatures,
@@ -43,27 +38,27 @@ memory. An artist needs at least 5 works on Wikipedia to get a room.
       masters only.
 - [x] Gallery styles and music for the new periods (East Asian gallery,
       print room, miniature cabinet), with locally mirrored recordings.
-- [ ] Japanese shamisen / koto recording for the print room (none freely
-      licensed on Commons yet; it borrows the East Asian list).
-- [ ] Famous but not hangable yet (no free images and fewer than 5 articles):
-      most living post-war painters, plus Hilma af Klint, Kupka, Qi Baishi,
-      Kokoschka, Portinari. Improving their Wikidata entries would bring them in.
+- [x] Japanese koto recording for the print room: Torsodog's
+      CC BY 3.0 recording on Commons, mirrored locally with attribution.
+- [x] Add Hilma af Klint, František Kupka and Candido Portinari: the full
+      source queries now provide enough works for their galleries.
+- [ ] Artists with fewer than 5 sourced works: Qi Baishi (3), Oskar
+      Kokoschka (2), and many living post-war painters. More illustrated
+      Wikidata entries or Wikipedia articles would bring them in.
 
-- [ ] Complete catalogues for the top masters (about 40: Van Gogh,
-      Rembrandt, Monet, Vermeer, Rubens, Titian…): hang every painting
-      Wikidata lists with a free Commons image, museum-held works first,
-      after the usual quality checks. Today works without their own article
-      are capped at 100 per artist, so Van Gogh hangs only 9 of the
-      Kröller-Müller's 95 paintings (The Sower, Still Life with a Plate of
-      Onions, Haystacks in Provence, The Good Samaritan… are missing).
-      Everyone else keeps the current limit.
-- [ ] Series articles (Sunflowers, Olive Trees, Les Alyscamps) hang one
-      version; the complete catalogues should hang each museum's version.
+- [x] Complete catalogues for every painter in the seed list: hang every
+      sourced painting with a usable image, after the usual quality checks.
+      The ingest has no catalogue-size cap or small-gallery gate, and all
+      524 artist caches have been regenerated and verified.
+- [x] Verify each sourced version in series such as Sunflowers, Olive Trees
+      and Les Alyscamps. Remove series headings when individual paintings
+      are present, while preserving physical diptychs, triptychs,
+      altarpieces and painted screens.
 
 ## Data and ingest
 
-- [x] Re-run the full ingest and enrich so the snapshot picks up every
-      pipeline fix (`scripts/repair-data.ts`).
+- [x] Refresh the full collection through ingest, enrichment and repair;
+      verify sourced images, dates, sizes and credits.
 - [x] Remove artist-biography and other non-artwork articles that slipped in
       as "paintings".
 - [x] Fix works showing the wrong image (e.g. a Francis Bacon flagship showing
@@ -72,7 +67,7 @@ memory. An artist needs at least 5 works on Wikipedia to get a room.
       check misses images that are only PD in the US.
 - [x] Image and portrait credits (author, licence, file page) for every
       image (`ImageCredit` in `src/lib/types.ts`). The artist card and the
-      inspect view already render them; the data doesn't carry them yet.
+      inspect view render the credits from the snapshot.
 - [x] Prefer Wikidata preferred-rank dates and keep date precision
       ("c. 1500", decades).
 - [x] Wrong Wikipedia article resolved for the Symbolism period description.
@@ -107,7 +102,9 @@ memory. An artist needs at least 5 works on Wikipedia to get a room.
 - [x] Search ignores punctuation ("O'Keeffe", "J. M. W. Turner").
 - [x] Bottom lane vs footer overlap at laptop sizes; footer note on mobile.
 - [x] Star Map constellation titles on desktop; short-period dive zoom.
-- [ ] Star Map: 6–8 constellation titles still dropped on phones (≤ 390 px).
+- [x] Star Map: all 35 constellation titles fit 360–430 px phones, with
+      viewport-bounded placement and spatial lookup for collision checks.
+- [x] Extend the timeline to 900 so early Chinese painters are reachable.
 - [x] Artist card fits small screens and credits the portrait.
 - [x] Favicon set (SVG icon and 16/32/48 px `.ico`).
 - [x] "Made with ♥ by justdataplease.com" in the footer.
@@ -124,11 +121,12 @@ memory. An artist needs at least 5 works on Wikipedia to get a room.
       https://art-history.artfrompixels.com.
 - [x] Plain-language pass on README / CONTRIBUTING (no em dashes, no
       marketing tone) with the final counts.
-- [ ] Full production build + e2e / error-sweep / perf-probe / suite-check
+- [x] Full production build + e2e / error-sweep / perf-probe / suite-check
       pass on the final snapshot.
-- [ ] Record the one-minute tour (`npm run build`, then
+- [x] Record the one-minute tour (`npm run build`, then
       `node scripts/record-demo.mjs`): Star Map, Van Gogh, Fra Angelico.
-- [ ] Commit to `main` (no co-author lines) and redeploy to Vercel.
+- [ ] Commit to `main` (no co-author lines).
+- [x] Redeploy the updated museum to Vercel production.
 - [ ] Push the cleaned git history (Co-Authored-By lines removed; ready in
       the scratch rewrite, needs a force-push the owner runs or allows)
       before the repository goes public.
@@ -139,14 +137,18 @@ memory. An artist needs at least 5 works on Wikipedia to get a room.
 
 ## Cleanup (before release)
 
-- [ ] Efficiency pass: bundle size per route, unused exports and
-      dependencies, duplicate helpers across scripts, dead code paths.
-- [ ] Junk pass: unused files and assets in the repo, stale scripts, local
-      test output (verify-artifacts/, scratch builds), oversized files.
+- [x] Audit route bundles, remove unused exports and the unused dotenv
+      dependency, and share the Wikimedia file helper. Remove the room cap
+      and repeated catalogue scans; bound portal culling to mounted rooms
+      and simplify aligned-door path distances. Compare visibility,
+      texture tiers and lighting against the previous runtime.
+- [x] Audit unused files, scripts and oversized assets. Verification output
+      and the resumable HTTP cache stay ignored; reports are excluded from
+      deployment. The tracked music and tour are intentional assets.
 
 ## Launch
 
-- [ ] Final numbers into the Hacker News and LinkedIn posts.
+- [x] Final numbers into the local Hacker News and LinkedIn drafts.
 - [ ] Hacker News: Wednesday or Thursday, 15:30 Greek time (08:30 New York);
       answer comments for the first 2–3 hours.
 - [ ] LinkedIn: the same day, 09:00–10:00 Greek time.

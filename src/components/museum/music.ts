@@ -472,17 +472,28 @@ const PLAYLISTS: Record<Exclude<EraKey, "northern" | "victorian" | "secession" |
 // belong to: the Dutch Golden Age is Baroque music, the Pre-Raphaelites and
 // the academic Salon are the Romantic century, fin-de-siècle Vienna and the
 // Symbolists are Debussy's world.
-// The print room (ukiyo-e) has no properly licensed shamisen or koto
-// recording of its own yet (the 1931 Hornbostel nagauta, hauta and shinnai
-// discs on Commons are tagged only PD-traditional, which covers the songs,
-// not the recordings): it plays the East Asian list, the Edo-period
-// shakuhachi first.
+// The print room opens with a koto performance recorded by Torsodog,
+// licensed CC BY 3.0 on Commons, then continues with the East Asian list.
 export const ERA_MUSIC: Record<EraKey, Track[]> = {
   ...PLAYLISTS,
   northern: PLAYLISTS["old-master"],
   victorian: PLAYLISTS.nineteenth,
   secession: PLAYLISTS.impressionist,
-  "print-room": [PLAYLISTS["east-asian"][1], PLAYLISTS["east-asian"][0], ...PLAYLISTS["east-asian"].slice(2)],
+  "print-room": [
+    {
+      title: "Koto performance",
+      composer: "Traditional (recorded by Torsodog)",
+      license: "CC BY 3.0",
+      page: C + "Koto_performance.ogg",
+      original: U + "2/2e/Koto_performance.ogg",
+      originalType: "audio/ogg",
+      mp3: T + "2/2e/Koto_performance.ogg/Koto_performance.ogg.mp3",
+      duration: 29.736,
+    },
+    PLAYLISTS["east-asian"][1],
+    PLAYLISTS["east-asian"][0],
+    ...PLAYLISTS["east-asian"].slice(2),
+  ],
 };
 
 // A period sharing an era's room can open with its own music: the Persian

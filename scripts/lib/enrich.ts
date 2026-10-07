@@ -15,8 +15,10 @@
 // (a multi-panel work recorded per panel is multiplied out), or left null when
 // the sources have nothing usable.
 
-import { fetchJson, sleep } from "./wiki";
-import { fetchFileMeta, type FileMeta, type ImageCredit } from "./credits";
+import { createLimiter, createPacer, fetchJson, readItemCache, saveItemCache, splitLongRequest } from "./wiki";
+import { fetchFileMeta, wikiFileOf, type FileMeta, type ImageCredit } from "./credits";
+import { dropSeriesRepresentatives, fetchClaims } from "./passes";
+export { createPacer } from "./wiki";
 
 export interface EnrichablePainting {
   slug: string;
@@ -81,6 +83,8 @@ export interface EnrichReport {
    * artist (e.g. "The Magpie (Monet)" in Picasso's gallery). "artistSlug/paintingSlug".
    */
   removed: string[];
+  /** Series representatives removed because individual linked works are admitted. */
+  removedSeries: string[];
   /** Sizes multiplied out of a Wikidata unit slip, confirmed by the article infobox. */
   unitFixes: string[];
   /** Images / portraits with a credit line. */
@@ -115,27 +119,7 @@ const SWAP_TOLERANCE = 1.05;
 
 // ---------- politeness ----------
 
-/** Concurrency limiter with a minimum spacing between request starts. */
-export function createPacer(maxConcurrent: number, minIntervalMs: number) {
-  let active = 0;
-  let nextStart = 0;
-  const queue: (() => void)[] = [];
-  return async function run<T>(fn: () => Promise<T>): Promise<T> {
-    if (active >= maxConcurrent) await new Promise<void>((r) => queue.push(r));
-    active++;
-    const wait = nextStart - Date.now();
-    nextStart = Math.max(Date.now(), nextStart) + minIntervalMs;
-    if (wait > 0) await sleep(wait);
-    try {
-      return await fn();
-    } finally {
-      active--;
-      queue.shift()?.();
-    }
-  };
-}
-
-const actionApi = createPacer(2, 250); // MediaWiki action API: serial-ish
+const actionApi = createPacer(2, 250); // MediaWiki action API: two requests with spaced starts
 const restApi = createPacer(8, 25); // pageviews REST: modest concurrency, well under the API limit
 const sparql = createPacer(1, 1000);
 
@@ -158,18 +142,8 @@ export function titleFromWikipediaUrl(url: string | null): string | null {
 
 /** Commons file name ("Foo bar.jpg") behind an upload.wikimedia.org URL, or null for non-Commons files. */
 export function commonsFileName(imageUrl: string | null): string | null {
-  if (!imageUrl) return null;
-  try {
-    const u = new URL(imageUrl);
-    if (u.hostname !== "upload.wikimedia.org") return null;
-    const parts = u.pathname.split("/");
-    if (parts[2] !== "commons") return null;
-    const thumb = parts[3] === "thumb";
-    const name = thumb ? parts[6] : parts[5];
-    return name ? decodeURIComponent(name).replace(/_/g, " ") : null;
-  } catch {
-    return null;
-  }
+  const file = wikiFileOf(imageUrl);
+  return file?.project === "commons" ? file.file : null;
 }
 
 // ---------- 1. article title -> Wikidata item ----------
@@ -267,22 +241,12 @@ interface Claim {
   qualifiers?: Record<string, Snak[]>;
 }
 export type Claims = Record<string, Claim[]>;
+// Keep complete statements (including qualifiers/references) only for the
+// properties consumed by dimensions, attribution, dates and series cleanup.
+const ENRICH_CLAIM_PROPS = ["P31", "P170", "P571", "P2049", "P2048", "P2386", "P179", "P361", "P527"];
 
 async function getClaims(qids: string[]): Promise<Map<string, Claims>> {
-  const out = new Map<string, Claims>();
-  for (const batch of chunks(qids, 50)) {
-    const url = `${WD_API}?action=wbgetentities&format=json&formatversion=2&props=claims&ids=${batch.join("|")}`;
-    const data = await actionApi(() =>
-      fetchJson<{ entities?: Record<string, { claims?: Claims; missing?: string; redirects?: { to: string } }> }>(url)
-    );
-    if (!data?.entities) throw new Error("wbgetentities returned nothing");
-    // Redirected ids come back keyed by the requested id (with `redirects`).
-    for (const q of batch) {
-      const e = data.entities[q];
-      out.set(q, e?.claims ?? {});
-    }
-  }
-  return out;
+  return fetchClaims(qids, ENRICH_CLAIM_PROPS, undefined, actionApi);
 }
 
 /** The statements to trust for a property: preferred rank wins, deprecated never counts. */
@@ -369,6 +333,9 @@ function panelCount(claims: Claims, title: string): number | null {
 const round1 = (cm: number) => Math.round(cm * 10) / 10;
 
 export function dimensions(claims: Claims, p: EnrichablePainting): Dimensions {
+  // Q132599105 is a later composite of four separately painted sections.
+  // Global item measurements do not establish the selected section's size.
+  if (p.qid === "Q132599105") return { widthCm: null, heightCm: null };
   const w = quantityCm(claims, "P2049");
   const h = quantityCm(claims, "P2048");
   let widthCm = w.cm;
@@ -511,20 +478,6 @@ async function pageviews(title: string, redirects: string[], win: { start: strin
 
 // ---------- 0. image file: byte size + current pixel size ----------
 
-/** Wiki project ("commons", "en") and file name behind an upload.wikimedia.org URL (original or thumb). */
-export function wikiFileOf(imageUrl: string | null): { project: string; file: string } | null {
-  if (!imageUrl) return null;
-  try {
-    const u = new URL(imageUrl);
-    if (u.hostname !== "upload.wikimedia.org") return null;
-    // /wikipedia/<project>/[thumb/]a/ab/File.jpg[/<N>px-File.jpg]
-    const m = /^\/wikipedia\/([^/]+)\/(?:thumb\/)?[0-9a-f]\/[0-9a-f]{2}\/([^/]+)/.exec(u.pathname);
-    return m ? { project: m[1], file: decodeURIComponent(m[2]).replace(/_/g, " ") } : null;
-  } catch {
-    return null;
-  }
-}
-
 export interface ImageFileInfo {
   bytes: number;
   width: number;
@@ -538,41 +491,58 @@ export interface ImageFileInfo {
 export async function imageFileInfo(
   files: { project: string; file: string }[]
 ): Promise<Map<string, ImageFileInfo>> {
+  const saved = readItemCache<ImageFileInfo>("image-info-v1.json");
   const out = new Map<string, ImageFileInfo>();
   const byProject = new Map<string, Set<string>>();
   for (const f of files) {
     if (!byProject.has(f.project)) byProject.set(f.project, new Set());
     byProject.get(f.project)!.add(f.file);
   }
-  for (const [project, names] of byProject) {
+  const batches = [...byProject].flatMap(([project, names]) => {
     const api = project === "commons" ? "https://commons.wikimedia.org/w/api.php" : `https://${project}.wikipedia.org/w/api.php`;
-    for (const batch of chunks([...names], 50)) {
-      const qs = new URLSearchParams({
-        action: "query",
-        format: "json",
-        formatversion: "2",
-        prop: "imageinfo",
-        iiprop: "size",
-        titles: batch.map((f) => `File:${f}`).join("|"),
-      });
-      const data = await actionApi(() =>
-        fetchJson<{
-          query?: {
-            normalized?: { from: string; to: string }[];
-            pages?: { title: string; imageinfo?: { size: number; width: number; height: number }[] }[];
-          };
-        }>(`${api}?${qs}`)
-      );
-      if (!data?.query) throw new Error(`imageinfo (${project}) returned nothing`);
-      const norm = new Map((data.query.normalized ?? []).map((n) => [n.from, n.to]));
-      const pages = new Map((data.query.pages ?? []).map((p) => [p.title, p]));
-      for (const f of batch) {
-        const ii = pages.get(norm.get(`File:${f}`) ?? `File:${f}`)?.imageinfo?.[0];
-        if (ii?.size) out.set(`${project}|${f}`, { bytes: ii.size, width: ii.width, height: ii.height });
-      }
+    const urlFor = (batch: string[]) => `${api}?${new URLSearchParams({
+      action: "query",
+      format: "json",
+      formatversion: "2",
+      prop: "imageinfo",
+      iiprop: "size",
+      titles: batch.map((f) => `File:${f}`).join("|"),
+    })}`;
+    const need = [...names].filter(file => {
+      const cached = saved[`${project}|${file}`];
+      if (cached) out.set(`${project}|${file}`, cached);
+      return !cached;
+    });
+    return chunks(need, 50).flatMap(batch => splitLongRequest(batch, urlFor).map(request => ({ project, ...request })));
+  });
+  const batchLimit = createLimiter(2);
+  const results = await Promise.all(batches.map(({ project, batch, url }) => batchLimit(async () => {
+    const data = await fetchJson<{
+        query?: {
+          normalized?: { from: string; to: string }[];
+          pages?: { title: string; imageinfo?: { size: number; width: number; height: number }[] }[];
+        };
+    }>(url, {}, undefined, actionApi);
+    if (!data?.query) throw new Error(`imageinfo (${project}) returned nothing`);
+    const norm = new Map((data.query.normalized ?? []).map((n) => [n.from, n.to]));
+    const pages = new Map((data.query.pages ?? []).map((p) => [p.title, p]));
+    const out = new Map<string, ImageFileInfo>();
+    for (const f of batch) {
+      const ii = pages.get(norm.get(`File:${f}`) ?? `File:${f}`)?.imageinfo?.[0];
+      if (ii?.size) out.set(`${project}|${f}`, { bytes: ii.size, width: ii.width, height: ii.height });
     }
+    return [...out];
+  })));
+  for (const [key, value] of results.flat()) {
+    out.set(key, value);
+    saved[key] = value;
   }
-  return out;
+  if (batches.length) saveItemCache("image-info-v1.json", saved);
+  return new Map([...byProject].flatMap(([project, names]) => [...names].flatMap(file => {
+    const key = `${project}|${file}`;
+    const value = out.get(key);
+    return value ? [[key, value] as const] : [];
+  })));
 }
 
 async function getLabels(qids: string[]): Promise<Map<string, string>> {
@@ -660,6 +630,7 @@ export async function enrichArtists(
     yearChanges: [],
     creatorMismatch: [],
     removed: [],
+    removedSeries: [],
     unitFixes: [],
     withCredit: 0,
     failures: [],
@@ -691,6 +662,7 @@ export async function enrichArtists(
   const qidOf = new Map<EnrichablePainting, string>();
   const canonicalOf = new Map<EnrichablePainting, string>();
   for (const x of all) {
+    if (x.p.qid && /^Q\d+$/.test(x.p.qid)) qidOf.set(x.p, x.p.qid);
     const r = x.title && resolved ? resolved.get(x.title) : undefined;
     if (r) {
       canonicalOf.set(x.p, r.canonical);
@@ -763,7 +735,7 @@ export async function enrichArtists(
       const hi = x.artist.deathYear != null ? x.artist.deathYear + 1 : now.getUTCFullYear();
       const y = x.p.year;
       if (y < lo || y > hi) {
-        const inc = c ? inceptionYear(c) : null;
+        const inc = c && q !== "Q132599105" ? inceptionYear(c) : null;
         const next = inc != null && inc >= lo && inc <= hi ? inc : null;
         report.yearChanges.push(
           `${x.artist.slug}/${x.p.slug}: ${y} -> ${next ?? "null"} (${
@@ -799,6 +771,7 @@ export async function enrichArtists(
       report.failures.push(`creator labels: ${err}`);
     }
   }
+  if (claims) report.removedSeries = dropSeriesRepresentatives(artists, claims);
   const kept = new Set(artists.flatMap((a) => a.paintings));
   for (let i = all.length - 1; i >= 0; i--) if (!kept.has(all[i].p)) all.splice(i, 1);
   report.paintings = all.length;

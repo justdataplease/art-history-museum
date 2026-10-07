@@ -122,6 +122,7 @@ export const ARTWORK_CLASSES = new Set([
   "Q277583", // kakemono
   "Q50488927", // fan painting
   "Q741226", // byōbu
+  "Q11665531", // furosaki byōbu (painted tea-ceremony screen)
   "Q1144689", // folding screen
   "Q126456658", // fusuma-e
   "Q103929010", // shōhekiga
@@ -462,10 +463,22 @@ export function imageMismatch(c: ImageCheck): string | null {
 
 /**
  * Images checked by eye (Oct 2026). "ok": the heuristic above is wrong, keep
- * it; "wrong": the image does not show the work; a file name: the work's own
- * Wikidata image (P18), used instead of the wrong one. Keys "artist/painting".
+ * it; "wrong": the image does not show the work; a file name: a reviewed
+ * Commons image of the same work. Keys "artist/painting".
  */
 export const IMAGE_REVIEW: Record<string, "ok" | "wrong" | { replace: string }> = {
+  // The original Sailko photo has no license. This whole-work PD-Art scan
+  // identifies Q141436480, also cited in the original P18 statement's source.
+  "paolo-veronese/madonna-and-child-between-saints-caterine-of-alexandria-and-saint-ursula-q141436480": {
+    replace: "Veronese - Madonna con Bambino tra Santa Caterina d'Alessandria e Sant'Orsola, con offerente, 1576.jpg",
+  },
+  // These P18 files show several paintings or a gallery wall, not one work.
+  "hilma-af-klint/evolution-q140796608": "wrong",
+  "hilma-af-klint/primordial-chaos-q140796541": "wrong",
+  "hilma-af-klint/the-dove-q140796424": "wrong",
+  "hilma-af-klint/the-eros-series-q140796580": "wrong",
+  // The mosaic mural's photo includes the room, furniture and railing.
+  "candido-portinari/candido-portinari-mural-q55080886": "wrong",
   // another artist's painting
   "francis-bacon-artist/three-figures-in-a-room": "wrong", // Matisse, Bathers with a Turtle
   "piero-della-francesca/madonna-del-parto": { replace: "Madonna del parto piero della Francesca.jpg" }, // was Taddeo Gaddi's fresco
@@ -487,9 +500,12 @@ export const IMAGE_REVIEW: Record<string, "ok" | "wrong" | { replace: string }> 
   }, // was a photo of the tower
   "henri-matisse/the-dance-ii": { replace: "Matisse - Carra, 467.jpg" }, // was a room with part of the mural
   "benozzo-gozzoli/stories-from-the-life-of-st-augustine": "wrong", // the church interior
+  "benozzo-gozzoli/stories-from-the-life-of-st-augustine-q3974470": "wrong", // same church-interior image, under the item's Commons-only slug
   "raoul-dufy/la-fee-electricite": "wrong", // the gallery room, with a visitor
+  "raoul-dufy/la-fee-electricite-q3209311": "wrong", // reviewed current file: gallery room with visitors
   // checked: the image is the work
   "marcel-duchamp/the-bride": "ok",
+  "marcel-duchamp/the-bride-q6753412": "ok", // same QID and reviewed file under the Commons-only slug
   "david-hockney/portrait-of-sir-david-webster": "ok",
   "banksy/from-this-moment-despair-ends-and-tactics-begin": "ok",
   "banksy/one-nation-under-cctv": "ok",

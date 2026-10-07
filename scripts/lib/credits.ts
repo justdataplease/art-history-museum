@@ -5,7 +5,7 @@
 // description), so one extmetadata pass serves both.
 
 import { decodeEntities } from "../../src/lib/text";
-import { fetchJson, sleep } from "./wiki";
+import { createLimiter, createPacer, fetchJson, readItemCache, saveItemCache, splitLongRequest } from "./wiki";
 
 /** Same shape as ImageCredit in src/lib/types.ts. */
 export interface ImageCredit {
@@ -79,60 +79,79 @@ export async function fetchFileMeta(
     const f = wikiFileOf(u);
     if (f) files.set(fileKey(f), f);
   }
+  const saved = readItemCache<FileMeta>("file-meta-v1.json");
   const byProject = new Map<string, string[]>();
   for (const f of files.values()) {
+    const cached = saved[fileKey(f)];
+    if (cached) {
+      byKey.set(fileKey(f), cached);
+      continue;
+    }
     if (!byProject.has(f.project)) byProject.set(f.project, []);
     byProject.get(f.project)!.push(f.file);
   }
-  let done = 0;
-  for (const [project, names] of byProject) {
+  const request = createPacer(2, opts.spacingMs ?? 300);
+  const batchLimit = createLimiter(2);
+  const completed = new Map<string, number>();
+  const batches = [...byProject].flatMap(([project, names]) => {
+    const out = [];
+    const urlFor = (batch: string[]) => `${api(project)}?${new URLSearchParams({
+      action: "query",
+      format: "json",
+      formatversion: "2",
+      prop: "imageinfo",
+      iiprop: "extmetadata",
+      iiextmetadatafilter: "Artist|LicenseShortName|LicenseUrl|ObjectName|ImageDescription|Categories|NonFree",
+      iiextmetadatalanguage: "en",
+      titles: batch.map((f) => `File:${f}`).join("|"),
+    })}`;
     for (let i = 0; i < names.length; i += 50) {
-      const batch = names.slice(i, i + 50);
-      const qs = new URLSearchParams({
-        action: "query",
-        format: "json",
-        formatversion: "2",
-        prop: "imageinfo",
-        iiprop: "extmetadata",
-        iiextmetadatafilter: "Artist|LicenseShortName|LicenseUrl|ObjectName|ImageDescription|Categories|NonFree",
-        iiextmetadatalanguage: "en",
-        titles: batch.map((f) => `File:${f}`).join("|"),
-      });
-      const data = await fetchJson<{
-        query?: {
-          normalized?: { from: string; to: string }[];
-          pages?: { title: string; missing?: boolean; imageinfo?: { extmetadata?: Record<string, { value: unknown }> }[] }[];
-        };
-      }>(`${api(project)}?${qs}`);
-      if (!data?.query) throw new Error(`extmetadata (${project}) returned nothing`);
-      const norm = new Map((data.query.normalized ?? []).map((n) => [n.from, n.to]));
-      const pages = new Map((data.query.pages ?? []).map((p) => [p.title, p]));
-      for (const name of batch) {
-        const page = pages.get(norm.get(`File:${name}`) ?? `File:${name}`);
-        const em = page?.imageinfo?.[0]?.extmetadata;
-        if (!page || page.missing || !em) continue;
-        const v = (k: string) => (em[k]?.value == null ? "" : String(em[k].value));
-        const f = { project, file: page.title.replace(/^File:/, "") };
-        const author = plainText(v("Artist"), 120) || null;
-        const nonFree = !!v("NonFree") && v("NonFree") !== "false";
-        byKey.set(`${project}|${name}`, {
-          credit: {
-            author,
-            license: plainText(v("LicenseShortName")) || (nonFree ? "Fair use" : "Unknown"),
-            licenseUrl: v("LicenseUrl").trim() || null,
-            page: filePageUrl(f),
-          },
-          objectName: plainText(v("ObjectName"), 300),
-          description: plainText(v("ImageDescription"), 600),
-          categories: v("Categories").split("|").map((c) => c.trim()).filter(Boolean),
-          nonFree,
-        });
-      }
-      done += batch.length;
-      opts.log?.(`  extmetadata ${project}: ${Math.min(i + 50, names.length)}/${names.length}`);
-      await sleep(opts.spacingMs ?? 300);
+      out.push(...splitLongRequest(names.slice(i, i + 50), urlFor).map(request => ({ project, total: names.length, ...request })));
     }
+    return out;
+  });
+  const results = await Promise.all(batches.map(({ project, batch, total, url }) => batchLimit(async () => {
+    const data = await fetchJson<{
+      query?: {
+        normalized?: { from: string; to: string }[];
+        pages?: { title: string; missing?: boolean; imageinfo?: { extmetadata?: Record<string, { value: unknown }> }[] }[];
+      };
+    }>(url, {}, undefined, request);
+    if (!data?.query) throw new Error(`extmetadata (${project}) returned nothing`);
+    const norm = new Map((data.query.normalized ?? []).map((n) => [n.from, n.to]));
+    const pages = new Map((data.query.pages ?? []).map((p) => [p.title, p]));
+    const rows = new Map<string, FileMeta>();
+    for (const name of batch) {
+      const page = pages.get(norm.get(`File:${name}`) ?? `File:${name}`);
+      const em = page?.imageinfo?.[0]?.extmetadata;
+      if (!page || page.missing || !em) continue;
+      const v = (k: string) => (em[k]?.value == null ? "" : String(em[k].value));
+      const f = { project, file: page.title.replace(/^File:/, "") };
+      const author = plainText(v("Artist"), 120) || null;
+      const nonFree = !!v("NonFree") && v("NonFree") !== "false";
+      rows.set(`${project}|${name}`, {
+        credit: {
+          author,
+          license: plainText(v("LicenseShortName")) || (nonFree ? "Fair use" : "Unknown"),
+          licenseUrl: v("LicenseUrl").trim() || null,
+          page: filePageUrl(f),
+        },
+        objectName: plainText(v("ObjectName"), 300),
+        description: plainText(v("ImageDescription"), 600),
+        categories: v("Categories").split("|").map((c) => c.trim()).filter(Boolean),
+        nonFree,
+      });
+    }
+    const done = (completed.get(project) ?? 0) + batch.length;
+    completed.set(project, done);
+    opts.log?.(`  extmetadata ${project}: ${done}/${total}`);
+    return [...rows];
+  })));
+  for (const [key, value] of results.flat()) {
+    byKey.set(key, value);
+    saved[key] = value;
   }
+  if (batches.length) saveItemCache("file-meta-v1.json", saved);
   const out = new Map<string, FileMeta>();
   for (const u of urls) {
     const f = wikiFileOf(u);

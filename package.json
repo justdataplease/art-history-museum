@@ -2,7 +2,7 @@
   "name": "timeline-museum",
   "version": "0.1.0",
   "private": true,
-  "description": "An interactive 3D museum of art history in the browser: a zoomable timeline of 26 periods and walkable galleries of real paintings, all from Wikipedia.",
+  "description": "A Walkable History of Art: a zoomable timeline and 3D galleries of real paintings, all from Wikipedia.",
   "license": "MIT",
   "homepage": "https://art-history.artfrompixels.com",
   "repository": {
@@ -16,6 +16,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "check-layout": "tsx scripts/check-layout.ts",
     "ingest": "tsx scripts/ingest.ts",
     "load-db": "tsx scripts/load-db.ts",
     "enrich": "tsx scripts/enrich.ts",
@@ -39,7 +40,6 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.184.1",
-    "dotenv": "^17.4.2",
     "playwright": "^1.60.0",
     "tsx": "^4.22.4",
     "typescript": "^5"

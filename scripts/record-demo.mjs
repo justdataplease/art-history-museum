@@ -187,7 +187,7 @@ async function gallery(slug, era, script) {
   await waitDoors();
   const seg = { era, start: now(), end: 0 };
   marks.push(seg);
-  await wait(1400);
+  await wait(900);
   await stepInside();
   await script();
   seg.end = now();
@@ -200,23 +200,23 @@ await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: 
 recording = true;
 const t0 = now();
 await page.mouse.move(mx, my);
-await wait(3200);
+await wait(1800);
 
 // 1. Star Map: the periods as constellations
 await clickOn(page.locator(".tl-switch", { hasText: "Star Map" }).first());
-await wait(2800);
+await wait(1500);
 await moveTo(W * 0.55, H * 0.5, 500);
 await drag(-280, 0, 1200);
-await wait(1400);
+await wait(700);
 
 // 2. Back on the Gallery Wall: find Van Gogh, open his placard, step in
 await clickOn(page.locator(".tl-switch", { hasText: "Gallery Wall" }).first());
-await wait(1200);
+await wait(700);
 await explore("Artists", "Vincent van Gogh");
-await wait(2200);
+await wait(1000);
 const node = page.locator(".artist-node", { hasText: "Vincent van Gogh" }).first();
 if (!(await clickOn(node, 700))) await page.goto(`${base}/museum/vincent-van-gogh`);
-await wait(2600);
+await wait(1000);
 await clickOn(page.locator(".card-enter").first(), 700);
 
 // 3. Van Gogh: a Post-Impressionist suite, one work up close

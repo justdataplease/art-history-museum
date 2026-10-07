@@ -30,12 +30,6 @@ const TAP_SLOP = 9;
 const TAP_MAX_MS = 450;
 const THROW_GAP_MS = 140;
 
-let current: FxEngine | null = null;
-/** The live engine (null outside a gallery), for tests and tooling. */
-export function getFxEngine(): FxEngine | null {
-  return current;
-}
-
 interface Placed {
   w: number;
   h: number;
@@ -110,12 +104,10 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
   );
 
   useEffect(() => {
-    current = engine;
     // Test hook, like the gallery's: only when an init script sets the flag.
     const w = window as unknown as { __MUSEUM_DEBUG__?: boolean; __fx?: unknown };
     if (w.__MUSEUM_DEBUG__) w.__fx = { engine, state: fx, tally: fxTally };
     return () => {
-      if (current === engine) current = null;
       if (w.__MUSEUM_DEBUG__) w.__fx = undefined;
       engine.dispose();
       sfx.close();

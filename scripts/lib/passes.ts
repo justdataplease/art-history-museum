@@ -7,7 +7,7 @@
 
 import type { ArtistOut, PaintingOut } from "../ingest";
 import { fetchFileMeta, wikiFileOf, type FileMeta, type ImageCredit } from "./credits";
-import { canonicalImageUrl, fetchJson, sleep } from "./wiki";
+import { canonicalImageUrl, createLimiter, createPacer, fetchJson, indexClaimsResponse, projectClaims, readCachedClaims, readItemCache, saveItemCache } from "./wiki";
 import {
   IMAGE_REVIEW,
   artistInCopyright,
@@ -37,26 +37,40 @@ function titleOf(url: string | null): string | null {
 export async function fetchClaims(
   qids: string[],
   props: string[],
-  log?: (m: string) => void
+  log?: (m: string) => void,
+  pace?: ReturnType<typeof createPacer>
 ): Promise<Map<string, Claims>> {
-  const out = new Map<string, Claims>();
   const list = [...new Set(qids.filter(Boolean))];
-  for (let i = 0; i < list.length; i += 50) {
-    const batch = list.slice(i, i + 50);
-    const data = await fetchJson<{ entities?: Record<string, { claims?: Claims }> }>(
-      `https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&props=claims&ids=${batch.join("|")}`
-    );
-    if (!data?.entities) throw new Error("wbgetentities returned nothing");
-    for (const q of batch) {
-      const all = data.entities[q]?.claims ?? {};
-      const keep: Claims = {};
-      for (const p of props) if (all[p]) keep[p] = all[p];
-      out.set(q, keep);
-    }
-    if (log && (i / 50) % 20 === 19) log(`  claims ${Math.min(i + 50, list.length)}/${list.length}`);
-    await sleep(200);
+  const index = readItemCache<string>("claims-index-v1.json");
+  const known = readCachedClaims(list, props, index);
+  const need = list.filter(qid => !known.has(qid));
+  const request = pace ?? createPacer(2, 250);
+  const batchLimit = createLimiter(2);
+  const batches = [];
+  for (let i = 0; i < need.length; i += 50) {
+    batches.push(need.slice(i, i + 50));
   }
-  return out;
+  let done = known.size;
+  const results = await Promise.all(batches.map(batch => batchLimit(async () => {
+    const url = `https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&props=claims&ids=${batch.join("|")}`;
+    const data = await fetchJson<{ entities?: Record<string, { claims?: Claims }> }>(
+      url,
+      {}, undefined, request
+    );
+    if (!data?.entities || typeof data.entities !== "object" || Array.isArray(data.entities)) throw new Error("wbgetentities returned nothing");
+    indexClaimsResponse(index, batch, url);
+    const out = new Map<string, Claims>();
+    for (const q of batch) {
+      out.set(q, projectClaims(data.entities[q]?.claims, props));
+    }
+    const before = done;
+    done += batch.length;
+    if (log && Math.floor(done / 1000) > Math.floor(before / 1000)) log(`  claims ${done}/${list.length}`);
+    return [...out];
+  })));
+  for (const [qid, claims] of results.flat()) known.set(qid, claims);
+  if (batches.length) saveItemCache("claims-index-v1.json", index);
+  return new Map(list.map(qid => [qid, known.get(qid)!]));
 }
 
 /** Non-deprecated P31 classes of an item. */
@@ -89,6 +103,51 @@ export function dropNonArtworks(artists: ArtistOut[], claims: Map<string, Claims
     });
   }
   return out;
+}
+
+/**
+ * A series article's lead represents one of its members, sometimes through a
+ * different scan. Explicit Wikidata membership decides, rather than matching
+ * titles or files. A generic group of paintings is not proof of a series.
+ * Physical assemblies remain intact even when also classified as a series.
+ */
+export function dropSeriesRepresentatives<T extends { slug: string; qid?: string | null }>(
+  artists: { slug: string; paintings: T[] }[],
+  claims: Map<string, Claims>
+): string[] {
+  const seriesClasses = new Set(["Q15727816", "Q19960510"]); // painting series; series of prints
+  const assemblyClasses = new Set(["Q475476", "Q79218", "Q1278452", "Q15711026"]); // diptych; triptych; polyptych; altarpiece
+  const ids = (item: Claims | undefined, prop: string): string[] => {
+    const all = (item?.[prop] ?? []).filter(s => s.rank !== "deprecated" && s.mainsnak?.datavalue?.value?.id);
+    const preferred = all.filter(s => s.rank === "preferred");
+    return (preferred.length ? preferred : all).map(s => s.mainsnak.datavalue.value.id);
+  };
+  const removed: string[] = [];
+  for (const artist of artists) {
+    const series = new Set(artist.paintings.filter(p => {
+      if (!p.qid) return false;
+      const classes = classesOf(claims.get(p.qid)) ?? [];
+      return classes.some(c => seriesClasses.has(c)) && !classes.some(c => assemblyClasses.has(c));
+    }).map(p => p.qid!));
+    const members = artist.paintings.filter(p => p.qid && !series.has(p.qid));
+    const memberQids = new Set(members.map(p => p.qid!));
+    const represented = new Set<string>();
+    for (const member of members) {
+      const item = claims.get(member.qid!);
+      for (const parent of [...ids(item, "P179"), ...ids(item, "P361")]) {
+        if (series.has(parent)) represented.add(parent);
+      }
+    }
+    for (const parent of series) {
+      if (ids(claims.get(parent), "P527").some(qid => memberQids.has(qid))) represented.add(parent);
+    }
+    artist.paintings = artist.paintings.filter(p => {
+      if (!p.qid || !represented.has(p.qid)) return true;
+      removed.push(key(artist, p));
+      return false;
+    });
+  }
+  return removed;
 }
 
 // ---------- 2. does the image show the work? ----------
@@ -180,7 +239,7 @@ export function reviewImages(
           p.imageBytes = r.bytes;
           const rm = replacementMeta.get(r.url);
           if (rm) meta.set(r.url, rm);
-          changes.push(`${k}: image replaced by the work's Wikidata image "${review.replace}" (was "${was}")`);
+          changes.push(`${k}: image replaced by the reviewed Commons image "${review.replace}" (was "${was}")`);
           return true;
         }
         if (!copyrighted) {
@@ -296,7 +355,9 @@ export function repairYears(artists: ArtistOut[], claims: Map<string, Claims>, n
     const hi = a.deathYear != null ? a.deathYear + 1 : now.getUTCFullYear();
     const inLife = (y: number | null) => y != null && y >= lo && y <= hi;
     for (const p of a.paintings) {
-      const inc = p.qid ? inceptionOf(claims.get(p.qid)) : null;
+      // This composite scroll hangs as the individual painter's section. Its
+      // unqualified global dates cannot supply that section's inception.
+      const inc = p.qid && p.qid !== "Q132599105" ? inceptionOf(claims.get(p.qid)) : null;
       const before = p.year;
       let next = before;
       let why = "";

@@ -1,6 +1,7 @@
 import type { Artist, Period } from "@/lib/types";
 
-export const YEAR_MIN = 1170;
+// Leave a margin before Li Cheng (born 919), the earliest indexed painter.
+export const YEAR_MIN = 900;
 export const YEAR_MAX = 2035;
 export const YEAR_SPAN = YEAR_MAX - YEAR_MIN;
 export const K_MIN = 1;

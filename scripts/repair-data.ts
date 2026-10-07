@@ -35,6 +35,7 @@ import {
   allImageUrls,
   attachCredits,
   dropNonArtworks,
+  dropSeriesRepresentatives,
   fetchClaims,
   metaFor,
   orderArtist,
@@ -83,6 +84,7 @@ async function repair(
   add("removedNotArtworks", dropNonArtworks(artists, claims));
   const problems: string[] = [];
   const m = await vetCollection(artists, problems);
+  add("removedSeriesRepresentatives", dropSeriesRepresentatives(artists, claims));
   for (const [k, v] of m) meta.set(k, v);
   add("images", problems.filter((p) => p.startsWith("image: ")).map((p) => p.slice(7)));
   add("imagesToCheck", problems.filter((p) => p.startsWith("image check: ")).map((p) => p.slice(13)));
@@ -142,7 +144,7 @@ async function main() {
     [...artistClaims].map(([q, c]) => [q, { birthYear: bestTimeYear(c, "P569", 0) ?? null, deathYear: bestTimeYear(c, "P570", 0) ?? null }])
   );
   log(`fetching classes + inception for ${new Set(workQids).size} works`);
-  const claims = await fetchClaims(workQids, ["P31", "P571"], log);
+  const claims = await fetchClaims(workQids, ["P31", "P571", "P179", "P361", "P527"], log);
 
   // ---- run the passes on museum.json, then on each artist cache ----
   const pre = new Map(museum.artists.map((a) => [a.slug, JSON.stringify(a)]));

@@ -65,7 +65,7 @@ async function main() {
   // Propagate onto museum.json (same painting objects where they were enriched directly).
   const byKey = new Map<string, EnrichablePainting>();
   for (const a of targets) for (const p of a.paintings) byKey.set(key(a.slug, p), p);
-  const removed = new Set(report.removed);
+  const removed = new Set([...report.removed, ...report.removedSeries]);
   const portraitCredits = new Map(cached.map((c) => [c.artist.slug, c.artist.portraitCredit]));
   for (const a of museum.artists) {
     if (portraitCredits.has(a.slug)) a.portraitCredit = portraitCredits.get(a.slug) ?? null;
@@ -126,6 +126,10 @@ async function main() {
   if (report.removed.length) {
     console.log(`\nRemoved, attributed to another artist (${report.removed.length}):`);
     for (const r of report.removed) console.log("  - " + r);
+  }
+  if (report.removedSeries.length) {
+    console.log(`\nSeries represented by individual works (${report.removedSeries.length}):`);
+    for (const r of report.removedSeries) console.log("  - " + r);
   }
   if (report.creatorMismatch.length) {
     console.log(`\nCreator mismatches, flagged only (${report.creatorMismatch.length}):`);

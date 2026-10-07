@@ -56,17 +56,17 @@ function parseWikimedia(url: string): WikiFile | null {
 /** Thumbnail `width` px wide; `jpeg` asks for a JPEG rendition of a PNG / TIFF source. */
 function thumbOf(f: WikiFile, width: number, jpeg = false): string {
   const u = new URL(f.u.toString());
-  const suffix = /\.svg$/i.test(f.file) ? ".png" : "";
-  const prefix = f.thumbPrefix ?? "";
+  const tiff = /\.tiff?$/i.test(f.file);
+  const suffix = /\.svg$/i.test(f.file) ? ".png" : tiff ? ".jpg" : "";
+  const prefix = f.thumbPrefix ?? (tiff ? "lossy-page1-" : "");
   // Rasterised paged formats (TIFF/PDF) keep their page prefix and type suffix.
   let tail =
     f.thumbPrefix !== null
       ? f.u.pathname.split("/").pop()!.replace(THUMB_PREFIX, `${prefix}${width}px-`)
-      : `${width}px-${f.file}${suffix}`;
+      : `${prefix}${width}px-${f.file}${suffix}`;
   if (jpeg && JPEG_THUMBABLE.test(decodeURIComponent(f.file))) {
-    if (!/\.tiff?$/i.test(f.file)) tail = /\.jpe?g$/i.test(tail) ? tail : `${tail}.jpg`;
+    if (!tiff) tail = /\.jpe?g$/i.test(tail) ? tail : `${tail}.jpg`;
     else if (f.thumbPrefix !== null) tail = tail.replace(/^lossless-/, "lossy-").replace(/\.png$/i, ".jpg");
-    else tail = `lossy-page1-${width}px-${f.file}.jpg`;
   }
   u.pathname = `/wikipedia/${f.project}/thumb/${f.hashPath}/${f.file}/${tail}`;
   return u.toString();

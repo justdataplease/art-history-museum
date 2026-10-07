@@ -60,8 +60,8 @@ function check(ok, what) {
 }
 
 /** Visible text labels that overlap each other (should always be none). */
-const labelOverlaps = () =>
-  page.evaluate(() => {
+const labelOverlaps = (p = page) =>
+  p.evaluate(() => {
     const sel = [
       ".rail-label:not(.offscreen)",
       ".wall-row:not(.offscreen) .name",
@@ -86,8 +86,8 @@ const labelOverlaps = () =>
   });
 
 /** Pixels per year + the year at the screen centre, read off the axis labels. */
-const axisState = () =>
-  page.evaluate(() => {
+const axisState = (p = page) =>
+  p.evaluate(() => {
     const labels = [...document.querySelectorAll(".tl-axis .ax-label")]
       .map((t) => ({ y: +t.textContent, x: t.getBoundingClientRect().left + t.getBoundingClientRect().width / 2 }))
       .filter((l) => Number.isFinite(l.y));
@@ -98,7 +98,19 @@ const axisState = () =>
     return { ppy, center: a.y + (innerWidth / 2 - a.x) / ppy, n: labels.length, step: labels[1].y - labels[0].y };
   });
 
-const xOfYear = (year) => ((year - 1170) / 865) * W;
+const xOfYear = async (year) => {
+  const axis = await axisState();
+  return W / 2 + (year - axis.center) * axis.ppy;
+};
+
+// Expanded periods can make the overview taller than the viewport. Use the
+// same focus-to-scroll path as keyboard browsing, then perform a real click.
+async function clickWallPeriod(slug) {
+  const title = page.locator(`.rail-label[data-period="${slug}"]`);
+  await title.focus();
+  await page.waitForTimeout(700);
+  await title.click();
+}
 
 // ---------------------------------------------------------------- 1. overview
 await page.goto(BASE, { waitUntil: "networkidle" });
@@ -107,9 +119,13 @@ log("gallery wall overview");
 check((await page.getByRole("button", { name: /the river/i }).count()) === 0, "River view removed (no switcher entry)");
 check((await page.locator(".stream, .river-svg").count()) === 0, "River view removed (no river DOM)");
 const bands = await page.locator(".band").count();
-check(bands >= 15, `period bands rendered: ${bands}`);
+const periodGroups = await page.locator(".period-group").count();
+const artistNodes = await page.locator(".artist-node").count();
+check(periodGroups === 35, `all period wrappers rendered: ${periodGroups}`);
+check(artistNodes === 524, `all artist nodes rendered: ${artistNodes}`);
+check(bands > 0 && bands <= periodGroups, `visible period bands rendered: ${bands}/${periodGroups}`);
 const railLabels = await page.locator(".rail-label:not(.offscreen)").count();
-check(railLabels >= 16, `period titles identifiable at overview: ${railLabels}/${bands}`);
+check(railLabels >= 16, `period titles identifiable at overview: ${railLabels}/${periodGroups}`);
 let ov = await labelOverlaps();
 check(ov.bad.length === 0, `no overlapping labels at overview (${ov.n} labels) ${ov.bad.slice(0, 3).join(" | ")}`);
 const ax0 = await axisState();
@@ -118,7 +134,7 @@ await page.screenshot({ path: `${OUT}/1-wall-zoomed-out.png` });
 
 // ---------------------------------------------------------------- 2. wheel zoom
 log("wheel zoom toward the Baroque");
-await page.mouse.move(xOfYear(1650), 480);
+await page.mouse.move(await xOfYear(1650), 480);
 for (let i = 0; i < 14; i++) {
   await page.mouse.wheel(0, -240);
   await page.waitForTimeout(60);
@@ -173,7 +189,7 @@ log("click a period title to dive in");
 await page.locator(".tl-canvas").focus();
 await page.keyboard.press("Home");
 await page.waitForTimeout(1400);
-await page.locator('.rail-label[data-period="impressionism"]').click();
+await clickWallPeriod("impressionism");
 await page.waitForTimeout(1600);
 const ax2 = await axisState();
 check(ax2 && Math.abs(ax2.center - 1877.5) < 8, `period click dives into Impressionism (centre ${ax2?.center.toFixed(1)})`);
@@ -244,7 +260,7 @@ log("keyboard: arrow keys keep panning while the focused artist leaves the scree
 await page.locator(".tl-canvas").focus();
 await page.keyboard.press("Home");
 await page.waitForTimeout(1400);
-await page.locator('.rail-label[data-period="baroque"]').click();
+await clickWallPeriod("baroque");
 await page.waitForTimeout(1700);
 await page.waitForTimeout(700); // focus right after a pointer press is not panned to
 await page.evaluate(() => document.querySelector('.artist-node[data-slug="rembrandt"]')?.focus());
@@ -304,7 +320,7 @@ const blurred = await page.evaluate(() =>
 );
 check(blurred === 0, `no CSS filters in the star map (${blurred})`);
 await page.screenshot({ path: `${OUT}/4-star-map.png` });
-await page.mouse.move(xOfYear(1900), 480);
+await page.mouse.move(await xOfYear(1900), 480);
 for (let i = 0; i < 10; i++) {
   await page.mouse.wheel(0, -220);
   await page.waitForTimeout(60);
@@ -457,7 +473,7 @@ const footerState = (p) =>
     const foot = document.querySelector(".tl-foot").getBoundingClientRect();
     const box = (s) => document.querySelector(s)?.getBoundingClientRect();
     const hit = (a, b) => a && b && a.width && b.width && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-    const parts = [".tl-hint", ".tl-note-l", ".tl-note-give", ".tl-note-by > span", ".tl-source", ".tl-scrollhint"].map((s) => [s, box(s)]);
+    const parts = [".tl-hint", ".tl-note-src", ".tl-note-give", ".tl-note-by > span", ".tl-source", ".tl-scrollhint"].map((s) => [s, box(s)]);
     const clashes = [];
     for (let i = 0; i < parts.length; i++)
       for (let j = i + 1; j < parts.length; j++) if (hit(parts[i][1], parts[j][1])) clashes.push(`${parts[i][0]}/${parts[j][0]}`);
@@ -473,7 +489,7 @@ const footerState = (p) =>
   });
 
 log("footer row, Star Map titles and dives at common sizes");
-for (const [w, h] of [[1600, 900], [1440, 900], [1366, 768], [1280, 720], [820, 1180], [390, 844], [360, 740]]) {
+for (const [w, h] of [[1600, 900], [1440, 900], [1366, 768], [1280, 720], [820, 1180], [430, 932], [390, 844], [360, 740]]) {
   const { p, ctx } = await pageAt(w, h);
   const fs0 = await footerState(p);
   check(fs0.clashes.length === 0 && fs0.pillAbove, `${w}x${h}: footer parts and the pill never overlap (${fs0.clashes.join(", ") || "clear"})`);
@@ -497,10 +513,20 @@ for (const [w, h] of [[1600, 900], [1440, 900], [1366, 768], [1280, 720], [820, 
   await p.getByRole("button", { name: "Star Map" }).click();
   await p.waitForTimeout(1100);
   const missing = await p.locator(".neb-label.offscreen").count();
-  if (w >= 900) check(missing === 0, `${w}x${h}: every constellation on the Star Map overview has its title (${missing} missing)`);
-  else check(missing <= 10, `${w}x${h}: most constellation titles placed on a narrow Star Map (${missing} missing)`);
-  ov = await labelOverlaps();
+  check(missing === 0, `${w}x${h}: every constellation on the Star Map overview has its title (${missing} missing)`);
+  ov = await labelOverlaps(p);
   check(ov.bad.length === 0, `${w}x${h}: no overlapping star-map labels (${ov.bad.slice(0, 2).join(" | ")})`);
+  const cutTitles = await p.evaluate(() => {
+    const axis = document.querySelector(".tl-axis").getBoundingClientRect();
+    const foot = document.querySelector(".tl-foot").getBoundingClientRect();
+    return [...document.querySelectorAll(".neb-label:not(.offscreen)")]
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.left < 0 || r.right > innerWidth || r.top < axis.bottom || r.bottom > foot.top;
+      })
+      .map((el) => el.dataset.period);
+  });
+  check(cutTitles.length === 0, `${w}x${h}: Star Map titles fit between the year axis and footer (${cutTitles.join(", ") || "clear"})`);
   await p.getByRole("button", { name: "Gallery Wall" }).click();
   await p.waitForTimeout(800);
   for (const name of ["Cubism", "Fauvism", "Pop Art"]) {
@@ -584,6 +610,37 @@ log("artist search ignores punctuation and accents");
   await ctx.close();
 }
 
+log("navigation to Chinese painters before 1200");
+{
+  const { p, ctx } = await pageAt(1366, 768);
+  if (await p.locator('.rail-label[data-period="chinese-painting"]').count()) {
+    for (const view of ["Gallery Wall", "Star Map"]) {
+      await p.getByRole("button", { name: view, exact: true }).click();
+      await p.locator(".filter-btn").click();
+      await p.locator(".filter-tab", { hasText: "Artists" }).click();
+      await p.locator(".filter-search input").fill("Li Cheng");
+      const liCheng = p.locator(".fi-artist", { has: p.locator(".fi-name", { hasText: /^Li Cheng\b/ }) });
+      const found = await liCheng.count();
+      check(found === 1, `${view}: Chinese Painting includes Li Cheng`);
+      if (!found) { await p.keyboard.press("Escape"); continue; }
+      await liCheng.first().click();
+      await p.waitForTimeout(1800);
+      const earlyAxis = await axisState(p);
+      const earlyArtist = await p.evaluate(() => {
+        const el = document.activeElement;
+        if (!el?.matches(".artist-node") || !el.getAttribute("aria-label")?.startsWith("Li Cheng")) return false;
+        const r = el.getBoundingClientRect();
+        const axis = document.querySelector(".tl-axis").getBoundingClientRect();
+        const foot = document.querySelector(".tl-foot").getBoundingClientRect();
+        return !el.classList.contains("offscreen") && r.left >= 0 && r.right <= innerWidth && r.top >= axis.bottom && r.bottom <= foot.top;
+      });
+      check(earlyArtist && earlyAxis && earlyAxis.center >= 900 && earlyAxis.center < 1200,
+        `${view}: Explore brings Li Cheng into view before 1200 (centre ${earlyAxis?.center.toFixed(1)})`);
+    }
+  }
+  await ctx.close();
+}
+
 log("app icon");
 {
   const links = await page.evaluate(() =>
@@ -608,6 +665,7 @@ log("app icon");
 const wikiFails = failedRequests.filter((r) => r.includes("wikimedia"));
 log(`console errors: ${consoleErrors.length}`);
 consoleErrors.slice(0, 12).forEach((e) => console.log("  CONSOLE-ERR: " + e));
+check(consoleErrors.length === 0, `no console or page errors (${consoleErrors.length} collected)`);
 log(`failed requests: ${failedRequests.length} (wikimedia: ${wikiFails.length})`);
 failedRequests.slice(0, 12).forEach((e) => console.log("  REQ-FAIL: " + e));
 

@@ -256,6 +256,7 @@ export function StarView({
                       transform: `translate(${Math.round(lab.x)}px,${Math.round(lab.y)}px)`,
                       width: Math.ceil(lab.w),
                       fontSize: lab.size,
+                      letterSpacing: lab.compact ? "0.12em" : undefined,
                       ["--c" as string]: st.c,
                     }
                   : { transform: OFF }

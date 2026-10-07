@@ -10,12 +10,10 @@
 // tables (*_new) with one set-based INSERT per table, then swapped in by one
 // short transaction. Readers see either the old tables or the new ones in full.
 
+import "./lib/env";
 import fs from "node:fs";
 import path from "node:path";
 import { Pool, type PoolConfig } from "pg";
-import * as dotenv from "dotenv";
-
-dotenv.config({ path: path.join(__dirname, "..", ".env.local") });
 
 const file = path.join(__dirname, "..", "data", "cache", "museum.json");
 

@@ -9,5 +9,5 @@ dev-server.log
 # Ingest working files: the build and runtime only read data/cache/museum.json
 data/cache/artists
 data/cache/report.json
-data/cache/enrich-report.json
+data/cache/*-report.json
 demo

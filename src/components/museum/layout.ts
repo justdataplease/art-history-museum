@@ -122,8 +122,6 @@ const BENCH_SIZE: [number, number] = [0.62, 1.9];
 const DOOR_KEEP_OUT = 2.4;
 /** Most works one room of a suite holds; a bigger collection gets more rooms. */
 export const ROOM_MAX = 12;
-/** Longest suite: past this the rooms grow instead (a 400-work artist). */
-export const MAX_ROOMS = 34;
 /**
  * The flagship closes the suite's axis on the far end wall while the end is
  * near enough to be seen from the doors: up to this many rooms (the rooms
@@ -397,12 +395,10 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
   });
 
   // 0 for a room of cabinet pictures (largest side <= 0.9 m), 1 from ~2.1 m up.
-  const largest = Math.max(
-    ...[anchor, ...rest].map((p) => {
-      const s = size(p);
-      return Math.max(s.w, s.h);
-    })
-  );
+  const largest = paintings.reduce((largest, p) => {
+    const s = size(p);
+    return Math.max(largest, s.w, s.h);
+  }, 0);
   const grand = Math.min(1, Math.max(0, (largest - 0.9) / 1.2));
   const baseWidth = cab?.width ?? CABINET_HALL_WIDTH + (BASE_HALL_WIDTH - CABINET_HALL_WIDTH) * grand;
   const baseHeight = cab?.height ?? CABINET_WALL_HEIGHT + (BASE_WALL_HEIGHT - CABINET_WALL_HEIGHT) * grand;
@@ -423,7 +419,7 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
     roomLengths.reduce((s, l) => s + l, 0) + CROSS_WALL_THICKNESS * (nRooms - 1);
 
   const a = size(anchor);
-  const sideMax = Math.max(0, ...rest.map((p) => size(p).w));
+  const sideMax = rest.reduce((largest, p) => Math.max(largest, size(p).w), 0);
   // the flagship's screen: the work and its label with a margin
   const screenHalf = a.w / 2 + reach(a.w, a.h) + 0.45;
   // one width for the whole suite, so the doorways line up on one axis
@@ -504,8 +500,9 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
 
   // Tall works raise the ceiling: the frame top keeps HEADROOM below it for
   // the picture rail, the lighting track and its fixtures.
-  const maxTop = Math.max(
-    ...placements.map((p) => p.position[1] + p.h / 2 + frameAllowance(p.w, p.h))
+  const maxTop = placements.reduce(
+    (top, p) => Math.max(top, p.position[1] + p.h / 2 + frameAllowance(p.w, p.h)),
+    0,
   );
   const wallHeight = Math.max(
     Math.ceil(baseHeight * 10) / 10,
@@ -534,10 +531,8 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
   const rooms: SuiteRoom[] = spans.map(({ z0, z1 }, r) => {
     // the room's chronological chapter: the flagship hangs out of sequence
     // (it only stands in for the span when nothing else in the room is dated)
-    const dated = (list: Placement[]) =>
-      list.filter((p) => p.room === r && typeof p.painting.year === "number").map((p) => p.painting.year as number);
-    const chapter = dated(placements.slice(1));
-    const years = chapter.length ? chapter : dated(placements.slice(0, 1));
+    const years = chapters[r].flatMap((p) => typeof p.year === "number" ? [p.year] : []);
+    if (!years.length && r === anchorRoom && typeof anchor.year === "number") years.push(anchor.year);
     return {
       index: r,
       z0,
@@ -573,7 +568,7 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
 /** Works per room for a collection of `n`: chronological chapters of at
  *  most ROOM_MAX, as even as possible (30 → 10/10/10, 26 → 9/9/8). */
 export function splitRooms(n: number, roomMax = ROOM_MAX): number[] {
-  const rooms = Math.min(MAX_ROOMS, Math.max(1, Math.ceil(n / roomMax)));
+  const rooms = Math.max(1, Math.ceil(n / roomMax));
   const base = Math.floor(n / rooms);
   const extra = n % rooms;
   return Array.from({ length: rooms }, (_, i) => base + (i < extra ? 1 : 0));
@@ -623,9 +618,14 @@ export function entryGate(layout: GalleryLayout, n = 4): string[] {
 
 /** Room holding the floor point at depth z (the cross walls' centre planes divide them). */
 export function roomAt(layout: GalleryLayout, z: number): number {
-  let r = 0;
-  while (r < layout.doorways.length && z < layout.doorways[r].z) r++;
-  return r;
+  let lo = 0;
+  let hi = layout.doorways.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (z < layout.doorways[mid].z) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /** Margin kept between the camera and a wall face. */
@@ -853,24 +853,18 @@ export function pathDistance(a: P2, b: P2, layout: GalleryLayout): number {
   const ra = roomAt(layout, a.z);
   const rb = roomAt(layout, b.z);
   if (ra === rb) return Math.hypot(b.x - a.x, b.z - a.z);
-  const step = rb > ra ? 1 : -1;
-  let d = 0;
-  let px = a.x;
-  let pz = a.z;
-  for (let r = ra; r !== rb; r += step) {
-    const door = layout.doorways[step > 0 ? r : r - 1];
-    d += Math.hypot(px, door.z - pz);
-    px = 0;
-    pz = door.z;
-  }
-  return d + Math.hypot(b.x - px, b.z - pz);
+  const ahead = rb > ra;
+  const first = layout.doorways[ahead ? ra : ra - 1];
+  const last = layout.doorways[ahead ? rb - 1 : rb];
+  // All door centres lie on x = 0, so the middle of the walk is straight.
+  return Math.hypot(a.x, first.z - a.z) + Math.abs(last.z - first.z) + Math.hypot(b.x, b.z - last.z);
 }
 
 const ROMAN: [number, string][] = [
   [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"],
   [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
 ];
-/** Room number as museums letter it over a doorway: Roman throughout (I … XXXIV). */
+/** Room number as museums letter it over a doorway, in Roman numerals. */
 export function roomNumeral(index: number): string {
   let n = Math.max(1, Math.floor(index) + 1);
   let out = "";

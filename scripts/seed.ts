@@ -561,6 +561,7 @@ export const PERIODS: SeedPeriod[] = [
       "Michael Ancher",
       "Christian Krohg",
       "Kamal-ol-molk",
+      "Candido Portinari",
       "Rodolfo Amoedo",
       "Tivadar Csontváry Kosztka",
       "Józef Chełmoński"
@@ -767,7 +768,9 @@ export const PERIODS: SeedPeriod[] = [
       "Kazimir Malevich",
       "Piet Mondrian",
       "Paul Klee",
-      "Theo van Doesburg"
+      "Theo van Doesburg",
+      "Hilma af Klint",
+      "František Kupka"
     ]
   },
   {

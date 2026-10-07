@@ -33,8 +33,11 @@ export function segHitsBox(x1: number, y1: number, x2: number, y2: number, b: Bo
   return true;
 }
 
+const CELL_SIZE = 32;
+
 export class Occupancy {
   private boxes: Box[] = [];
+  private cells = new Map<number, Map<number, Box[]>>();
   /** soft obstacles (constellation lines): avoided when possible */
   private segs: [number, number, number, number][] = [];
   constructor(private bounds: Box) {}
@@ -64,9 +67,16 @@ export class Occupancy {
   }
 
   free(b: Box, pad = 0): boolean {
-    for (const o of this.boxes) {
-      if (b.x0 - pad < o.x1 && b.x1 + pad > o.x0 && b.y0 - pad < o.y1 && b.y1 + pad > o.y0) {
-        return false;
+    for (let y = Math.floor((b.y0 - pad) / CELL_SIZE); y <= Math.floor((b.y1 + pad) / CELL_SIZE); y++) {
+      const row = this.cells.get(y);
+      if (!row) continue;
+      for (let x = Math.floor((b.x0 - pad) / CELL_SIZE); x <= Math.floor((b.x1 + pad) / CELL_SIZE); x++) {
+        const cell = row.get(x);
+        if (!cell) continue;
+        for (const o of cell) {
+          if (b.x0 - pad < o.x1 && b.x1 + pad > o.x0 && b.y0 - pad < o.y1 && b.y1 + pad > o.y0)
+            return false;
+        }
       }
     }
     return true;
@@ -74,6 +84,15 @@ export class Occupancy {
 
   add(b: Box): void {
     this.boxes.push(b);
+    for (let y = Math.floor(b.y0 / CELL_SIZE); y <= Math.floor(b.y1 / CELL_SIZE); y++) {
+      let row = this.cells.get(y);
+      if (!row) this.cells.set(y, row = new Map());
+      for (let x = Math.floor(b.x0 / CELL_SIZE); x <= Math.floor(b.x1 / CELL_SIZE); x++) {
+        const cell = row.get(x);
+        if (cell) cell.push(b);
+        else row.set(x, [b]);
+      }
+    }
   }
 
   /**

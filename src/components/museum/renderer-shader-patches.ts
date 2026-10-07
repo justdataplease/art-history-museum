@@ -27,5 +27,3 @@ function patch(): void {
 }
 
 patch();
-
-export const SHADER_PATCHES_APPLIED = true;

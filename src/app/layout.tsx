@@ -18,7 +18,7 @@ const sans = Jost({
 export const metadata: Metadata = {
   title: "A Walkable History of Art · Every artist, every work, under one roof",
   description:
-    "An interactive 3D museum of art history. Zoom through eight centuries of periods and artists, then walk first-person galleries of their real paintings — all drawn from Wikipedia.",
+    "An interactive 3D museum of art history. Zoom through more than a thousand years of periods and artists, then walk first-person galleries of their real paintings — all drawn from Wikipedia.",
 };
 
 export default function RootLayout({

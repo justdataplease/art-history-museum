@@ -1,17 +1,18 @@
-# The Timeline Museum
+# A Walkable History of Art
 
-A 3D museum of art history that runs in your browser. You zoom through eight
-centuries on a timeline, pick an artist, and walk into a gallery hung with
-their paintings. Every work, date and word comes from Wikipedia.
+A 3D museum of art history that runs in your browser. You zoom through more
+than a thousand years on a timeline, pick an artist, and walk into a gallery
+hung with their paintings. Content comes from Wikipedia, Wikidata and
+Wikimedia Commons.
 
 **Live:** https://art-history.artfrompixels.com
 
 **One-minute tour:** [`demo/museum-demo.mp4`](demo/museum-demo.mp4)
 
-- 27 periods, 342 artists and 8,376 works, from Cimabue to Banksy
-- Each artist's paintings hang in the order they were painted, at their real
-  size
-- Big collections get a suite of rooms (Turner and Titian have 16 each)
+- 35 periods, 524 artists and 82,134 works, from Li Cheng to Banksy
+- Each artist's paintings hang in the order they were painted, using their
+  recorded physical dimensions where available
+- Big collections get a suite of rooms, with no room-count limit
 - Each period has its own room style, lighting and music
 - Open source under the MIT licence
 
@@ -19,8 +20,9 @@ their paintings. Every work, date and word comes from Wikipedia.
 
 ### The timeline
 
-The timeline covers 27 periods, from Medieval & Gothic to Contemporary, with
-each artist placed at the years they worked. There are two views:
+The timeline covers 35 periods, from early Chinese painting with Li Cheng
+to Contemporary, with each artist placed at the years they worked. There
+are two views:
 
 - **Gallery Wall:** a band per period with each artist's lifeline. Click a
   period to dive in and read its Wikipedia description.
@@ -32,20 +34,25 @@ open their placard, then **Enter the Gallery**.
 
 ### The galleries
 
-- **Every work, in order.** A gallery holds every painting by the artist that
-  has an illustrated English Wikipedia article, including frescoes, altarpieces
-  and series. Collections of more than 12 works become a suite of rooms with
-  the doorways lined up. Each room is signed with its years ("II · 1460 –
-  1490"), and a room navigator jumps between them.
-- **Real size.** 7,057 works hang at their physical size from their Wikidata
-  dimensions. The work with the most Wikipedia pageviews over the last 12
+- **Every available work, in order.** The ingest gathers each artist's paintings
+  from Wikidata and Wikipedia, including works with a free Commons image but
+  no article of their own. Every artist follows the same catalogue policy,
+  with no collection-size cap or restriction to famous works. Larger
+  collections become a suite of rooms
+  with the doorways lined up, up to 12 paintings or 14 prints per room.
+  Each room is signed with its years ("II · 1460 – 1490"), and a room
+  navigator jumps between them.
+- **Measured size.** 65,758 works have physical dimensions from Wikidata.
+  Monumental works are reduced to fit the hall, and tiny works are enlarged
+  enough to see. The work with the most Wikipedia pageviews over the last 12
   months gets the far wall.
-- **Period rooms.** There are ten room styles: grey stone for gold-ground
+- **Period rooms.** There are thirteen room styles: grey stone for gold-ground
   altarpieces, crimson damask for the Baroque, slate blue with ebony frames for
   the Dutch Golden Age, sage silk for the 18th century, deep green for
   Romanticism, peacock blue for the Pre-Raphaelites, grey for the
   Impressionists, charcoal and gold for Klimt's Vienna, off-white for early
-  modernism and a concrete white cube for post-war art. Walls, trim, floor,
+  modernism, a concrete white cube for post-war art, an East Asian gallery,
+  a Japanese print room and a cabinet for miniatures. Walls, trim, floor,
   ceiling, benches and frames all change with the style.
 - **Lighting.** Every work has a track spotlight aimed at it (big works get
   two), under a skylight, with soft wall shadows and a reflective floor.
@@ -57,10 +64,10 @@ open their placard, then **Enter the Gallery**.
 
 ### Works still in copyright
 
-849 works are still in copyright, including much of Picasso's later work,
+1,027 works are still in copyright, including much of Picasso's later work,
 Dalí, Magritte, Pollock and Warhol. They hang like every other work, with the
 image Wikipedia shows for them and **"© In copyright"** on the wall label and
-in the inspect view. Where Wikipedia has no image of the work (167 works), a
+in the inspect view. Where Wikipedia has no image of the work (191 works), a
 © placard with the title, year and a link to the article hangs in its place.
 
 This is a non-commercial, educational project built from Wikipedia.
@@ -79,8 +86,10 @@ Stories are article leads and facts are sentences quoted from the articles.
 - The artists and periods are listed by name in
   [`scripts/seed.ts`](scripts/seed.ts).
 - Works come from Wikidata (creator plus a painting type) and from each
-  artist's "Paintings by …" category on Wikipedia. Artists with few articles
-  but many free images also get their best Commons images. Articles that
+  artist's "Paintings by …" category on Wikipedia. All artists also get
+  their Wikidata-listed works with usable Commons images. Separate paintings
+  in a series keep their own Wikidata identities and images. Physical
+  diptychs, triptychs, altarpieces and painted screens remain whole works. Articles that
   aren't about an artwork (biographies, buildings, lists) are filtered out.
 - Enrichment adds physical size, 12-month pageviews, Wikidata ids and checked
   dates (Wikidata's preferred dates, and the article's own year when Wikidata
@@ -125,8 +134,9 @@ npm run fetch-music
 npm run load-db            # --allow-removals to drop artists the cache lacks
 ```
 
-With `WIKI_HTTP_CACHE=<dir>` the scripts keep Wikipedia's API responses on
-disk, so a second run doesn't ask Wikipedia again.
+With `WIKI_HTTP_CACHE=<dir>` the scripts save API responses on disk. File
+metadata and Wikidata claims also reuse records by file or item, so changed
+batch boundaries don't trigger lookups of unchanged works.
 
 `load-db` fills staging tables and swaps them in with one short transaction,
 so it can run against a live database. Every gallery is prerendered at build
@@ -152,7 +162,7 @@ time and refreshed hourly.
 
 ## How it's built
 
-- **Next.js 16** (App Router). The timeline and all 342 galleries are
+- **Next.js 16** (App Router). The timeline and all 524 galleries are
   prerendered; data comes from the JSON snapshot or Postgres.
 - **React Three Fiber / three.js** galleries that only render when something
   changes (`frameloop="demand"`), so standing still costs no frames.
@@ -167,16 +177,13 @@ time and refreshed hourly.
 
 Measured with `node scripts/perf-probe.mjs <slug> <baseUrl>` on a production
 build (October 2026; headless Chrome, ANGLE/D3D11 on an RTX 4070, 1600×900).
-Draws and framebuffer binds are per rendered frame while walking; suites are
-walked end to end, so they show a range. Every shader program is linked behind
-the entry doors, and none is added on the walk.
+The nine-room Caravaggio suite was walked end to end. Draws and framebuffer
+binds are per rendered frame while walking. All 28 shader programs were
+linked behind the entry doors; the count stayed at 28 throughout the walk.
 
 | Gallery | Rooms | Draws / frame | FB binds | Idle frames | Programs | Images at doors → after full walk |
 |---|---|---|---|---|---|---|
-| Vittore Carpaccio | 1 | 69 | 7 | 0 | 28 | 3.8 MB |
-| Caravaggio | 7 | 16–105 | 7 | 0 | 28 → 28 | 2.2 → 24.9 MB |
-| Titian | 16 | 19–89 | 7 | 0 | 28 → 28 | 2.9 → 59.2 MB |
-| J. M. W. Turner | 16 | 20–107 | 7 | 0 | 28 → 28 | 1.9 → 38.5 MB |
+| Caravaggio | 9 | 15–103 | 7 | 0 | 28 → 28 | 2.68 → 30.89 MB |
 
 ## Deploy
 
@@ -192,14 +199,18 @@ Postgres.
 - `node scripts/perf-probe.mjs <slug> [baseUrl] [label]`: rendering cost.
 - `node scripts/shot-museum.mjs <slug> <prefix> [baseUrl]`: gallery screenshots.
 - `node scripts/error-sweep.mjs [baseUrl]`: console-error sweep.
+- `npm run check-layout`: collection and room-navigation checks up to 10,000 works.
+- `npx tsx --test scripts/ingest.test.ts scripts/lib/wiki.test.ts scripts/lib/passes.test.ts scripts/lib/metadata.test.ts scripts/lib/item-cache.test.ts`:
+  source validation, catalogue pagination, category traversal, series
+  handling and stable metadata reuse.
 - `node scripts/record-demo.mjs [baseUrl] [out.mp4]`: records the one-minute
   tour.
 
 ## Contributing
 
 Missing an artist or a painting? Found a bug? See
-[CONTRIBUTING.md](CONTRIBUTING.md). In short: content comes only from
-Wikipedia, so fixes go into the ingest or the seed list, never into the data by
+[CONTRIBUTING.md](CONTRIBUTING.md). Content comes from the Wikimedia sources,
+so fixes go into the ingest or the seed list, never into the data by
 hand. If a work is missing, its Wikidata entry usually lacks a creator or a
 painting type, and fixing it there brings it in on the next ingest.
 [TODO.md](TODO.md) lists the open work.
@@ -210,7 +221,7 @@ Code: [MIT](LICENSE). Content keeps its own licences ([NOTICE.md](NOTICE.md)):
 
 - Text from English Wikipedia,
   [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Every
-  artist and work links to its source article.
+  artist links to its biography; works link to their articles where available.
 - Images from Wikimedia Commons and Wikipedia, each under the licence on its
   file page and credited in the gallery. Images of works still in copyright
   belong to their rights holders; they're shown as on Wikipedia, for

@@ -5,4 +5,9 @@ Dockerfile
 compose.yaml
 data/cache/artists
 data/cache/report.json
-data/cache/enrich-report.json
+data/cache/*-report.json
+hackernews.md
+.env*
+!.env.example
+*.tsbuildinfo
+next-env.d.ts

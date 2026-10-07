@@ -37,6 +37,8 @@ import {
   getSummary,
   getWikidataDates,
   nonFreeFiles,
+  splitLongRequest,
+  type SparqlPainting,
 } from "./lib/wiki";
 
 const ROOT = path.join(__dirname, "..");
@@ -44,15 +46,14 @@ const CACHE = path.join(ROOT, "data", "cache");
 const ARTIST_CACHE = path.join(CACHE, "artists");
 fs.mkdirSync(ARTIST_CACHE, { recursive: true });
 const REFRESH = process.argv.includes("--refresh");
+// Older caches contain only article works and a small Commons top-up.
+const INGEST_VERSION = 5;
 
 const wikiLimit = createLimiter(5);
 const sparqlLimit = createLimiter(1);
+const artistLimit = createLimiter(3);
 
 const MIN_PAINTINGS = 8;
-// No curatorial cap: every work with an illustrated English Wikipedia article
-// hangs (the gallery splits big collections into a suite of rooms). The bound
-// only guards against a runaway query.
-const MAX_PAINTINGS = 1000;
 // Candidate articles fetched concurrently (the limiter still caps requests).
 const BATCH = 8;
 // A series article sometimes leads with a montage of every version rather
@@ -68,7 +69,7 @@ const EAST_ASIAN = new Set(["chinese-painting", "japanese-painting", "ukiyo-e"])
 const EAST_ASIAN_SKIP =
   /\b(seals?|calligraph\w*|colophons?|inscriptions?|poems?|part|parts|section|sections|segment|fragment|cropped|crop|close-?up|enlarged|zoom)\b|部分|局部|書/i;
 const COMMONS_ONLY_SKIP =
-  /\b(details?|ausschnitt|particolare|d[ée]tail|sketch|esquisse|skizze|study for|frame[ds]?|rahmen|verso|reverse|x-ray|infrared|exhibition|ausstellung|installation|in situ)\b/i;
+  /\b(details?|ausschnitt|particolare|d[ée]tail|frame[ds]?|rahmen|verso|reverse|x-ray|infrared|exhibition|ausstellung|installation|in situ)\b/i;
 
 export interface PaintingOut {
   slug: string;
@@ -110,6 +111,7 @@ export interface ArtistOut {
   portraitCredit?: ImageCredit | null;
   wikipediaUrl: string | null;
   paintings: PaintingOut[];
+  ingestVersion?: number;
 }
 
 function slugify(s: string): string {
@@ -128,27 +130,103 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-// Resolve a Commons Special:FilePath value into a direct URL + dimensions + description.
-async function commonsFileInfo(filePathUrl: string): Promise<{
+interface CommonsFileInfo {
   url: string;
   width: number;
   height: number;
   description: string;
-} | null> {
-  const fileName = decodeURIComponent(filePathUrl.split("/Special:FilePath/").pop() ?? "");
-  if (!fileName) return null;
-  const api =
-    "https://commons.wikimedia.org/w/api.php?action=query&format=json&formatversion=2&prop=imageinfo&iiprop=url%7Csize%7Cextmetadata&titles=" +
-    encodeURIComponent("File:" + fileName);
-  const data = await wikiLimit(() => fetchJson<any>(api));
-  const info = data?.query?.pages?.[0]?.imageinfo?.[0];
-  if (!info?.url) return null;
-  const desc = info.extmetadata?.ImageDescription?.value;
+}
+
+/** Choose the painter's own section of this later composite scroll. */
+export function selectCatalogueSource(candidate: SparqlPainting, artistQid: string): SparqlPainting {
+  if (candidate.qid !== "Q132599105") return candidate;
+  // Each Commons Artwork template names its own creator, cites Q132599105,
+  // and links Shanghai Museum's account of the four separately painted parts:
+  // https://www.shanghaimuseum.net/mu/frontend/pg/article/id/CI00000871
+  const files: Record<string, string> = {
+    Q558863: "沈周仿宋李唐渔隐图.jpg",
+    Q2248916: "唐寅文会图.jpg",
+    Q306673: "文徵明有竹图.jpg",
+    Q769372: "仇英访梅图.jpg",
+  };
+  const file = files[artistQid];
+  if (!file) return candidate;
+  const image = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}`;
+  // The item and its possible article describe the composite. The filename
+  // identifies this painter's work without copying another section's title.
   return {
-    url: canonicalImageUrl(info.url),
-    width: info.width,
-    height: info.height,
-    description: desc ? stripHtml(desc) : "",
+    ...candidate, label: file.replace(/\.[^.]+$/, ""), image, images: [image], article: undefined,
+    // Its unqualified inception dates belong to different parts of the scroll.
+    year: undefined, yearPrecision: undefined,
+  };
+}
+
+// Commons catalogue files are fetched fifty at a time, rather than one
+// request for every painting. Keys keep the Wikidata P18 URL the caller used.
+async function commonsFileInfos(filePathUrls: string[]): Promise<Map<string, CommonsFileInfo>> {
+  const requested = new Map(filePathUrls.map((url) => [url, decodeURIComponent(url.split("/Special:FilePath/").pop() ?? "").replace(/_/g, " ")]));
+  const names = [...new Set(requested.values())].filter(Boolean);
+  const byName = new Map<string, CommonsFileInfo>();
+  const urlFor = (batch: string[]) => `https://commons.wikimedia.org/w/api.php?${new URLSearchParams({
+      action: "query", format: "json", formatversion: "2", redirects: "1",
+      prop: "imageinfo", iiprop: "url|size|extmetadata",
+      iiextmetadatafilter: "ImageDescription|NonFree", iiextmetadatalanguage: "en",
+      titles: batch.map((name) => `File:${name}`).join("|"),
+  })}`;
+  const batches = [];
+  for (let i = 0; i < names.length; i += 50) batches.push(...splitLongRequest(names.slice(i, i + 50), urlFor));
+  for (const { batch, url: requestUrl } of batches) {
+    const data = await wikiLimit(() => fetchJson<any>(requestUrl));
+    if (!Array.isArray(data?.query?.pages)) throw new Error("Commons imageinfo returned nothing");
+    const aliases = new Map<string, string>([...(data.query.normalized ?? []), ...(data.query.redirects ?? [])].map((x) => [x.from, x.to]));
+    const pages = new Map<string, any>(data.query.pages.map((p: any) => [p.title, p]));
+    for (const name of batch) {
+      let title = `File:${name}`;
+      const seen = new Set<string>();
+      while (aliases.has(title) && !seen.has(title)) {
+        seen.add(title);
+        title = aliases.get(title)!;
+      }
+      const info = pages.get(title)?.imageinfo?.[0];
+      const flag = info?.extmetadata?.NonFree?.value;
+      const url = info?.url && canonicalImageUrl(info.url);
+      if (!url?.startsWith("https://upload.wikimedia.org/wikipedia/commons/") || (flag && flag !== "false")) continue;
+      byName.set(name, { url, width: info.width, height: info.height, description: stripHtml(info.extmetadata?.ImageDescription?.value ?? "") });
+    }
+  }
+  const out = new Map<string, CommonsFileInfo>();
+  for (const [url, name] of requested) {
+    const info = byName.get(name);
+    if (info) out.set(url, info);
+  }
+  return out;
+}
+
+async function commonsFileInfo(filePathUrl: string): Promise<CommonsFileInfo | null> {
+  return (await commonsFileInfos([filePathUrl])).get(filePathUrl) ?? null;
+}
+
+function usableCatalogueImage(cand: SparqlPainting, ci: CommonsFileInfo, periodSlug: string): boolean {
+  const file = decodeURIComponent(ci.url.split("/").pop() ?? "");
+  const text = `${file} ${cand.label}`;
+  return Math.max(ci.width, ci.height) >= 600 && !COMMONS_ONLY_SKIP.test(text) && !MONTAGE.test(file)
+    && !(EAST_ASIAN.has(periodSlug) && EAST_ASIAN_SKIP.test(text));
+}
+
+function cataloguePainting(cand: SparqlPainting, ci: CommonsFileInfo): PaintingOut {
+  return {
+    // Two museum versions can have exactly the same Wikidata label.
+    slug: `${slugify(cand.label) || "painting"}-${cand.qid.toLowerCase()}`,
+    title: cand.label,
+    year: cand.year != null && (cand.yearPrecision ?? 9) >= 9 ? cand.year : null,
+    imageUrl: ci.url,
+    imageWidth: ci.width,
+    imageHeight: ci.height,
+    story: usableCommonsDescription(ci.description, cand.label),
+    facts: [],
+    wikipediaUrl: null,
+    sitelinks: cand.sitelinks,
+    qid: cand.qid,
   };
 }
 
@@ -187,6 +265,7 @@ async function fetchArticlePainting(
   if (have.has(tSlug) || have.has(slugify(title))) return null;
   const ps = await wikiLimit(() => getSummary(title));
   if (!ps) return null;
+  if (ps.wikibase_item && have.has(ps.wikibase_item)) return null;
   const img = ps.originalimage ?? (await wikiLimit(() => getPageImageAny(ps.title)));
   if (!img && !inCopyright) return null;
   const slug = slugify(ps.title);
@@ -212,6 +291,7 @@ async function fetchArticlePainting(
   const year = leadYear(ps.extract, artist.birthYear, artist.deathYear);
   have.add(slug);
   have.add(tSlug);
+  if (ps.wikibase_item) have.add(ps.wikibase_item);
   return {
     slug,
     title: ps.displaytitle ? stripHtml(ps.displaytitle) : ps.title,
@@ -224,6 +304,7 @@ async function fetchArticlePainting(
     facts,
     wikipediaUrl: ps.content_urls?.desktop?.page ?? null,
     sitelinks: 0,
+    qid: ps.wikibase_item ?? null,
   };
 }
 
@@ -234,7 +315,8 @@ export async function ingestArtist(
   const slug = slugify(wikiTitle);
   const cacheFile = path.join(ARTIST_CACHE, `${slug}.json`);
   if (!REFRESH && fs.existsSync(cacheFile)) {
-    return JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+    const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as ArtistOut;
+    if (cached.ingestVersion === INGEST_VERSION) return cached;
   }
 
   const summary = await wikiLimit(() => getSummary(wikiTitle));
@@ -256,13 +338,23 @@ export async function ingestArtist(
   };
   if (qid) {
     // the ukiyo-e masters' works are woodblock prints; everyone else hangs paintings only
-    const candidates = await sparqlLimit(() => getPaintingsByArtist(qid, { prints: periodSlug === "ukiyo-e" }));
+    const candidates = (await sparqlLimit(() => getPaintingsByArtist(qid, { prints: periodSlug === "ukiyo-e" })))
+      .map(candidate => selectCatalogueSource(candidate, qid));
     const withArticle = candidates.filter((c) => c.article);
+    withArticle.sort((a, b) => Number(a.series) - Number(b.series));
     const imageOnly = candidates.filter((c) => !c.article && c.image);
+    const seriesQids = new Set(candidates.filter((c) => c.series).map((c) => c.qid));
 
     const fetchCandidate = async (cand: (typeof withArticle)[number]): Promise<PaintingOut | null> => {
+      const ownImage = async (): Promise<PaintingOut | null> => {
+        const files = await commonsFileInfos(cand.images ?? (cand.image ? [cand.image] : []));
+        for (const ci of files.values()) {
+          if (usableCatalogueImage(cand, ci, periodSlug)) return cataloguePainting(cand, ci);
+        }
+        return null;
+      };
       const ps = await wikiLimit(() => getSummary(cand.article!));
-      if (!ps) return null;
+      if (!ps) return ownImage();
       // The item is a painting, but its article can redirect elsewhere (the
       // artist's own biography, a sitter, a building): vet what we landed on.
       if (ps.title === summary.title || (ps.wikibase_item && ps.wikibase_item !== cand.qid)) {
@@ -276,8 +368,10 @@ export async function ingestArtist(
         });
         if (why) {
           console.log(`     skip "${ps.title}" (from ${cand.qid}): ${why}`);
-          return null;
         }
+        // A version can redirect to the series article. Its lead image and
+        // date describe the series; use this version's own Wikidata image.
+        return ownImage();
       }
       const img = ps.originalimage;
       let imageUrl = img?.source ?? null;
@@ -301,8 +395,12 @@ export async function ingestArtist(
           h = any.height;
         }
       }
-      if (!imageUrl && !inCopyright) return null;
-      if (imageUrl && MONTAGE.test(decodeURIComponent(imageUrl))) return null;
+      if (!imageUrl) {
+        const fallback = await ownImage();
+        if (fallback) return fallback;
+        if (!inCopyright) return null;
+      }
+      if (imageUrl && MONTAGE.test(decodeURIComponent(imageUrl))) return ownImage();
       imageUrl = canonicalImageUrl(imageUrl);
       const full = await wikiLimit(() => getPlainExtract(cand.article!));
       const facts = full ? extractFacts(full, ps.extract) : [];
@@ -326,15 +424,16 @@ export async function ingestArtist(
         facts,
         wikipediaUrl: ps.content_urls?.desktop?.page ?? null,
         sitelinks: cand.sitelinks,
+        qid: cand.qid,
       };
     };
     // Most-famous first, in small concurrent batches; results keep that order.
     const seenSlug = new Set<string>();
     const seenImage = new Set<string>();
-    for (let i = 0; i < withArticle.length && paintings.length < MAX_PAINTINGS; i += BATCH) {
+    for (let i = 0; i < withArticle.length; i += BATCH) {
       const got = await Promise.all(withArticle.slice(i, i + BATCH).map(fetchCandidate));
       for (const p of got) {
-        if (!p || paintings.length >= MAX_PAINTINGS) continue;
+        if (!p) continue;
         // two Wikidata items (a work and its series) can share an article or a lead image
         if (seenSlug.has(p.slug) || (p.imageUrl && seenImage.has(p.imageUrl))) continue;
         seenSlug.add(p.slug);
@@ -345,9 +444,8 @@ export async function ingestArtist(
 
     // Hand-curated catch-up titles for artists with patchy Wikidata coverage.
     {
-      const have = new Set(paintings.map((p) => p.slug));
+      const have = new Set(paintings.flatMap((p) => [p.slug, ...(p.qid ? [p.qid] : [])]));
       for (const title of EXTRA_PAINTINGS[summary.title] ?? []) {
-        if (paintings.length >= MAX_PAINTINGS) break;
         const p = await fetchArticlePainting(title, have, ctx);
         if (p) paintings.push(p);
       }
@@ -355,14 +453,13 @@ export async function ingestArtist(
 
     // Top up from the enwiki "Paintings by X" category (catches works whose
     // Wikidata items aren't linked to the artist or lack P31=painting).
-    if (paintings.length < MAX_PAINTINGS) {
-      const have = new Set(paintings.map((p) => p.slug));
+    {
+      const have = new Set(paintings.flatMap((p) => [p.slug, ...(p.qid ? [p.qid] : [])]));
       const haveImage = new Set(paintings.map((p) => p.imageUrl));
       const titles = await wikiLimit(() =>
         getCategoryMembers(`Category:Paintings by ${summary.title}`, summary.title)
       );
       for (const title of titles) {
-        if (paintings.length >= MAX_PAINTINGS) break;
         if (/^List of/i.test(title) || title === summary.title) continue;
         const p = await fetchArticlePainting(title, have, ctx);
         if (!p) continue;
@@ -375,43 +472,45 @@ export async function ingestArtist(
       }
     }
 
-    // Top up with Commons-only paintings (image + the Commons description when
-    // it is English prose — not a caption, a template or another language).
+    // Every Commons-only painting (image + the Commons description when it is
+    // English prose — not a caption, a template or another language).
     // Only whole works: no details, sketches, montages, frames or gallery views.
-    if (paintings.length < MIN_PAINTINGS) {
-      const haveSlug = new Set(paintings.map((p) => p.slug));
-      const haveImage = new Set(paintings.map((p) => p.imageUrl));
-      for (const cand of imageOnly) {
-        if (paintings.length >= MIN_PAINTINGS + 2) break;
-        const file = decodeURIComponent(cand.image!.split("/").pop() ?? "");
-        if (COMMONS_ONLY_SKIP.test(`${file} ${cand.label}`) || MONTAGE.test(file)) continue;
-        if (EAST_ASIAN.has(periodSlug) && EAST_ASIAN_SKIP.test(`${file} ${cand.label}`)) continue;
-        if (haveSlug.has(slugify(cand.label))) continue;
-        const ci = await commonsFileInfo(cand.image!);
-        if (!ci || ci.width < 600 || haveImage.has(ci.url)) continue;
-        haveSlug.add(slugify(cand.label));
-        haveImage.add(ci.url);
-        paintings.push({
-          slug: slugify(cand.label),
-          title: cand.label,
-          year: cand.year != null && (cand.yearPrecision ?? 9) >= 9 ? cand.year : null,
-          imageUrl: ci.url,
-          imageWidth: ci.width,
-          imageHeight: ci.height,
-          story: usableCommonsDescription(ci.description, cand.label),
-          facts: [],
-          wikipediaUrl: null,
-          sitelinks: cand.sitelinks,
-        });
+    {
+      const haveQid = new Set(paintings.map((p) => p.qid));
+      const byImage = new Map(paintings.filter((p) => p.imageUrl).map((p) => [p.imageUrl!, p]));
+      // Individual versions are admitted before their series representatives.
+      imageOnly.sort((a, b) => Number(a.series) - Number(b.series));
+      for (let i = 0; i < imageOnly.length; i += 50) {
+        const batch = imageOnly.slice(i, i + 50).filter((cand) => !haveQid.has(cand.qid));
+        const files = await commonsFileInfos(batch.flatMap((cand) => cand.images ?? [cand.image!]));
+        for (const cand of batch) {
+          for (const file of cand.images ?? [cand.image!]) {
+            const ci = files.get(file);
+            if (!ci || !usableCatalogueImage(cand, ci, periodSlug)) continue;
+            const duplicate = byImage.get(ci.url);
+            // A series article's representative image is the same physical
+            // canvas; retain the individual work's identity and dimensions.
+            if (duplicate && (!duplicate.qid || !seriesQids.has(duplicate.qid) || cand.series)) continue;
+            const p = cataloguePainting(cand, ci);
+            if (duplicate) {
+              paintings[paintings.indexOf(duplicate)] = p;
+              haveQid.delete(duplicate.qid);
+            } else paintings.push(p);
+            haveQid.add(cand.qid);
+            byImage.set(ci.url, p);
+            break;
+          }
+        }
       }
     }
   }
 
-  // Dedupe by slug (different Wikidata items can share a display title).
+  // Dedupe article/category repeats without losing same-titled versions.
   const seen = new Set<string>();
   paintings = paintings.filter((p) => {
-    if (seen.has(p.slug)) return false;
-    seen.add(p.slug);
+    const identity = p.qid ?? p.slug;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
     return true;
   });
 
@@ -449,6 +548,7 @@ export async function ingestArtist(
     portraitHeight: portrait?.height ?? null,
     wikipediaUrl: summary.content_urls?.desktop?.page ?? null,
     paintings,
+    ingestVersion: INGEST_VERSION,
   };
   fs.writeFileSync(cacheFile, JSON.stringify(artist, null, 2));
   console.log(
@@ -541,7 +641,9 @@ async function main() {
     });
     if (!ps) problems.push(`period summary missing: ${period.wikiTitle}${old ? " (previous text kept)" : ""}`);
 
-    for (const artistTitle of period.artists) {
+    // Preserve seed order while overlapping independent article/file fetches.
+    // The shared Wikimedia and WDQS limiters still bound provider requests.
+    const periodArtists = await Promise.all(period.artists.map((artistTitle) => artistLimit(async () => {
       let artist: ArtistOut | null = null;
       try {
         artist = await ingestArtist(artistTitle, period.slug);
@@ -553,10 +655,14 @@ async function main() {
       if (!artist) {
         // never drop a gallery for one failed request (load-db would delete it)
         artist = previousArtist(artistTitle, prevArtists);
-        if (!artist) continue;
+        if (!artist) return null;
         artist.periodSlug = period.slug;
         problems.push(`kept the previous entry for ${artistTitle}`);
       }
+      return artist;
+    })));
+    for (const artist of periodArtists) {
+      if (!artist) continue;
       artistsOut.push(artist);
       if (artist.paintings.length < MIN_PAINTINGS)
         problems.push(`thin gallery: ${artist.name} has ${artist.paintings.length} paintings`);
@@ -579,6 +685,7 @@ async function main() {
   const enrich = await enrichArtists(artistsOut, { fileMeta });
   for (const r of enrich.failures) problems.push(`enrich: ${r}`);
   for (const r of enrich.removed) problems.push(`removed (by another artist): ${r}`);
+  for (const r of enrich.removedSeries) problems.push(`removed (series represented by individual works): ${r}`);
   for (const r of enrich.yearChanges) problems.push(`year: ${r}`);
   for (const r of enrich.imageChanges) problems.push(`image re-uploaded: ${r}`);
   for (const r of enrich.unitFixes) problems.push(`size: ${r}`);

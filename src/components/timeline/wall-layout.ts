@@ -175,9 +175,10 @@ export function computeWallLayout(inp: WallInput): WallLayout {
       // "zoomed into this period": a narrow window so the wall text is rarely
       // left half-open. A short period can't fill the screen even when dived
       // into (the zoom tops out), so it asks for most of what a dive gives it.
-      const need = Math.min(0.66, diveFill(p) * 0.86);
+      const fill = diveFill(p);
+      const need = Math.min(0.66, fill * 0.86);
       const f =
-        smoothstep(need, need + 0.08, visW / w) *
+        smoothstep(need, Math.min(need + 0.08, fill), visW / w) *
         smoothstep(Math.min(340, w * need * 0.8), Math.min(420, w * need), visW) *
         detail;
       info.set(p.slug, { p, lane: L, arts, n: arts.length, fs, fe, x0, x1, v, f, visW });

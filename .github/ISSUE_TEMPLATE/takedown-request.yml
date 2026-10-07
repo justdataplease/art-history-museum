@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        The Timeline Museum is a non-commercial, educational project built from Wikipedia.
+        A Walkable History of Art is a non-commercial, educational project built from Wikipedia.
         Works still in copyright are shown with the image Wikipedia uses and labelled "© In copyright".
         We withhold an image promptly on the rights holder's request; the work keeps its place as a © placard.
   - type: input

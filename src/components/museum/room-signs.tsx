@@ -67,11 +67,11 @@ function planSigns(layout: GalleryLayout): Sign[] {
 /** Each room's cards as an index range of the merged quads (6 per card). */
 function signRanges(signs: Sign[], rooms: number): IndexRange[] {
   const ranges: IndexRange[] = Array.from({ length: rooms }, () => ({ start: 0, count: 0 }));
+  for (const s of signs) ranges[s.in].count += 6;
   let at = 0;
-  for (let r = 0; r < rooms; r++) {
-    ranges[r].start = at;
-    for (const s of signs) if (s.in === r) ranges[r].count += 6;
-    at += ranges[r].count;
+  for (const range of ranges) {
+    range.start = at;
+    at += range.count;
   }
   return ranges;
 }
@@ -82,11 +82,13 @@ function signWindow(room: number, rooms: number): [number, number] {
 }
 
 /** Most cards any window holds: the atlas's row count. */
-function atlasRows(signs: Sign[], rooms: number): number {
+function atlasRows(ranges: IndexRange[]): number {
   let most = 0;
-  for (let r = 0; r < rooms; r++) {
-    const [lo, hi] = signWindow(r, rooms);
-    most = Math.max(most, signs.filter((s) => s.in >= lo && s.in <= hi).length);
+  for (let r = 0; r < ranges.length; r++) {
+    const [lo, hi] = signWindow(r, ranges.length);
+    let count = 0;
+    for (let i = lo; i <= hi; i++) count += ranges[i].count / 6;
+    most = Math.max(most, count);
   }
   return Math.max(1, most);
 }
@@ -151,18 +153,24 @@ function drawCard(ctx: CanvasRenderingContext2D, layout: GalleryLayout, s: Sign,
   const sep = "  ·  ";
   const tail = years ? sep + years : "";
   const tW = tail ? ctx.measureText(tail).width : 0;
-  let x = (TEX_W - nW - tW) / 2;
+  // Long catalogues have longer Roman numerals; fit the whole line on the card.
+  const scale = Math.min(1, (TEX_W - 70 * k) / (nW + tW));
+  ctx.save();
+  ctx.translate(TEX_W / 2, mid);
+  ctx.scale(scale, scale);
+  let x = -(nW + tW) / 2;
   ctx.fillStyle = "#211d18";
   ctx.font = numFont;
   ls(`${6 * k}px`);
-  ctx.fillText(numeral, x, mid + 42 * k);
+  ctx.fillText(numeral, x, 42 * k);
   x += nW;
   if (tail) {
     ctx.fillStyle = "#3a3226";
     ctx.font = yearFont;
     ls(`${5 * k}px`);
-    ctx.fillText(tail, x, mid + 40 * k);
+    ctx.fillText(tail, x, 40 * k);
   }
+  ctx.restore();
   ls("0px");
   // a gold rule under the line, as on the wall labels
   const rule = ctx.createLinearGradient(TEX_W * 0.2, 0, TEX_W * 0.8, 0);
@@ -277,7 +285,7 @@ export function RoomSigns({ layout, runtime }: { layout: GalleryLayout; runtime:
     if (!geometry) return;
     const rooms = layout.rooms.length;
     const ranges = signRanges(signs, rooms);
-    const atlas = new SignAtlas(layout, signs, geometry, atlasRows(signs, rooms));
+    const atlas = new SignAtlas(layout, signs, geometry, atlasRows(ranges));
     let alive = true;
     const apply = () => {
       const win = signWindow(runtime.currentRoom(), rooms);

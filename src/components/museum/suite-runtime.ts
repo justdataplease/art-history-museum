@@ -579,6 +579,12 @@ export class SuiteRuntime {
     const here = roomAt(this.layout, p.z);
     for (const e of this.exhibits) {
       const r = e.placement.room;
+      // Far rooms are unmounted; only the exhibit window needs portal tests.
+      if (this.lodOf(r) === null) {
+        e.seen = false;
+        if (e.group) e.group.visible = false;
+        continue;
+      }
       let show = true;
       if (r !== here) {
         // slopes (x, and y up, per unit of depth) the doorways let through

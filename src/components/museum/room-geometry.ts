@@ -19,6 +19,8 @@ const UP = new THREE.Vector3(0, 1, 0);
 export class GeoBatch {
   private parts: THREE.BufferGeometry[] = [];
 
+  constructor(private roundedBoxes: Map<string, THREE.BufferGeometry> | null = null) {}
+
   /** Add a geometry (consumed), optionally transformed into world space. */
   add(g: THREE.BufferGeometry, m?: THREE.Matrix4): this {
     if (m) g.applyMatrix4(m);
@@ -52,7 +54,13 @@ export class GeoBatch {
     radius: number, segments = 2, rotY = 0
   ): this {
     const r = Math.min(radius, w / 2 - 1e-4, h / 2 - 1e-4, d / 2 - 1e-4);
-    return this.add(new RoundedBoxGeometry(w, h, d, segments, r), xform(x, y, z, rotY));
+    const key = `${w},${h},${d},${segments},${r}`;
+    let g = this.roundedBoxes?.get(key);
+    if (!g) {
+      g = indexRoundedBox(new RoundedBoxGeometry(w, h, d, segments, r));
+      this.roundedBoxes?.set(key, g);
+    }
+    return this.add(this.roundedBoxes ? g.clone() : g, xform(x, y, z, rotY));
   }
 
   /** Vertical cylinder (frustum) whose base sits at y. */
@@ -190,6 +198,38 @@ export class GeoBatch {
     merged.computeBoundingSphere();
     return merged;
   }
+}
+
+/** RoundedBoxGeometry repeats vertices per triangle. Share only bit-identical
+ *  Float32 attributes, preserving normal/UV seams and the triangle order. */
+function indexRoundedBox(g: RoundedBoxGeometry): THREE.BufferGeometry {
+  const attrs = Object.entries(g.attributes).map(([name, a]) => [name, a as THREE.BufferAttribute] as const);
+  const bits = attrs.map(([, a]) => new Uint32Array(a.array.buffer, a.array.byteOffset, a.array.length));
+  const unique: number[] = [];
+  const indices: number[] = [];
+  const seen = new Map<string, number>();
+  for (let i = 0; i < g.getAttribute("position").count; i++) {
+    let key = "";
+    attrs.forEach(([, a], k) => {
+      for (let j = 0; j < a.itemSize; j++) key += `${bits[k][i * a.itemSize + j]},`;
+    });
+    let index = seen.get(key);
+    if (index === undefined) {
+      index = unique.length;
+      seen.set(key, index);
+      unique.push(i);
+    }
+    indices.push(index);
+  }
+  for (const [name, a] of attrs) {
+    const data = new Float32Array(unique.length * a.itemSize);
+    unique.forEach((source, i) => {
+      for (let j = 0; j < a.itemSize; j++) data[i * a.itemSize + j] = a.array[source * a.itemSize + j];
+    });
+    g.setAttribute(name, new THREE.BufferAttribute(data, a.itemSize, a.normalized));
+  }
+  g.setIndex(indices);
+  return g;
 }
 
 function xform(x: number, y: number, z: number, rotY = 0): THREE.Matrix4 {
@@ -498,14 +538,16 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
   const spec = specs[0];
   const classical = theme.room.classical;
   const last = layout.rooms.length - 1;
+  // Share untransformed rounded shapes while this hall is built, then release them.
+  const roundedBoxes = new Map<string, THREE.BufferGeometry>();
   // every part goes into the batch of the room it belongs to
   const rooms = layout.rooms.map(() => ({
-    walls: new GeoBatch(),
-    ceiling: new GeoBatch(),
-    trim: new GeoBatch(),
-    track: new GeoBatch(),
-    seat: new GeoBatch(),
-    frame: new GeoBatch(),
+    walls: new GeoBatch(roundedBoxes),
+    ceiling: new GeoBatch(roundedBoxes),
+    trim: new GeoBatch(roundedBoxes),
+    track: new GeoBatch(roundedBoxes),
+    seat: new GeoBatch(roundedBoxes),
+    frame: new GeoBatch(roundedBoxes),
   }));
   const at = (r: number) => rooms[Math.max(0, Math.min(last, r))];
 
@@ -843,6 +885,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     // keep empty rooms' ranges in order for the contiguous window maths
     if (shadowRanges[i].count === 0) shadowRanges[i].start = shadowRanges[i - 1].start + shadowRanges[i - 1].count;
   }
+  roundedBoxes.forEach((g) => g.dispose());
   return {
     walls: walls.geometry,
     ceiling: ceiling.geometry,

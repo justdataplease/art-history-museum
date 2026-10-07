@@ -2,7 +2,7 @@
 // real web fonts once they are loaded; a per-face estimate before that (and on
 // the server, where nothing is rendered from it).
 
-export type Face = "serif" | "serif-caps" | "serif-italic-caps" | "sans" | "sans-caps";
+export type Face = "serif" | "serif-caps" | "serif-italic-caps" | "serif-italic-caps-compact" | "sans" | "sans-caps";
 
 interface FontSpec {
   family: "serif" | "sans";
@@ -19,6 +19,7 @@ const FACES: Record<Face, FontSpec> = {
   serif: { family: "serif", weight: 600, track: 0.04, est: 0.5 },
   "serif-caps": { family: "serif", weight: 600, caps: true, track: 0.2, est: 0.7 },
   "serif-italic-caps": { family: "serif", weight: 500, italic: true, caps: true, track: 0.26, est: 0.66 },
+  "serif-italic-caps-compact": { family: "serif", weight: 500, italic: true, caps: true, track: 0.12, est: 0.66 },
   sans: { family: "sans", weight: 400, track: 0.12, est: 0.55 },
   "sans-caps": { family: "sans", weight: 400, caps: true, track: 0.16, est: 0.66 },
 };

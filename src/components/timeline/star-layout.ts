@@ -55,6 +55,7 @@ export interface StarLabel {
   w: number;
   size: number;
   years: boolean;
+  compact: boolean;
 }
 
 export interface StarLeader {
@@ -192,8 +193,16 @@ function constellationEdges(p: Period, arts: Artist[], sy: StarYears): [number, 
 export function computeStarLayout(inp: StarInput): StarLayout {
   const { periods, byPeriod, meta, lanes, laneCount, w, h, t, top, bottom } = inp;
   const ppy = pxPerYear(w, t.k);
+  const phone = w < 600;
+  const compact = phone && ppy < 1.2;
+  const titleFace = compact ? "serif-italic-caps-compact" : "serif-italic-caps";
   const detail = smoothstep(3.5, 8, ppy);
   const names = smoothstep(2.2, 3.6, ppy);
+  // Overview stars share a phone's limited space; their relative sizes stay
+  // intact and grow smoothly to full size before artist names appear.
+  const overview = phone ? smoothstep(0.6, 1.2, ppy) : 1;
+  const radiusScale = lerp(0.4, 1, overview);
+  const spreadScale = lerp(0.55, 1, overview);
   const X = (year: number) => xOf(year, w, t);
   // labels may use the lanes' bottom margin, never the footer row below it
   const occ = new Occupancy({ x0: 4, y0: top - 8, x1: w - 4, y1: bottom + 12 });
@@ -278,7 +287,7 @@ export function computeStarLayout(inp: StarInput): StarLayout {
     const lane = lanes.get(p.slug) ?? 0;
     const laneH = laneHs[lane];
     const cy = laneTop[lane] + laneH / 2;
-    const spread = Math.min(laneH, SPREAD_CAP);
+    const spread = Math.min(laneH, SPREAD_CAP) * spreadScale;
     cyOf.set(p.slug, cy);
     spreadOf.set(p.slug, spread);
     const list: StarNode[] = [];
@@ -288,7 +297,7 @@ export function computeStarLayout(inp: StarInput): StarLayout {
       const c = sy.centre.get(p.slug) ?? yr;
       const x = X(c + (yr - c) * shrink);
       const y = cy + offsetOf(a, i) * spread * 0.36;
-      const r = starRadius(a.paintingCount);
+      const r = starRadius(a.paintingCount) * radiusScale;
       const n: StarNode = {
         a,
         p,
@@ -306,7 +315,7 @@ export function computeStarLayout(inp: StarInput): StarLayout {
   }
 
   // ---- portraits: biggest bodies of work first, only where they fit
-  const coreBox = (n: StarNode) => boxAt(n.x, n.y, n.r * 2 + 6, n.r * 2 + 6);
+  const coreBox = (n: StarNode) => boxAt(n.x, n.y, n.r * 2 + (compact ? 2 : 6), n.r * 2 + (compact ? 2 : 6));
   if (detail > 0.2) {
     const P = Math.round(lerp(30, 52, detail));
     const placed: Box[] = [];
@@ -379,13 +388,15 @@ export function computeStarLayout(inp: StarInput): StarLayout {
     }
   }
 
-  // ---- period titles: narrowest (most crowded) first
+  // ---- period titles: crowded bands first; reserve wider names first on phones
   const labels = new Map<string, StarLabel>();
   const leaders: StarLeader[] = [];
   const visible = periods
     .map((p) => ({ p, x0: X(p.startYear), x1: X(p.endYear) }))
     .filter((v) => v.x1 > 0 && v.x0 < w)
-    .sort((a, b) => a.x1 - a.x0 - (b.x1 - b.x0));
+    .sort((a, b) => compact
+      ? textWidth(b.p.name, titleFace, 11) - textWidth(a.p.name, titleFace, 11)
+      : a.x1 - a.x0 - (b.x1 - b.x0));
 
   /** A leader from a displaced title to the nearest star of its constellation. */
   const leaderFor = (slug: string, b: Box, bb: Box, list: StarNode[], always = false): StarLeader | null => {
@@ -404,19 +415,20 @@ export function computeStarLayout(inp: StarInput): StarLayout {
   };
   const place = (p: Period, b: Box, size: number, years: boolean, ld: StarLeader | null) => {
     occ.add(b);
-    labels.set(p.slug, { p, x: b.x0, y: b.y0, w: b.x1 - b.x0, size, years });
+    labels.set(p.slug, { p, x: b.x0, y: b.y0, w: b.x1 - b.x0, size, years, compact });
     if (ld) {
       leaders.push(ld);
       occ.addSeg(ld.x1, ld.y1, ld.x2, ld.y2);
     }
   };
   const titleBox = (p: Period, size: number, years: boolean) => {
-    const nameW = textWidth(p.name, "serif-italic-caps", size);
+    const nameW = textWidth(p.name, titleFace, size);
     const yrSize = Math.max(9, size * 0.55);
     const yrW = years ? textWidth(`${p.startYear} – ${p.endYear}`, "sans-caps", yrSize) : 0;
     return { bw: Math.max(nameW, yrW) + 6, bh: size * 1.2 + (years ? yrSize * 1.5 + 4 : 0) };
   };
 
+  const minSize = phone ? 9 : 10;
   const missed: { v: (typeof visible)[number]; bb: Box; list: StarNode[]; size: number }[] = [];
   for (const v of visible) {
     const { p } = v;
@@ -439,7 +451,7 @@ export function computeStarLayout(inp: StarInput): StarLayout {
     }
     let placed = false;
     let size = clamp(10.5 + bandW / 150, 11, 21);
-    let years = true;
+    let years = !compact;
     for (let attempt = 0; attempt < 3 && !placed; attempt++) {
       const { bw, bh } = titleBox(p, size, years);
       const ax = clamp((bb.x0 + bb.x1) / 2, Math.max(v.x0, 0) + bw / 2, Math.min(v.x1, w) - bw / 2);
@@ -468,7 +480,7 @@ export function computeStarLayout(inp: StarInput): StarLayout {
       let budget = Infinity;
       for (const c of cands) {
         if (budget-- <= 0) break;
-        if (!occ.inBounds(c.b) || !occ.free(c.b, 5)) continue;
+        if (!occ.inBounds(c.b) || !occ.free(c.b, compact ? 2 : 5)) continue;
         if (list.length) {
           const gx = Math.max(0, c.b.x0 - bb.x1, bb.x0 - c.b.x1);
           const gy = Math.max(0, c.b.y0 - bb.y1, bb.y0 - c.b.y1);
@@ -492,50 +504,71 @@ export function computeStarLayout(inp: StarInput): StarLayout {
         years = false;
       }
     }
-    if (!placed) missed.push({ v, bb, list, size });
+    if (!placed) {
+      if (phone) placeDistant(v, bb, list, size);
+      else missed.push({ v, bb, list, size });
+    }
   }
 
   // Every constellation on screen keeps its title. Those the close search
   // could not seat take the nearest free spot further out (in small type,
-  // without the years), joined to their stars by a leader. On a phone the
-  // search stays close, so a title that would land among other figures
-  // waits for the zoom instead.
-  const phone = w < 600;
-  const minSize = phone ? 9 : 10;
-  const maxR = phone ? 150 : Math.max(240, w * 0.16);
-  for (const { v, bb, list, size: s0 } of missed) {
+  // without the years), joined to their stars by a leader. Include the full
+  // phone viewport: its crowded recent centuries need the empty space on
+  // the other side of the map to keep every period discoverable.
+  function placeDistant(v: (typeof visible)[number], bb: Box, list: StarNode[], s0: number) {
     const { p } = v;
     for (const size of [Math.max(minSize, Math.min(s0, 12)), minSize]) {
       if (labels.has(p.slug)) break;
       const { bw, bh } = titleBox(p, size, false);
       const cx0 = clamp((bb.x0 + bb.x1) / 2, Math.max(v.x0, 0), Math.min(v.x1, w));
       const cy0 = (bb.y0 + bb.y1) / 2;
-      // rings of candidates around the figure's edge, nearest first
-      const hw = (bb.x1 - bb.x0) / 2 + bw / 2 + 8;
-      const hh = (bb.y1 - bb.y0) / 2 + bh / 2 + 8;
-      let best: { b: Box; ld: StarLeader | null; score: number } | null = null;
-      // (on a desktop screen the search goes on, further out, until the title is seated)
-      const limit = phone ? maxR : Math.max(maxR, w * 0.45);
-      for (let r = 0; r <= limit && !best; r += 12) {
-        // candidates no further apart than a third of the title's height around the ring
-        const steps = Math.max(24, Math.ceil((2 * Math.PI * (Math.max(hw, hh) + r)) / Math.max(8, bh / 3)));
-        for (let i = 0; i < steps; i++) {
-          const a = (i / steps) * Math.PI * 2;
-          const cx = cx0 + Math.cos(a) * (hw + r);
-          const cy = cy0 + Math.sin(a) * (hh + r * 0.6);
-          const b = boxAt(cx, cy, bw, bh);
-          if (!occ.inBounds(b) || !occ.free(b, 3)) continue;
-          const ld = leaderFor(p.slug, b, bb, list, true);
-          const score =
-            Math.hypot(cx - cx0, (cy - cy0) * 1.4) +
-            (occ.crossesSeg(b) ? 40 : 0) +
-            (ld && occ.segBlocked(ld.x1, ld.y1, ld.x2, ld.y2) ? 120 : 0);
-          if (!best || score < best.score) best = { b, ld, score };
+      type Placement = { b: Box; ld: StarLeader | null; score: number };
+      let best: Placement | null = null;
+      const pad = compact ? 1 : 3;
+      const consider = (cx: number, cy: number, current: Placement | null): Placement | null => {
+        const distance = Math.hypot(cx - cx0, (cy - cy0) * 1.4);
+        if (current && distance >= current.score) return current;
+        const b = boxAt(cx, cy, bw, bh);
+        if (!occ.inBounds(b) || !occ.free(b, pad)) return current;
+        const ld = leaderFor(p.slug, b, bb, list, true);
+        const score = distance + (occ.crossesSeg(b) ? 40 : 0) +
+          (ld && occ.segBlocked(ld.x1, ld.y1, ld.x2, ld.y2) ? 120 : 0);
+        return !current || score < current.score ? { b, ld, score } : current;
+      };
+      if (phone) {
+        // A small viewport also needs the free gaps inside a figure's bounding
+        // box. Keep only the nearest free spots before scoring figure lines
+        // and leaders, so a crowded collection does not scan every line at
+        // every grid point.
+        const nearby: { cx: number; cy: number; distance: number }[] = [];
+        for (let cy = top - 8 + bh / 2; cy <= bottom + 12 - bh / 2; cy += 4) {
+          for (let cx = 4 + bw / 2; cx <= w - 4 - bw / 2; cx += 8) {
+            const distance = Math.hypot(cx - cx0, (cy - cy0) * 1.4);
+            if (nearby.length === 24 && distance >= nearby[23].distance) continue;
+            if (!occ.free(boxAt(cx, cy, bw, bh), pad)) continue;
+            nearby.push({ cx, cy, distance });
+            nearby.sort((a, b) => a.distance - b.distance);
+            if (nearby.length > 24) nearby.pop();
+          }
+        }
+        for (const { cx, cy } of nearby) best = consider(cx, cy, best);
+      } else {
+        // Rings around the figure's edge, nearest first.
+        const hw = (bb.x1 - bb.x0) / 2 + bw / 2 + 8;
+        const hh = (bb.y1 - bb.y0) / 2 + bh / 2 + 8;
+        const limit = Math.max(240, w * 0.45);
+        for (let r = 0; r <= limit && !best; r += 12) {
+          const steps = Math.max(24, Math.ceil((2 * Math.PI * (Math.max(hw, hh) + r)) / Math.max(8, bh / 3)));
+          for (let i = 0; i < steps; i++) {
+            const a = (i / steps) * Math.PI * 2;
+            best = consider(cx0 + Math.cos(a) * (hw + r), cy0 + Math.sin(a) * (hh + r * 0.6), best);
+          }
         }
       }
       if (best) place(p, best.b, size, false, best.ld);
     }
   }
+  for (const { v, bb, list, size } of missed) placeDistant(v, bb, list, size);
 
   // ---- artist names (portraits first, then the brightest stars)
   const nameOrder = nodes
