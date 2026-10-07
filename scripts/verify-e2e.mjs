@@ -31,6 +31,8 @@ const page = await browser.newPage({ viewport: { width: W, height: H } });
 // Never let a test take the real cursor: Chrome on Windows implements
 // requestPointerLock with an OS-level cursor clip, even headless.
 await page.addInitScript(() => {
+  localStorage.setItem("timeline-museum:artist-selection", "all");
+  localStorage.setItem("timeline-museum:welcome-seen:v1", "1");
   let locked = null;
   Object.defineProperty(Document.prototype, "pointerLockElement", { configurable: true, get() { return locked; } });
   const fire = () => queueMicrotask(() => document.dispatchEvent(new Event("pointerlockchange")));

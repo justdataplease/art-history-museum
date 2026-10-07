@@ -257,8 +257,8 @@ export const PERIODS: SeedPeriod[] = [
   },
   {
     slug: "cusco-school",
-    name: "Cusco School",
-    wikiTitle: "Cusco school",
+    name: "Colonial Latin American Painting",
+    wikiTitle: "Latin American art",
     startYear: 1550,
     endYear: 1800,
     color: "#8e5a9e",

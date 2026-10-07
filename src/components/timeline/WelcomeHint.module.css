@@ -1,0 +1,121 @@
+.help {
+  pointer-events: auto;
+  font-size: inherit;
+  color: var(--gold-ink);
+  padding: 4px 2px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+:global(.view-stars) .help {
+  color: var(--gold-soft);
+}
+
+.panel {
+  position: fixed;
+  right: 24px;
+  bottom: calc(var(--foot, 52px) + 18px);
+  z-index: 80;
+  width: 354px;
+  max-width: calc(100% - 36px);
+  max-height: calc(100dvh - var(--top, 122px) - var(--foot, 52px) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 26px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid #bfb5a6;
+  box-shadow: 0 10px 45px #2522201d;
+  pointer-events: auto;
+  text-align: left;
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.6;
+  letter-spacing: normal;
+  text-transform: none;
+  user-select: text;
+}
+
+.close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 40px;
+  height: 40px;
+  color: var(--ink-soft);
+  font-size: 24px;
+  font-weight: 300;
+}
+
+.eyebrow {
+  color: var(--gold-ink);
+  font-size: 10px;
+  letter-spacing: .17em;
+  text-transform: uppercase;
+}
+
+.panel h2 {
+  font-family: var(--serif);
+  font-size: 29px;
+  font-weight: 500;
+  line-height: 1.15;
+  margin: 10px 0 20px;
+}
+
+.panel ol {
+  list-style: none;
+  counter-reset: steps;
+}
+
+.panel li {
+  position: relative;
+  padding: 0 0 15px 31px;
+  counter-increment: steps;
+  color: var(--ink-soft);
+}
+
+.panel li::before {
+  content: counter(steps, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  color: var(--gold-ink);
+  font-size: 10px;
+}
+
+.panel strong {
+  display: block;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.start {
+  width: 100%;
+  margin-top: 6px;
+  padding: 12px 15px;
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.once {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+
+.help:focus-visible,
+.panel button:focus-visible {
+  outline: 2px solid var(--gold-ink);
+  outline-offset: 3px;
+}
+
+@media (max-width: 700px) {
+  .panel {
+    right: 18px;
+    padding: 22px;
+  }
+}

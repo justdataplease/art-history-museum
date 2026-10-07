@@ -1,0 +1,42 @@
+/** Editorial introduction to the collection, grouped by the existing timeline
+ * categories. Choices favour influential painters and movement leaders rather
+ * than catalogue size. See docs/FEATURED_ARTISTS.md for scope and references. */
+export const FEATURED_BY_PERIOD: Record<string, readonly string[]> = {
+  "chinese-painting": ["li-cheng-painter", "fan-kuan", "guo-xi", "zhao-mengfu", "huang-gongwang", "ni-zan", "wang-meng-painter", "shen-zhou", "wen-zhengming", "dong-qichang", "shitao", "bada-shanren", "qi-baishi"],
+  "medieval-gothic": ["giotto", "cimabue", "duccio", "simone-martini", "andrei-rublev"],
+  "persian-miniature": ["reza-abbasi", "sultan-mohammed"],
+  "early-renaissance": ["sandro-botticelli", "fra-angelico", "masaccio", "piero-della-francesca", "andrea-mantegna", "giovanni-bellini", "paolo-uccello", "antonello-da-messina"],
+  "japanese-painting": ["sesshu-toyo", "tawaraya-sotatsu", "ogata-korin", "kano-eitoku", "maruyama-okyo"],
+  "northern-renaissance": ["jan-van-eyck", "rogier-van-der-weyden", "hieronymus-bosch", "albrecht-durer", "hans-holbein-the-younger", "pieter-bruegel-the-elder", "lucas-cranach-the-elder", "matthias-grunewald"],
+  "cretan-school": ["michael-damaskinos", "angelos-akotantos"],
+  "high-renaissance": ["leonardo-da-vinci", "michelangelo", "raphael", "titian", "giorgione", "antonio-da-correggio"],
+  "mannerism": ["pontormo", "parmigianino", "bronzino", "sofonisba-anguissola", "tintoretto", "paolo-veronese", "el-greco"],
+  "indian-painting": ["basawan", "ustad-mansur", "nainsukh", "abanindranath-tagore"],
+  "cusco-school": ["miguel-cabrera-painter", "cristobal-de-villalpando"],
+  "baroque": ["caravaggio", "peter-paul-rubens", "artemisia-gentileschi", "diego-velazquez", "anthony-van-dyck", "nicolas-poussin", "claude-lorrain", "georges-de-la-tour", "francisco-de-zurbaran", "annibale-carracci"],
+  "dutch-golden-age": ["rembrandt", "johannes-vermeer", "frans-hals", "judith-leyster", "jan-steen", "pieter-de-hooch", "jacob-van-ruisdael", "rachel-ruysch"],
+  "ukiyo-e": ["hokusai", "hiroshige", "utamaro", "sharaku"],
+  "rococo": ["antoine-watteau", "francois-boucher", "jean-honore-fragonard", "giovanni-battista-tiepolo", "canaletto", "jean-simeon-chardin", "william-hogarth", "thomas-gainsborough"],
+  "neoclassicism": ["jacques-louis-david", "jean-auguste-dominique-ingres", "elisabeth-vigee-le-brun", "angelica-kauffman"],
+  "romanticism": ["francisco-goya", "william-blake", "eugene-delacroix", "j-m-w-turner", "john-constable", "caspar-david-friedrich", "theodore-gericault", "raden-saleh"],
+  "hudson-river-school": ["thomas-cole", "frederic-edwin-church"],
+  "academic-art": ["jean-leon-gerome", "william-adolphe-bouguereau", "frederic-leighton", "karl-bryullov", "raja-ravi-varma"],
+  "realism": ["jean-baptiste-camille-corot", "honore-daumier", "gustave-courbet", "jean-francois-millet", "ilya-repin", "james-mcneill-whistler", "winslow-homer", "thomas-eakins", "john-singer-sargent", "rosa-bonheur"],
+  "pre-raphaelites": ["dante-gabriel-rossetti", "john-everett-millais", "william-holman-hunt", "edward-burne-jones", "john-william-waterhouse"],
+  "impressionism": ["claude-monet", "pierre-auguste-renoir", "edgar-degas", "edouard-manet", "camille-pissarro", "alfred-sisley", "berthe-morisot", "mary-cassatt"],
+  "post-impressionism": ["vincent-van-gogh", "paul-cezanne", "paul-gauguin", "georges-seurat", "paul-signac", "henri-de-toulouse-lautrec", "henri-rousseau", "pierre-bonnard"],
+  "symbolism": ["gustave-moreau", "arnold-bocklin", "gustav-klimt", "james-ensor", "odilon-redon", "alphonse-mucha"],
+  "fauvism": ["henri-matisse", "andre-derain"],
+  "expressionism": ["edvard-munch", "ernst-ludwig-kirchner", "egon-schiele", "oskar-kokoschka", "franz-marc", "amedeo-modigliani", "marc-chagall", "otto-dix", "max-beckmann", "paula-modersohn-becker", "amrita-sher-gil"],
+  "cubism": ["pablo-picasso", "georges-braque", "juan-gris", "fernand-leger", "marcel-duchamp", "robert-delaunay"],
+  "abstract-art": ["wassily-kandinsky", "kazimir-malevich", "piet-mondrian", "paul-klee", "theo-van-doesburg", "hilma-af-klint", "frantisek-kupka"],
+  "surrealism": ["giorgio-de-chirico", "salvador-dali", "rene-magritte", "max-ernst", "joan-miro", "frida-kahlo", "leonora-carrington"],
+  "american-modernism": ["edward-hopper", "georgia-o-keeffe", "grant-wood", "andrew-wyeth"],
+  "group-of-seven": ["emily-carr", "tom-thomson"],
+  "mexican-muralism": ["diego-rivera", "david-alfaro-siqueiros", "jose-clemente-orozco"],
+  "abstract-expressionism": ["jackson-pollock", "mark-rothko", "willem-de-kooning", "barnett-newman", "joan-mitchell"],
+  "pop-art": ["andy-warhol", "roy-lichtenstein", "david-hockney", "jasper-johns"],
+  "contemporary": ["francis-bacon-artist", "lucian-freud", "jean-michel-basquiat", "gerhard-richter", "jean-dubuffet", "keith-haring", "banksy"],
+};
+
+export const FEATURED_ARTIST_SLUGS = new Set(Object.values(FEATURED_BY_PERIOD).flat());

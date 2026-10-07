@@ -51,6 +51,53 @@ button {
 
 /* ============================= TIMELINE CHROME ============================= */
 
+.tl-modes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tl-collection {
+  display: flex;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(231, 227, 224, 0.82);
+}
+
+.tl-collection button {
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--ink-soft);
+}
+
+.tl-collection button[aria-pressed="true"] {
+  background: var(--wall-2);
+  color: var(--ink);
+}
+
+.view-stars .tl-collection {
+  background: rgba(10, 12, 20, 0.7);
+  border-color: rgba(233, 229, 226, 0.18);
+}
+
+.view-stars .tl-collection button { color: var(--light); }
+.view-stars .tl-collection button[aria-pressed="true"] { background: #e9e5e226; }
+.tl-collection button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+@media (max-width: 1200px) {
+  .tl-header { flex-wrap: wrap; }
+  .tl-modes { order: 3; flex: 1 1 100%; justify-content: center; }
+}
+
+@media (max-width: 720px) {
+  .tl-modes { gap: 8px; }
+  .tl-modes .tl-switcher { order: initial; flex: 1 1 auto; }
+  .tl-collection button { padding: 6px 8px; font-size: 10px; }
+}
+
 .tl-root {
   position: fixed;
   inset: 0;

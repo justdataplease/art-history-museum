@@ -38,6 +38,8 @@ import { Axis } from "./Axis";
 import { FilterDropdown, Filter } from "./FilterDropdown";
 import { ArtistCard } from "./ArtistCard";
 import { SourceLink } from "./SourceLink";
+import { WelcomeHint } from "./WelcomeHint";
+import { FEATURED_ARTIST_SLUGS } from "./featured-artists";
 
 export type ViewName = "wall" | "stars";
 
@@ -63,6 +65,8 @@ const TimelineHeader = memo(function TimelineHeader({
   filter,
   onFilter,
   inert,
+  showAll,
+  onCollection,
 }: {
   view: ViewName;
   onView: (v: ViewName) => void;
@@ -71,6 +75,8 @@ const TimelineHeader = memo(function TimelineHeader({
   filter: Filter;
   onFilter: (f: Filter) => void;
   inert: boolean;
+  showAll: boolean;
+  onCollection: (all: boolean) => void;
 }) {
   return (
     <header className="tl-header" inert={inert}>
@@ -78,7 +84,8 @@ const TimelineHeader = memo(function TimelineHeader({
         A Walkable History of Art
         <small>Every artist, every work, under one roof.</small>
       </div>
-      <nav className="tl-switcher" aria-label="Timeline view">
+      <div className="tl-modes">
+        <nav className="tl-switcher" aria-label="Timeline view">
         {VIEWS.map((v) => (
           <button
             key={v.id}
@@ -90,7 +97,12 @@ const TimelineHeader = memo(function TimelineHeader({
             {v.label}
           </button>
         ))}
-      </nav>
+        </nav>
+        <nav className="tl-collection" aria-label="Artist selection">
+          <button type="button" aria-pressed={!showAll} title="A curated introduction to influential painters across the collection" onClick={() => onCollection(false)}>Featured</button>
+          <button type="button" aria-pressed={showAll} onClick={() => onCollection(true)}>All artists</button>
+        </nav>
+      </div>
       <FilterDropdown periods={periods} artists={artists} filter={filter} onChange={onFilter} />
     </header>
   );
@@ -104,7 +116,11 @@ export function Timeline({ data }: { data: TimelineData }) {
     [data.periods]
   );
   // already in display form: data.ts decodes entities and drops disambiguators
-  const artists = data.artists;
+  const [showAll, setShowAll] = useState(false);
+  useEffect(() => {
+    try { setShowAll(localStorage.getItem("timeline-museum:artist-selection") === "all"); } catch {}
+  }, []);
+  const artists = useMemo(() => showAll ? data.artists : data.artists.filter((a) => FEATURED_ARTIST_SLUGS.has(a.slug)), [data.artists, showAll]);
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<ViewName>("wall");
@@ -656,6 +672,15 @@ export function Timeline({ data }: { data: TimelineData }) {
     setSelected(a);
   }, []);
 
+  const onCollection = useCallback((all: boolean) => {
+    if (all === showAll) return;
+    setShowAll(all);
+    setFilter(null);
+    setFocusP(null);
+    try { localStorage.setItem("timeline-museum:artist-selection", all ? "all" : "featured"); } catch {}
+    flyTo({ k: 1, x: 0, y: 0 }, 0);
+  }, [showAll, flyTo]);
+
   const closeCard = useCallback(() => {
     setSelected(null);
     const el = openerRef.current;
@@ -783,6 +808,8 @@ export function Timeline({ data }: { data: TimelineData }) {
         filter={filter}
         onFilter={onFilter}
         inert={!!selected}
+        showAll={showAll}
+        onCollection={onCollection}
       />
 
       {/* the footer row: provenance (left), hint (centre), Wikipedia donation,
@@ -822,6 +849,7 @@ export function Timeline({ data }: { data: TimelineData }) {
               </a>
             </span>
             <SourceLink className="tl-source" />
+            <WelcomeHint hidden={!!selected} />
           </span>
         </div>
       </footer>

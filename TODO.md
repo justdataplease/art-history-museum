@@ -33,7 +33,7 @@ snapshot counts.
 - [x] Regenerate and verify painters from around the world (18 regions),
       including key names from thin regions. New periods:
       Chinese painting, Japanese painting, Ukiyo-e, Indian painting, Persian
-      miniature, Cretan School, Group of Seven, Cusco School.
+      miniature, Cretan School, Group of Seven, colonial Latin American painting.
 - [x] New painting formats in the ingest: scrolls, screens, miniatures,
       icons, thangkas, pastels, gouache; woodblock prints for the ukiyo-e
       masters only.

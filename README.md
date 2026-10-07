@@ -32,6 +32,14 @@ are two views:
 Use **Explore** to filter by period or search for an artist. Click an artist to
 open their placard, then **Enter the Gallery**.
 
+**Featured** opens with 206 selected painters across all 35 sections.
+**All artists** restores the full 526-painter timeline; the browser remembers
+your choice. The [selection and museum references](docs/FEATURED_ARTISTS.md)
+describe the editorial criteria. Each artist's full available catalogue remains
+accessible. A welcome hint appears on the first visit and can be reopened with
+**How to explore**. Long traditions, such as Chinese painting, open on a
+readable slice of time; pan to reach earlier or later painters.
+
 ### The galleries
 
 - **Every available work, in order.** The ingest gathers each artist's paintings
