@@ -283,7 +283,7 @@ export function Lighting({
     [glass]
   );
 
-  const areaBase = theme.room.daylightLevel * (theme.room.ceiling === "laylight" ? 1.0 : 1.25);
+  const areaBase = theme.room.daylightLevel * (theme.room.ceiling === "lightbox" ? 1.25 : theme.room.ceiling === "vault" ? 1.15 : 1.0);
   // each pooled area light: over its room's glass, at its fade level
   const placeAreas = (k: number) => {
     runtime.areaSlots.forEach((slot, i) => {
@@ -370,7 +370,9 @@ export function Lighting({
 function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
   return useMemo(() => {
     const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
-    const roomHalf = new THREE.Vector3(W / 2, H, L / 2);
+    // the room's height for the AO: a vault rises above the walls
+    const top = Math.max(H, ...ceilingSpecs(layout, theme).map((sp) => (sp.kind === "vault" ? sp.yCeil : H)));
+    const roomHalf = new THREE.Vector3(W / 2, top, L / 2);
     const cross = crossWalls(layout);
     const textures: THREE.Texture[] = [];
     const finish = theme.room.wallFinish;
@@ -435,7 +437,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
     // brightest in the cove, fading across the ceiling band. Dims with the
     // laylight while a painting is focused.
     const uplightBase = new THREE.Color(theme.room.daylight).multiplyScalar(
-      theme.room.ceiling === "laylight" ? 0.3 : 0.5
+      theme.room.ceiling === "laylight" ? 0.3 : theme.room.ceiling === "vault" ? 0.36 : 0.5
     );
     const uplight = { value: uplightBase.clone().multiplyScalar(0.25 + 0.75 * roomState.dim) };
     const dimmers = [
@@ -507,23 +509,99 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
 }`,
       });
     };
-    const benchSeat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(furniture.up.color),
-      roughness: furniture.up.roughness,
+    // Upholstery: each piece's fabric is its vertex colour; velvet gets a sheen at grazing angles in the
+    // pile's own colour, and the cloth a woven figure (damask) or a soft crush (velvet, leather) projected in
+    // world space.
+    const fabric = furniture.up;
+    const benchSeat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      roughness: fabric.roughness,
       metalness: 0,
+      sheen: fabric.sheen,
+      sheenRoughness: 0.42,
+      sheenColor: new THREE.Color(1, 1, 1),
     });
+    if (fabric.weave === "damask") {
+      const { map, roughness } = damaskTextures();
+      benchSeat.map = map;
+      textures.push(map, roughness);
+    } else {
+      benchSeat.map = plasterAlbedoTexture();
+      textures.push(benchSeat.map);
+    }
+    const cloth = fabric.weave === "damask" ? "vec2(0.26, 0.39)" : "vec2(0.3, 0.3)";
+    patchRoomMaterial(benchSeat, {
+      key: `bench-up-${fabric.weave}`,
+      roomHalf,
+      cross,
+      ao: [0.0, 0.3, 0.0],
+      replaceMap: `{
+  vec3 an = abs(normalize(vRoomNrm));
+  vec2 wuv = an.y > 0.5 ? vRoomPos.xz : (an.x > 0.5 ? vRoomPos.zy : vRoomPos.xy);
+  vec3 weave = texture2D(map, wuv / ${cloth}).rgb;
+  diffuseColor.rgb *= mix(vec3(1.0), weave, ${fabric.weave === "damask" ? "0.85" : "0.6"});
+}`,
+    });
+    {
+      const room = benchSeat.onBeforeCompile;
+      benchSeat.onBeforeCompile = (shader, renderer) => {
+        room.call(benchSeat, shader, renderer);
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <lights_physical_fragment>",
+          THREE.ShaderChunk.lights_physical_fragment.replace(
+            "material.sheenColor = sheenColor;",
+            "material.sheenColor = sheenColor * sqrt(max(vColor.rgb, vec3(0.0)));"
+          )
+        );
+      };
+    }
     const frameFinish = furniture.wood.finish;
     const benchFrame = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(furniture.wood.color),
+      color: 0xffffff,
+      vertexColors: true,
       roughness: { grain: 0.5, lacquer: 0.2, paint: 0.6, steel: 0.3 }[frameFinish],
       metalness: frameFinish === "steel" ? 1 : 0,
     });
     if (grainy) woodGrain(benchFrame, "bench-wood");
     const benchAccent = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(furniture.metal.color),
+      color: 0xffffff,
+      vertexColors: true,
       roughness: furniture.metal.roughness,
       metalness: furniture.metal.metalness,
     });
+
+    // A palace's gilding (a vault's ribs and cornice bead, the columns' capitals) and its marble columns,
+    // veined in world space.
+    const gilt = patchRoomMaterial(
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(theme.room.gilt ?? theme.frame.color),
+        metalness: 1,
+        roughness: 0.32,
+      }),
+      { key: "gilt", roomHalf, cross, ao: [0.45, 0.35, 0.3] }
+    );
+    const marble = patchRoomMaterial(
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(theme.room.marble ?? "#d9d3c7"),
+        metalness: 0,
+        roughness: 0.18,
+      }),
+      {
+        key: "marble",
+        roomHalf,
+        cross,
+        ao: [0.4, 0.3, 0.2],
+        extraColor: `{
+  vec3 mp = vRoomPos * vec3(2.2, 0.55, 2.2);
+  float n = roomNoise(mp) * 0.55 + roomNoise(mp * 2.3 + 3.1) * 0.3 + roomNoise(mp * 6.1 + 1.7) * 0.15;
+  float vein = 1.0 - smoothstep(0.0, 0.03, abs(n - 0.5));
+  float vein2 = 1.0 - smoothstep(0.0, 0.015, abs(roomNoise(mp * 3.7 + 9.0) - 0.5));
+  diffuseColor.rgb *= 0.82 + 0.36 * n;
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.82, 0.76), max(vein * 0.6, vein2 * 0.35));
+}`,
+      }
+    );
 
     // soft contact shadow under each bench: an SDF blob, no texture, no pass
     const benchShadow = new THREE.ShaderMaterial({
@@ -558,7 +636,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         }`,
     });
 
-    const all = [wall, ceiling, trim, track, benchSeat, benchFrame, benchAccent, benchShadow];
+    const all = [wall, ceiling, trim, track, benchSeat, benchFrame, benchAccent, benchShadow, gilt, marble];
     return {
       wall,
       ceiling,
@@ -568,6 +646,8 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       benchFrame,
       benchAccent,
       benchShadow,
+      gilt,
+      marble,
       dimmers,
       floorGrain: woodFloor ? grain : null,
       cross,
@@ -630,6 +710,8 @@ export function Room({
       <mesh geometry={hall.benchSeat} material={mats.benchSeat} matrixAutoUpdate={false} />
       <mesh geometry={hall.benchFrame} material={mats.benchFrame} matrixAutoUpdate={false} />
       <mesh geometry={hall.benchAccent} material={mats.benchAccent} matrixAutoUpdate={false} />
+      <mesh geometry={hall.gilt} material={mats.gilt} matrixAutoUpdate={false} />
+      <mesh geometry={hall.marble} material={mats.marble} matrixAutoUpdate={false} />
       {/* small props: skipped by the floor reflection */}
       <mesh geometry={hall.track} material={mats.track} matrixAutoUpdate={false} layers={1} />
       <mesh

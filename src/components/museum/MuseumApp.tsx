@@ -18,7 +18,7 @@ import * as THREE from "three";
 import gsap from "gsap";
 import type { ArtistWithPaintings, GuideArtist } from "@/lib/types";
 import { buildLayout, entryGate, entryZ, EYE_HEIGHT, type Placement } from "./layout";
-import { furnitureOf } from "./furniture";
+import { furnishSizes, furnitureOf } from "./furniture";
 import type { ElevatorApi, LiftDirection } from "./Elevator";
 import { Gallery, type LockApi, type TeleportApi, type WarmupApi } from "./Gallery";
 import { RoomNavigator } from "./RoomNavigator";
@@ -88,13 +88,13 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
     [artist.periodSlug, design]
   );
   const layout = useMemo(() => {
-    // the room style's seating sizes the benches; a room with floors has an elevator by the doors
-    const furniture = furnitureOf(theme);
+    // the room style's furniture, arranged room by room; a palace gallery's arches; a room with floors has an
+    // elevator by the doors
     return buildLayout(artist.paintings, {
       works: theme.works,
       keepOrder: !!design && design.order !== "year",
-      bench: furniture.bench.size,
-      wallSeat: { width: furniture.wall.width, depth: furniture.wall.depth },
+      furnish: furnishSizes(furnitureOf(theme)),
+      arches: theme.room.arches,
       elevator: (design?.floors.length ?? 0) > 1,
     });
   }, [artist, theme, design]);

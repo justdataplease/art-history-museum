@@ -420,6 +420,10 @@ export function canvasRoughness(era: EraKey): number {
     case "northern":
       return 0.5;
     case "eighteenth":
+    // the custom rooms' styles that mostly hang old varnished paintings
+    case "museum":
+    case "palace":
+    case "salon":
       return 0.52;
     case "nineteenth":
     case "victorian":

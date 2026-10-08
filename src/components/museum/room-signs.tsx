@@ -53,7 +53,8 @@ function planSigns(layout: GalleryLayout): Sign[] {
   layout.doorways.forEach((d, i) => {
     const y = Math.min(CARD_Y, d.height - BELOW_DOOR_HEAD);
     // beside the door case, on the visitor's right as they face the doorway
-    const off = d.halfWidth + CASE_REACH + CASE_GAP + hw;
+    // (beyond a palace gallery's columns)
+    const off = d.halfWidth + (d.columns ? 0.8 : CASE_REACH + CASE_GAP) + hw;
     if (off + hw > layout.hallWidth / 2 - 0.3) return;
     // approaching from the entrance (facing −z, right = +x): the room beyond
     signs.push({ room: i + 1, in: i, x: off, y, z: d.z + d.thickness / 2, facing: 1 });

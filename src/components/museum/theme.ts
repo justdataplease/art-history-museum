@@ -23,7 +23,9 @@ export type EraKey =
   | "east-asian"
   | "print-room"
   | "court-miniature"
-  | "museum";
+  | "museum"
+  | "palace"
+  | "salon";
 
 /**
  * tabernacle — wide flat gilded frame with a raised outer bead (pre-1500)
@@ -40,14 +42,18 @@ export type EraKey =
  */
 export type FrameStyle = "tabernacle" | "baroque" | "gilt-simple" | "wood" | "floater" | "mount" | "print" | "miniature";
 
-export type FloorKind = "oak-dark" | "oak-light" | "concrete";
+/** parquet: oak strips laid in herringbone (point de Hongrie), as in the Louvre's galleries. */
+export type FloorKind = "oak-dark" | "oak-light" | "concrete" | "parquet";
 
 /**
  * laylight — 19th-century top-lit gallery: coved cornice, flat ceiling band
  *            and a recessed well of frosted glass panes between beams.
  * lightbox — modern flat white ceiling with one long recessed diffuser.
+ * vault    — a palace's: deep coves springing from the cornice above the
+ *            walls (a cloister vault), coffered with gilt ribs, round a
+ *            great skylight (the Louvre's Grande Galerie and red rooms).
  */
-export type CeilingKind = "laylight" | "lightbox";
+export type CeilingKind = "laylight" | "lightbox" | "vault";
 
 /**
  * plaster — lime plaster / distemper with a visible trowel texture
@@ -91,6 +97,12 @@ export interface RoomStyle {
   wallWash: number;
   /** Lightbox diffuser half-width (default 0.75 m); a cabinet has a slim slot. */
   diffuserHalfWidth?: number;
+  /** Wide arches between the rooms instead of doorways: on marble columns (a palace gallery), or plain. */
+  arches?: "columns" | "plain";
+  /** Gilding: a vault's coffer ribs and cornice, the columns' bases and capitals. */
+  gilt?: string;
+  /** The columns' marble. */
+  marble?: string;
 }
 
 export interface GalleryTheme {
@@ -357,6 +369,61 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       wallWash: 0.22,
     },
   },
+  // A palace gallery: the Louvre's Grande Galerie (Percier and Fontaine's bays on marble columns under
+  // arches, Lefuel's skylights in the vault, an oak parquet in herringbone) and the Rijksmuseum's Gallery of
+  // Honour. Warm stone walls, white and gold above, gilt frames.
+  palace: {
+    era: "palace",
+    works: "painting",
+    wall: { color: "#b6a993", roughness: 0.93 },
+    trim: "#ebe4d5",
+    ceiling: "#f1ebdf",
+    floor: { kind: "parquet", tint: "#a07c55" },
+    frame: { style: "baroque", color: "#d3a64e", metalness: 1, roughness: 0.3, width: 0.12 },
+    light: { spot: "#ffe2bc", ambient: "#efe6d4" },
+    room: {
+      ceiling: "vault",
+      wallFinish: "plaster",
+      classical: true,
+      pictureRail: false,
+      daylight: "#fbf6ec",
+      daylightLevel: 1.75,
+      track: "#2a2620",
+      floorRoughness: 0.26,
+      // the parquet's strips
+      plankWidth: 0.1,
+      wallWash: 0,
+      arches: "columns",
+      gilt: "#d0a24c",
+      marble: "#8a5442",
+    },
+  },
+  // A grand salon: the Louvre's red rooms (Denuelle's red and gold, 1863, the red Soulages chose in 1969), the
+  // Salon Carré: a coved ceiling ribbed in gilt round a great skylight, Pompeian-red walls, herringbone parquet.
+  salon: {
+    era: "salon",
+    works: "painting",
+    wall: { color: "#8c2b25", roughness: 0.93 },
+    trim: "#2c211b",
+    ceiling: "#efe5d0",
+    floor: { kind: "parquet", tint: "#93714d" },
+    frame: { style: "baroque", color: "#d6a84f", metalness: 1, roughness: 0.3, width: 0.13 },
+    light: { spot: "#ffdcb0", ambient: "#efe2c9" },
+    room: {
+      ceiling: "vault",
+      wallFinish: "plaster",
+      classical: true,
+      pictureRail: true,
+      daylight: "#fff6ea",
+      daylightLevel: 1.75,
+      track: "#1d1b18",
+      floorRoughness: 0.26,
+      plankWidth: 0.1,
+      wallWash: 0,
+      arches: "plain",
+      gilt: "#d4a64e",
+    },
+  },
   // Post-war: the white cube — polished concrete, unframed canvases.
   postwar: {
     era: "postwar",
@@ -537,6 +604,8 @@ export const ROOM_STYLES: { key: EraKey; label: string }[] = [
   { key: "print-room", label: "Print room" },
   { key: "court-miniature", label: "Jewel cabinet (court miniatures)" },
   { key: "museum", label: "Grey-blue and stone (a museum of today)" },
+  { key: "palace", label: "Palace gallery: skylit vault, arches, parquet (the Louvre)" },
+  { key: "salon", label: "Grand salon: red and gold under a skylight (the Louvre)" },
 ];
 const STYLE_KEYS = new Set<string>(ROOM_STYLES.map((s) => s.key));
 export const isRoomStyle = (s: string | null | undefined): s is EraKey => !!s && STYLE_KEYS.has(s);

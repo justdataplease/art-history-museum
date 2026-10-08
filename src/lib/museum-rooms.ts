@@ -96,7 +96,7 @@ const RIJKS: Partial<Selection> = {
     floor({ label: "1700–1900", from: 1700, to: 1899, style: "nineteenth", wall: "#777371", works: 36,
       who: ["Dutch", "Netherlands", "Flemish", "Belgian", "French", "Spanish", "Germans", "British", "Italians"],
       intro: "The 18th and 19th centuries: from Troost's conversation pieces to Breitner's Amsterdam." }),
-    floor({ label: "1600–1700 · Gallery of Honour", from: 1600, to: 1699, wall: "#5f605d", works: 60,
+    floor({ label: "1600–1700 · Gallery of Honour", from: 1600, to: 1699, style: "palace", wall: "#5f605d", works: 60,
       intro: "The Golden Age: Hals, Vermeer, Steen and Rembrandt. At the end of the Gallery of Honour, The Night Watch." }),
     floor({ label: "1900–2000", from: 1900, style: "early-modern", wall: "#d2d0c9", works: 16 }),
   ],
@@ -161,23 +161,23 @@ const LOUVRE: Partial<Selection> = {
   firstFloor: 1,
   floors: "plan",
   intro:
-    "The Louvre's paintings, gallery by gallery: Italian painting under the Grande Galerie's skylights, the " +
+    "The Louvre's paintings, gallery by gallery: Italian painting under the Grande Galerie's vault and skylights, the " +
     "Mona Lisa on midnight blue, David and Delacroix in the red rooms, the Northern schools and Rubens' Medici " +
     "cycle in Richelieu, French painting in Sully.",
   plan: [
-    floor({ label: "Denon · Salon Carré and Grande Galerie", from: 1250, to: 1800, who: ITALIANS, style: "impressionist",
+    floor({ label: "Denon · Salon Carré and Grande Galerie", from: 1250, to: 1800, who: ITALIANS, style: "palace",
       wall: "#b8b0a2", works: 48, intro: "Italian painting from Cimabue and Giotto to the 18th century, under skylights." }),
-    floor({ label: "Denon · Salle des États", from: 1500, to: 1600, who: ["Italians"], style: "impressionist",
-      wall: "#1c2433", works: 12,
+    floor({ label: "Denon · Salle des États", from: 1500, to: 1600, who: ["Italians"], style: "salon",
+      wall: "#2c3a58", works: 12,
       intro: "The Mona Lisa and, across the room, Veronese's Wedding at Cana: Venice in the 16th century, on midnight blue." }),
-    floor({ label: "Denon · The red rooms", from: 1780, to: 1850, who: FRENCH, style: "old-master", wall: "#8a2b27",
+    floor({ label: "Denon · The red rooms", from: 1780, to: 1850, who: FRENCH, style: "salon", wall: "#8a2b27",
       works: 30, intro: "The Salles Daru, Denon and Mollien: French painting on the grand scale, from David to Delacroix." }),
     floor({ label: "Richelieu · French painting to 1660", from: 1300, to: 1660, who: FRENCH, style: "museum",
       wall: "#b9b3a8", works: 30, intro: "From the court portraits of the 14th century to Poussin and Claude." }),
     floor({ label: "Richelieu · Flemish, Dutch and German painting", from: 1400, to: 1850,
       who: ["Flemish", "Dutch", "Netherlands", "Germans", "Holy Roman Empire"], style: "northern", wall: "#bdb6aa",
       works: 48, intro: "Van Eyck, Bosch, Metsys, Rembrandt and Vermeer, in muted, matt rooms with stone floors." }),
-    floor({ label: "Richelieu · Galerie Médicis", from: 1620, to: 1626, who: ["Flemish"], style: "old-master",
+    floor({ label: "Richelieu · Galerie Médicis", from: 1620, to: 1626, who: ["Flemish"], style: "palace",
       wall: "#6e2a26", works: 24,
       intro: "Rubens' life of Marie de' Medici, painted for the Luxembourg Palace in 1622–1625. In Paris the gallery " +
         "closes in 2026 for four years of restoration; here it stays open." }),

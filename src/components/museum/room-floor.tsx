@@ -52,9 +52,11 @@ function createFloorMaterial(
 ) {
   const kind = theme.floor.kind;
   const wood = kind !== "concrete";
+  const parquet = kind === "parquet";
   // only a map made here is disposed with the floor
   let ownMap: THREE.Texture | null = null;
-  const map = wood && grain ? grain : (ownMap = wood ? woodGrainTexture(kind) : concreteTexture());
+  const map =
+    wood && grain ? grain : (ownMap = wood ? woodGrainTexture(kind === "oak-dark" ? "oak-dark" : "oak-light") : concreteTexture());
   const mat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(theme.floor.tint),
     map,
@@ -67,9 +69,12 @@ function createFloorMaterial(
     tReflectBlur: { value: tReflectBlur },
     textureMatrix: { value: textureMatrix },
     uReflectMix: { value: 0.92 },
-    // wood: (board width, mean board length); concrete: (joint spacing x, z), or stone slabs of plankWidth
+    // wood: (board width, mean board length); parquet: (strip width, strip length in widths); concrete: (joint
+    // spacing x, z), or stone slabs of plankWidth
     uPlank: {
-      value: wood
+      value: parquet
+        ? new THREE.Vector2(pw, 5)
+        : wood
         ? new THREE.Vector2(pw, 2.3)
         : pw < 2
           ? new THREE.Vector2(W / Math.max(1, Math.round(W / pw)), L / Math.max(1, Math.round(L / pw)))
@@ -77,7 +82,7 @@ function createFloorMaterial(
     },
     // grain / aggregate tile size in metres
     uGrain: { value: wood ? new THREE.Vector2(0.62, 1.2) : new THREE.Vector2(1.1, 1.1) },
-    uPlankVar: { value: kind === "oak-dark" ? 0.16 : 0.12 },
+    uPlankVar: { value: kind === "oak-dark" ? 0.16 : parquet ? 0.18 : 0.12 },
     uOrigin: { value: new THREE.Vector2(-W / 2, -L / 2) },
     uRoomHalf: { value: new THREE.Vector3(W / 2, H, L / 2) },
     uRoomAO: { value: new THREE.Vector3(0.55, 0.32, 0.25) },
@@ -128,7 +133,51 @@ float jointMask(float e, float halfW, float px, float span) {
       )
       .replace(
         "#include <map_fragment>",
-        wood
+        parquet
+          ? `
+float floorRough = 1.0;
+float floorJoint = 1.0;
+{
+  // oak strips laid in herringbone, the zigzag running down the hall: in a frame turned 45 degrees (in strip
+  // widths) a staircase of strips n long, alternately along one axis and the other
+  vec2 fp = vRoomPos.xz - uOrigin;
+  float sw = uPlank.x;
+  float n = uPlank.y;
+  vec2 q = vec2(fp.x + fp.y, fp.x - fp.y) * 0.70710678 / sw;
+  vec2 c = floor(q);
+  float t = mod(c.x + c.y, 2.0 * n);
+  bool across = t < n;
+  vec2 id;
+  float along;
+  float side;
+  if (across) {
+    id = vec2(c.x - t, c.y);
+    along = (q.x - id.x) / n;
+    side = fract(q.y);
+  } else {
+    float i = t - n;
+    id = vec2(c.x, c.y - i) + vec2(0.5, 17.3);
+    along = (q.y - (c.y - i)) / n;
+    side = fract(q.x);
+  }
+  float h = roomHash2(id);
+  float h2 = roomHash2(id * 1.37 + 4.0);
+  vec2 g = across ? vec2(q.y, q.x) : q;
+  vec2 baseUv = g * sw / uGrain;
+  vec4 grain = textureGrad(map, baseUv + vec2(h * 0.53, h2 * 7.31), dFdx(baseUv), dFdy(baseUv));
+  float tone = 1.0 + (h - 0.5) * uPlankVar;
+  vec3 hue = vec3(1.0 + (h2 - 0.5) * 0.06, 1.0, 1.0 - (h2 - 0.5) * 0.08);
+  float wear = roomNoise(vec3(fp * 0.21, 1.3)) * 0.6 + roomNoise(vec3(fp * 0.73, 7.7)) * 0.4;
+  tone *= 1.0 + (wear - 0.5) * 0.1;
+  float px = fwidth(q.x) * sw;
+  float ea = min(along, 1.0 - along) * n * sw;
+  float es = min(side, 1.0 - side) * sw;
+  floorJoint = jointMask(es, 0.0008, px, sw) * jointMask(ea, 0.0008, px, n * sw);
+  diffuseColor.rgb *= grain.rgb * tone * hue * mix(0.35, 1.0, floorJoint);
+  floorRough = (1.0 + (h2 - 0.5) * 0.2 + (wear - 0.5) * 0.14) * mix(1.6, 1.0, floorJoint);
+}
+`
+          : wood
           ? `
 float floorRough = 1.0;
 float floorJoint = 1.0;
@@ -199,7 +248,7 @@ float floorJoint = 1.0;
       )
       .replace("#include <aomap_fragment>", `#include <aomap_fragment>\n${ROOM_AO_APPLY}`);
   };
-  mat.customProgramCacheKey = () => `room-floor:${wood ? "wood" : "concrete"}`;
+  mat.customProgramCacheKey = () => `room-floor:${parquet ? "parquet" : wood ? "wood" : "concrete"}`;
   return { mat, ownMap, uniforms };
 }
 

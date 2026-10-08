@@ -20,15 +20,36 @@ export interface Bench {
   size: [number, number];
 }
 
-/** A seat against a wall (a pair of chairs, a settee, a chest bench): the theme's furniture
- *  (furniture.ts) decides what stands there. */
-export interface WallSeat {
-  /** Centre of the footprint on the floor (x, z), metres. */
+/** The footprints a room style's furniture offers the layout to arrange (furniture.ts): across and deep, facing
+ *  +z. A centre piece's depth runs along the hall; a wall piece's width is the most wall it wants. */
+export interface FurnishSizes {
+  centre: [number, number][];
+  wall: [number, number][];
+  chairs: [number, number][];
+}
+
+/** A piece of furniture the layout has placed: which of the style's pieces, where, turned how, in which colours. */
+export interface Furnishing {
+  /** The style's list (down the middle, against a wall, a chair set alone) and the piece in it. */
+  kind: "centre" | "wall" | "chair";
+  index: number;
+  /** Centre of the footprint on the floor (x, z) and its turn about y (0: facing +z, the entrance). */
   position: [number, number];
-  /** Footprint (along the wall, out from it), metres. */
+  rotation: number;
+  /** The piece's own footprint (across, deep) before turning; a wall piece's width is what the wall left it. */
   size: [number, number];
-  /** The way the seat faces: +1 toward the entrance (+z), -1 toward the far end. */
-  facing: 1 | -1;
+  /** The room of the suite it stands in. */
+  room: number;
+  /** In [0, 1): picks its fabric and wood from the style's (pieces in one room mostly match). */
+  tint: number;
+}
+
+/** A rope barrier in front of a famous work, as museums rope off the Mona Lisa: brass posts on the floor from
+ *  the wall out and round to the wall, and the roped-off floor as a box (x0, x1, z0, z1). */
+export interface Barrier {
+  posts: [number, number][];
+  box: [number, number, number, number];
+  room: number;
 }
 
 /** A custom room's elevator, in the entrance wall beside the doors (a room with more than one floor). */
@@ -66,8 +87,12 @@ export interface Doorway {
   thickness: number;
   /** Half the clear opening width, centred on the hall axis (x = 0). */
   halfWidth: number;
-  /** Clear opening height. */
+  /** Clear opening height (the crown of an arch). */
   height: number;
+  /** A palace gallery's arch: the rise of its (elliptical) head above the springing; 0 for a square head. */
+  arch: number;
+  /** Columns either side of the arch on both faces (their radius; 0: none). */
+  columns: number;
 }
 
 /** A freestanding wall in the entrance room that the flagship hangs on, in a
@@ -86,9 +111,10 @@ export interface GalleryLayout {
   hallLength: number;
   wallHeight: number;
   placements: Placement[];
-  benches: Bench[];
-  /** Seats against the walls: either side of the entrance doors, and flanking each room's far doorway. */
-  wallSeats: WallSeat[];
+  /** The seating, room by room: different in every room (furnish). */
+  furniture: Furnishing[];
+  /** Rope barriers in front of the most famous works. */
+  barriers: Barrier[];
   /** A custom room's elevator (LayoutOptions.elevator). */
   elevator: ElevatorSpot | null;
   /** Entrance room first; a single-room gallery has exactly one. */
@@ -148,7 +174,6 @@ const FAR_CLEAR = 1.5;
 const HEADROOM = 1.0;
 /** Benches stay out of this stretch in front of the entrance (spawn point). */
 const SPAWN_KEEP_OUT = 6.2;
-const BENCH_SIZE: [number, number] = [0.62, 1.9];
 /** Benches keep this far from a doorway's wall face (the walk-through line). */
 const DOOR_KEEP_OUT = 2.4;
 /** Most works one room of a suite holds; a bigger collection gets more rooms. */
@@ -239,10 +264,10 @@ export interface LayoutOptions {
   works?: WorkScale;
   /** Hang in the order given instead of by year (a custom room ordered by artist or by fame). */
   keepOrder?: boolean;
-  /** The centre benches' footprint (the theme's furniture; a round ottoman is wider). */
-  bench?: [number, number];
-  /** Seats against the walls: the furniture's width (at most) along the wall and depth out from it. */
-  wallSeat?: { width: number; depth: number };
+  /** The room style's furniture to arrange in the rooms (furniture.ts furnishSizes); none when omitted. */
+  furnish?: FurnishSizes;
+  /** Wide arches between the rooms instead of doorways: on columns (a palace gallery), or plain. */
+  arches?: "columns" | "plain";
   /** An elevator beside the entrance doors (a custom room with more than one floor). */
   elevator?: boolean;
 }
@@ -382,8 +407,8 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       hallLength: MIN_HALL_LENGTH,
       wallHeight: BASE_WALL_HEIGHT,
       placements: [],
-      benches: [],
-      wallSeats: [],
+      furniture: [],
+      barriers: [],
       elevator: null,
       rooms: [{ index: 0, z0: -MIN_HALL_LENGTH / 2, z1: MIN_HALL_LENGTH / 2, years: null }],
       doorways: [],
@@ -476,7 +501,9 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       // walk-round passages either side of the flagship's screen
       overture ? 2 * (screenHalf + SCREEN_PASSAGE) : 0,
       // the entrance doors, the call buttons and the elevator side by side
-      opts.elevator ? ELEVATOR_HALL_WIDTH : 0
+      opts.elevator ? ELEVATOR_HALL_WIDTH : 0,
+      // a palace gallery's arches want breadth
+      opts.arches ? ARCHED_HALL_WIDTH : 0
     )) / 10
   );
 
@@ -553,26 +580,6 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
     Math.ceil((maxTop + HEADROOM) * 10) / 10
   );
 
-  // Benches down each room's centre line, clear of the spawn point, the far
-  // wall and the doorways.
-  const benches: Bench[] = [];
-  const benchSize = opts.bench ?? BENCH_SIZE;
-  spans.forEach(({ z0, z1 }, r) => {
-    // clear of the flagship (its wall or screen), the spawn point and doorways
-    const front = overture && r === 0 ? screenZ + SCREEN_THICKNESS / 2 : z0;
-    const farKeep = r === anchorRoom ? 3.2 - benchSize[1] / 2 : DOOR_KEEP_OUT;
-    const nearKeep = r === 0 ? SPAWN_KEEP_OUT : DOOR_KEEP_OUT;
-    const lo = front + farKeep + benchSize[1] / 2;
-    const hi = z1 - nearKeep - benchSize[1] / 2;
-    if (hi > lo) {
-      const count = Math.max(1, Math.floor((hi - lo + benchSize[1]) / 7));
-      for (let i = 0; i < count; i++) {
-        const z = count === 1 ? (lo + hi) / 2 : lo + (i / (count - 1)) * (hi - lo);
-        benches.push({ position: [0, +z.toFixed(3)], size: [...benchSize] });
-      }
-    }
-  });
-
   const rooms: SuiteRoom[] = spans.map(({ z0, z1 }, r) => {
     // the room's chronological chapter: the flagship hangs out of sequence
     // (it only stands in for the span when nothing else in the room is dated)
@@ -586,14 +593,20 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
     };
   });
 
-  // Doorways scale a little with the wall: ~3.4 m clear in a 4.7 m room.
-  const doorHeight = Math.min(4, Math.max(3, wallHeight - 1.3));
-  const doorHalf = cab?.doorHalf ?? Math.min(2.8, Math.max(2.4, doorHeight * 0.76)) / 2;
+  // Doorways scale a little with the wall: ~3.4 m clear in a 4.7 m room. A palace gallery's arches span
+  // half the hall and rise nearly to the cornice, on columns.
+  const arched = !!opts.arches && !cab;
+  const doorHeight = arched ? Math.max(3.8, wallHeight - 0.45) : Math.min(4, Math.max(3, wallHeight - 1.3));
+  const doorHalf = arched
+    ? Math.min(2.7, Math.max(1.7, hallWidth * 0.26))
+    : cab?.doorHalf ?? Math.min(2.8, Math.max(2.4, doorHeight * 0.76)) / 2;
   const doorways: Doorway[] = spans.slice(0, -1).map(({ z0 }) => ({
     z: z0 - CROSS_WALL_THICKNESS / 2,
     thickness: CROSS_WALL_THICKNESS,
     halfWidth: doorHalf,
     height: doorHeight,
+    arch: arched ? Math.min(doorHalf * 0.8, doorHeight - 2.6) : 0,
+    columns: arched && opts.arches === "columns" ? COLUMN_RADIUS : 0,
   }));
 
   // the screen stands clear of the picture rail / cornice, tall enough for the work
@@ -608,12 +621,25 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
     : null;
 
   const elevator = opts.elevator ? elevatorSpot(hallWidth) : null;
-  const wallSeats = opts.wallSeat
-    ? wallSeatsFor(hallWidth, hallLength, doorways, opts.wallSeat, elevator, overture)
+  const furniture = opts.furnish
+    ? furnish({
+        W: hallWidth,
+        spans,
+        doorways,
+        sizes: opts.furnish,
+        rng: seeded(paintings.map((p) => p.slug).join("|")),
+        anchorRoom,
+        // the flagship on the far end wall, and its label
+        anchorHalf: overture ? 0 : a.w / 2 + reach(a.w, a.h),
+        front: overture ? screenZ + SCREEN_THICKNESS / 2 : null,
+        elevator,
+      })
     : [];
 
+  const barriers = placements.filter((pl) => (pl.painting.pageviews ?? 0) >= ROPED_VIEWS).map(ropeOff);
+
   return {
-    hallWidth, hallLength, wallHeight, placements, benches, wallSeats, elevator, rooms, doorways, screen,
+    hallWidth, hallLength, wallHeight, placements, furniture, barriers, elevator, rooms, doorways, screen,
     trackInset: cab?.trackInset ?? TRACK_INSET,
   };
 }
@@ -642,31 +668,181 @@ function elevatorSpot(W: number): ElevatorSpot {
   };
 }
 
-/** Seats against the walls: either side of the entrance doors (not where the elevator is), and either side of
- *  each room's far doorway, facing into the room; clear of the side walls' first and last works. */
-function wallSeatsFor(
-  W: number,
-  L: number,
-  doorways: Doorway[],
-  seat: { width: number; depth: number },
-  elevator: ElevatorSpot | null,
-  overture: boolean
-): WallSeat[] {
-  const out: WallSeat[] = [];
-  const add = (zWall: number, facing: 1 | -1, inner: number, sides: (1 | -1)[]) => {
-    const lo = inner;
-    const hi = W / 2 - 0.55;
-    if (hi - lo < 0.7) return;
-    const width = Math.min(seat.width, hi - lo);
-    const x = (lo + hi) / 2;
-    const z = +(zWall + facing * (seat.depth / 2 + 0.03)).toFixed(3);
-    for (const s of sides) out.push({ position: [+(s * x).toFixed(3), z], size: [width, seat.depth], facing });
+/** Works this famous (English Wikipedia views a year) are roped off: the Mona Lisa, The Starry Night, Girl with
+ *  a Pearl Earring, The Birth of Venus ... about a dozen. */
+const ROPED_VIEWS = 500_000;
+
+/** A rope 1.1 m out from the wall across the work and back to the wall either side (the label stays outside). */
+function ropeOff(pl: Placement): Barrier {
+  const nx = Math.sin(pl.rotationY);
+  const nz = Math.cos(pl.rotationY);
+  const tx = nz;
+  const tz = -nx;
+  const bx = pl.position[0] - nx * WALL_GAP;
+  const bz = pl.position[2] - nz * WALL_GAP;
+  const half = pl.w / 2 + frameAllowance(pl.w, pl.h) + 0.35;
+  const D = 1.1;
+  const at = (s: number, d: number): [number, number] => [+(bx + tx * s + nx * d).toFixed(3), +(bz + tz * s + nz * d).toFixed(3)];
+  const n = Math.max(1, Math.ceil((2 * half) / 1.6));
+  const posts: [number, number][] = [at(-half, 0.14)];
+  for (let i = 0; i <= n; i++) posts.push(at(-half + (2 * half * i) / n, D));
+  posts.push(at(half, 0.14));
+  const xs = posts.map((p) => p[0]);
+  const zs = posts.map((p) => p[1]);
+  return { posts, box: [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)], room: pl.room };
+}
+
+/** Narrowest hall a palace gallery's arches look right in. */
+const ARCHED_HALL_WIDTH = 8.6;
+/** The columns either side of a palace gallery's arches: radius, and how far they stand out from the wall face
+ *  and the jamb. */
+const COLUMN_RADIUS = 0.2;
+const COLUMN_OUT = 0.34;
+
+/** Every column a palace gallery's arches stand on: four per arch (both faces, both jambs). */
+export function columnsOf(layout: Pick<GalleryLayout, "doorways">): { x: number; z: number; r: number }[] {
+  const out: { x: number; z: number; r: number }[] = [];
+  for (const d of layout.doorways) {
+    if (!d.columns) continue;
+    for (const sz of [-1, 1])
+      for (const sx of [-1, 1]) {
+        out.push({ x: sx * (d.halfWidth + COLUMN_OUT), z: d.z + sz * (d.thickness / 2 + COLUMN_OUT), r: d.columns });
+      }
+  }
+  return out;
+}
+
+/** A small seeded generator (mulberry32 over an FNV-1a hash): the same works, the same furniture. */
+function seeded(key: string): () => number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193);
+  let a = h >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  add(L / 2, -1, ENTRANCE_DOOR.width / 2 + DOOR_CASING + 0.1, elevator ? [1] : [-1, 1]);
-  doorways.forEach((d, i) => {
-    // (behind an overture's screen, nobody would see them)
-    if (overture && i === 0) return;
-    add(d.z + d.thickness / 2, 1, d.halfWidth + DOOR_CASING + 0.1, [-1, 1]);
+}
+
+/** Half extents (x, z) of a footprint turned by `ry` about y. */
+export function turnedHalf(size: [number, number], ry: number): [number, number] {
+  const c = Math.abs(Math.cos(ry));
+  const s = Math.abs(Math.sin(ry));
+  return [(size[0] * c + size[1] * s) / 2, (size[0] * s + size[1] * c) / 2];
+}
+
+/**
+ * Furnish each room differently, as a real museum's rooms are: often a bench or an ottoman down the middle
+ * (sometimes not), and here and there an armchair set alone at an angle in a corner, a settee against the wall
+ * beside a doorway, two chairs and a table. Clear of the spawn point, the doorways' walk-through line, the
+ * flagship, the elevator and the side walls' works (which start ENTRY_CLEAR / FAR_CLEAR from the cross walls).
+ */
+function furnish(o: {
+  W: number;
+  spans: { z0: number; z1: number }[];
+  doorways: Doorway[];
+  sizes: FurnishSizes;
+  rng: () => number;
+  anchorRoom: number;
+  anchorHalf: number;
+  /** An overture's screen face (room 0's far limit), or null. */
+  front: number | null;
+  elevator: ElevatorSpot | null;
+}): Furnishing[] {
+  const { W, spans, doorways, sizes, rng } = o;
+  const out: Furnishing[] = [];
+  const last = spans.length - 1;
+  const round = (v: number) => +v.toFixed(3);
+  spans.forEach(({ z0, z1 }, r) => {
+    const roomTint = rng();
+    // most pieces in a room match; now and then one is covered in another of the style's fabrics
+    const tint = () => (rng() < 0.3 ? rng() : roomTint);
+    let placed = 0;
+
+    // ---- down the middle
+    const front = o.front !== null && r === 0 ? o.front : z0;
+    const roll = rng();
+    if (sizes.centre.length && roll < 0.72) {
+      const index = roll < 0.48 || sizes.centre.length === 1 ? 0 : 1 + (Math.floor(rng() * (sizes.centre.length - 1)) % (sizes.centre.length - 1));
+      const [w, d] = sizes.centre[index];
+      const farKeep = r === o.anchorRoom && o.front === null ? 3.2 - d / 2 : DOOR_KEEP_OUT;
+      const nearKeep = r === 0 ? SPAWN_KEEP_OUT : DOOR_KEEP_OUT;
+      const lo = front + farKeep + d / 2;
+      const hi = z1 - nearKeep - d / 2;
+      if (hi > lo) {
+        const most = Math.max(1, Math.floor((hi - lo + d) / 7));
+        const count = most > 1 && rng() < 0.35 ? most - 1 : most;
+        const t = tint();
+        for (let i = 0; i < count; i++) {
+          const z = count === 1 ? lo + (hi - lo) * (0.3 + 0.4 * rng()) : lo + (i / (count - 1)) * (hi - lo);
+          out.push({ kind: "centre", index, position: [0, round(z)], rotation: 0, size: [w, d], room: r, tint: t });
+          placed++;
+        }
+      }
+    }
+
+    // ---- by the walls: the four ends of the room's cross walls (or the entrance wall, or the far end wall)
+    interface End {
+      zWall: number;
+      /** Into the room along z from this wall. */
+      facing: 1 | -1;
+      side: 1 | -1;
+      /** The wall is free from |x| = inner to the side wall. */
+      inner: number;
+    }
+    const ends: End[] = [];
+    const casing = 0.35;
+    for (const side of [-1, 1] as const) {
+      // the near wall: the entrance (not the elevator's side), else the doorway from the room before
+      if (r === 0) {
+        if (!(o.elevator && side === -1)) ends.push({ zWall: z1, facing: -1, side, inner: ENTRANCE_DOOR.width / 2 + casing });
+      } else {
+        const d = doorways[r - 1];
+        ends.push({ zWall: z1, facing: -1, side, inner: d.halfWidth + casing + (d.columns ? 0.65 : 0) });
+      }
+      // the far wall: the doorway to the next room (not behind an overture's screen), or the flagship's wall
+      if (r < last) {
+        const d = doorways[r];
+        if (!(o.front !== null && r === 0)) ends.push({ zWall: z0, facing: 1, side, inner: d.halfWidth + casing + (d.columns ? 0.65 : 0) });
+      } else {
+        ends.push({ zWall: z0, facing: 1, side, inner: o.anchorHalf > 0 ? o.anchorHalf + 0.35 : 0.5 });
+      }
+    }
+    const want = placed === 0 ? (rng() < 0.88 ? (rng() < 0.3 ? 2 : 1) : 0) : rng() < 0.32 ? 0 : rng() < 0.78 ? 1 : 2;
+    const free = [...ends];
+    for (let n = 0; n < want && free.length; n++) {
+      const e = free.splice(Math.floor(rng() * free.length) % free.length, 1)[0];
+      const outer = W / 2 - 0.12;
+      const asChair = sizes.chairs.length > 0 && (sizes.wall.length === 0 || rng() < 0.62);
+      if (asChair) {
+        // an armchair alone, turned 25-60 degrees from the wall toward the room, tucked into the corner
+        const index = Math.floor(rng() * sizes.chairs.length) % sizes.chairs.length;
+        const size = sizes.chairs[index];
+        const turn = 0.45 + rng() * 0.6;
+        const rotation = e.facing === 1 ? -e.side * turn : Math.PI + e.side * turn;
+        const [hx, hz] = turnedHalf(size, rotation);
+        const gap = 0.05 + rng() * 0.12;
+        const x = outer - gap - hx;
+        if (x - hx < e.inner) continue;
+        out.push({
+          kind: "chair", index, rotation: round(rotation), size: [...size], room: r, tint: tint(),
+          position: [round(e.side * x), round(e.zWall + e.facing * (hz + 0.06 + gap * 0.5))],
+        });
+      } else {
+        const index = Math.floor(rng() * sizes.wall.length) % sizes.wall.length;
+        const [most, depth] = sizes.wall[index];
+        const lo = e.inner;
+        const hi = W / 2 - 0.55;
+        if (hi - lo < 0.75) continue;
+        const width = Math.min(most, hi - lo);
+        const x = lo + width / 2 + rng() * (hi - lo - width);
+        out.push({
+          kind: "wall", index, rotation: e.facing === 1 ? 0 : Math.PI, size: [round(width), depth], room: r, tint: tint(),
+          position: [round(e.side * x), round(e.zWall + e.facing * (depth / 2 + 0.03))],
+        });
+      }
+    }
   });
   return out;
 }
@@ -804,9 +980,18 @@ export function confine(p: { x: number; z: number }, layout: GalleryLayout): voi
   clampHall();
 }
 
-/** Everything one sits on, as footprints: the centre benches and the seats against the walls. */
+/** Everything in the way on the floor, as footprints: the furniture (its turned footprint's box) and a
+ *  palace gallery's columns. */
 function seatsOf(layout: GalleryLayout): Bench[] {
-  return layout.wallSeats.length ? [...layout.benches, ...layout.wallSeats] : layout.benches;
+  const out: Bench[] = layout.furniture.map((f) => {
+    const [hx, hz] = turnedHalf(f.size, f.rotation);
+    return { position: f.position, size: [2 * hx, 2 * hz] };
+  });
+  for (const c of columnsOf(layout)) out.push({ position: [c.x, c.z], size: [2 * c.r + 0.1, 2 * c.r + 0.1] });
+  for (const { box: [x0, x1, z0, z1] } of layout.barriers) {
+    out.push({ position: [(x0 + x1) / 2, (z0 + z1) / 2], size: [x1 - x0 + 0.1, z1 - z0 + 0.1] });
+  }
+  return out;
 }
 
 /** Seats, and the flagship's screen as one more (bench-like) obstacle. */

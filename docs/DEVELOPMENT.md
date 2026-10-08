@@ -78,7 +78,7 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
   elevator by the entrance); `/museums/<slug>` a recreated museum (`src/lib/museum-rooms.ts`), an ordinary room
   link; `/api/room` the picker's live count and preview (`?preview=1`); `/api/room/works?q=` the works to pick by
   hand; `/api/guide/<artist>` the audio guide's scripts (`data/site/guide`); `/furniture` (development only) every
-  room style's seating, for modelling it.
+  room style's furniture (the layout picks among it room by room), for modelling it.
 
 - **Next.js 16** (App Router). The timeline and all 526 galleries are
   prerendered; data comes from the JSON snapshot or Postgres.

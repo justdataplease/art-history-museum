@@ -9,26 +9,51 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { ENTRANCE_DOOR, roomAt, TRACK_DROP, TRACK_INSET, type Bench, type GalleryLayout } from "./layout";
+import {
+  columnsOf,
+  ENTRANCE_DOOR,
+  roomAt,
+  TRACK_DROP,
+  TRACK_INSET,
+  turnedHalf,
+  type Doorway,
+  type Furnishing,
+  type GalleryLayout,
+} from "./layout";
 import type { GalleryTheme } from "./theme";
-import { buildBench, buildWallSeat, furnitureOf } from "./furniture";
+import { buildFurnishing, furnitureOf } from "./furniture";
 
 const UP = new THREE.Vector3(0, 1, 0);
+const WHITE = new THREE.Color(1, 1, 1);
 
 // ------------------------------------------------------------------ batching
 
 export class GeoBatch {
   private parts: THREE.BufferGeometry[] = [];
 
-  constructor(private roundedBoxes: Map<string, THREE.BufferGeometry> | null = null) {}
+  /** `colored`: every part carries a vertex colour (the furniture: one material, many fabrics). */
+  constructor(
+    private roundedBoxes: Map<string, THREE.BufferGeometry> | null = null,
+    private colored = false
+  ) {}
 
-  /** Add a geometry (consumed), optionally transformed into world space. */
-  add(g: THREE.BufferGeometry, m?: THREE.Matrix4): this {
+  /** Add a geometry (consumed), optionally transformed into world space, in `color` when the batch is colored. */
+  add(g: THREE.BufferGeometry, m?: THREE.Matrix4, color?: THREE.Color): this {
     if (m) g.applyMatrix4(m);
     for (const name of Object.keys(g.attributes)) {
       if (name !== "position" && name !== "normal" && name !== "uv") g.deleteAttribute(name);
     }
     const count = g.attributes.position.count;
+    if (this.colored) {
+      const c = color ?? WHITE;
+      const rgb = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        rgb[i * 3] = c.r;
+        rgb[i * 3 + 1] = c.g;
+        rgb[i * 3 + 2] = c.b;
+      }
+      g.setAttribute("color", new THREE.BufferAttribute(rgb, 3));
+    }
     if (!g.attributes.normal) g.computeVertexNormals();
     if (!g.attributes.uv) {
       g.setAttribute("uv", new THREE.Float32BufferAttribute(new Float32Array(count * 2), 2));
@@ -65,7 +90,7 @@ export class GeoBatch {
   }
 
   /** Rounded box under any transform (the furniture's tilted backs and cushions). */
-  roundedBoxAt(w: number, h: number, d: number, radius: number, segments: number, m: THREE.Matrix4): this {
+  roundedBoxAt(w: number, h: number, d: number, radius: number, segments: number, m: THREE.Matrix4, color?: THREE.Color): this {
     const r = Math.min(radius, w / 2 - 1e-4, h / 2 - 1e-4, d / 2 - 1e-4);
     const key = `${w},${h},${d},${segments},${r}`;
     let g = this.roundedBoxes?.get(key);
@@ -73,7 +98,7 @@ export class GeoBatch {
       g = indexRoundedBox(new RoundedBoxGeometry(w, h, d, segments, r));
       this.roundedBoxes?.set(key, g);
     }
-    return this.add(this.roundedBoxes ? g.clone() : g, m);
+    return this.add(this.roundedBoxes ? g.clone() : g, m, color);
   }
 
   /** Vertical cylinder (frustum) whose base sits at y. */
@@ -307,6 +332,9 @@ export interface CeilingSpec {
   kind: GalleryTheme["room"]["ceiling"];
   /** Cornice cove radius (0 = square wall/ceiling junction). */
   coveR: number;
+  /** Where the cove springs from the wall: inside the wall's height under a laylight, from the cornice on top
+   *  of the walls in a vault. */
+  coveBase: number;
   /** Opening in the ceiling plane: half-width in x, z range. */
   wellX: number;
   wellZ0: number;
@@ -334,6 +362,36 @@ function roomCeilingSpec(
   inset = TRACK_INSET,
 ): CeilingSpec {
   const railX = W / 2 - inset;
+  if (theme.room.ceiling === "vault") {
+    // coves as deep as the room allows springing from the top of the walls, a skylight between them
+    const r = Math.max(1.2, Math.min(2.6, W / 2 - 1.9, (z1 - z0) / 2 - 1.9));
+    const band = 0.35;
+    const wellX = W / 2 - r - band;
+    const wellZ0 = z0 + r + band;
+    const wellZ1 = z1 - r - band;
+    const len = wellZ1 - wellZ0;
+    const n = Math.max(2, Math.round(len / 3.2));
+    const bays: { z0: number; z1: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      bays.push({ z0: wellZ0 + (len * i) / n, z1: wellZ0 + (len * (i + 1)) / n });
+    }
+    return {
+      kind: "vault",
+      coveR: r,
+      coveBase: H,
+      wellX,
+      wellZ0,
+      wellZ1,
+      yCeil: H + r,
+      yGlass: H + r + 0.55,
+      bays,
+      beamW: 0.2,
+      beamDepth: 0.3,
+      panes: [4, 3],
+      z0,
+      z1,
+    };
+  }
   if (theme.room.ceiling === "laylight") {
     const wellX = Math.min(railX - 0.42, W / 2 - 1.6);
     const wellZ0 = z0 + inset + 0.75;
@@ -348,6 +406,7 @@ function roomCeilingSpec(
     return {
       kind: "laylight",
       coveR: 0.42,
+      coveBase: H - 0.42,
       wellX,
       wellZ0,
       wellZ1,
@@ -375,6 +434,7 @@ function roomCeilingSpec(
   return {
     kind: "lightbox",
     coveR: 0,
+    coveBase: H,
     wellX,
     wellZ0,
     wellZ1,
@@ -399,6 +459,15 @@ export function ceilingSpecs(layout: GalleryLayout, theme: GalleryTheme): Ceilin
 /** The entrance room's ceiling (the whole hall's, for a single room). */
 export function ceilingSpec(layout: GalleryLayout, theme: GalleryTheme): CeilingSpec {
   return ceilingSpecs(layout, theme)[0];
+}
+
+/** The ceiling's underside above (x, z) of a room: the flat band, or lower in a cove (rods land on it). */
+export function ceilingAt(spec: CeilingSpec, W: number, x: number, z: number): number {
+  const r = spec.coveR;
+  if (r <= 0 || spec.kind !== "vault") return spec.yCeil;
+  const d = Math.min(W / 2 - Math.abs(x), z - spec.z0, spec.z1 - z);
+  if (d >= r) return spec.yCeil;
+  return spec.coveBase + Math.sqrt(Math.max(0, r * r - (r - Math.max(0, d)) ** 2));
 }
 
 /** The emissive glass (laylight panes / lightbox diffuser), one quad per bay. */
@@ -441,6 +510,10 @@ export interface HallGeometry {
   benchAccent: THREE.BufferGeometry;
   /** Soft contact shadows under the seats (custom attributes aLocal/aHalf). */
   benchShadow: THREE.BufferGeometry;
+  /** Gilding: a vault's ribs and cornice, the columns' bases and capitals. */
+  gilt: THREE.BufferGeometry;
+  /** A palace gallery's marble columns. */
+  marble: THREE.BufferGeometry;
   /** The entrance room's ceiling. */
   spec: CeilingSpec;
   /** Every room's ceiling, entrance first. */
@@ -485,13 +558,13 @@ export function doorCaseTop(dh: number, classical: boolean): number {
   return classical ? dh + 0.205 : dh + 0.04;
 }
 
-/** Height of the picture rail's centre (when the theme has one). */
-export function pictureRailY(H: number, coveR: number): number {
-  return H - coveR - 0.32;
+/** Height of the picture rail's centre (when the theme has one): below the cove's springing. */
+export function pictureRailY(coveBase: number): number {
+  return coveBase - 0.32;
 }
 
 /** One room's share of every merged architecture geometry, by material. */
-export const HALL_PARTS = ["walls", "ceiling", "trim", "track", "benchSeat", "benchFrame", "benchAccent", "benchShadow"] as const;
+export const HALL_PARTS = ["walls", "ceiling", "trim", "track", "benchSeat", "benchFrame", "benchAccent", "benchShadow", "gilt", "marble"] as const;
 export type HallPart = (typeof HALL_PARTS)[number];
 
 /** A run of indices in a merged geometry (for setDrawRange). */
@@ -561,9 +634,11 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     ceiling: new GeoBatch(roundedBoxes),
     trim: new GeoBatch(roundedBoxes),
     track: new GeoBatch(roundedBoxes),
-    seat: new GeoBatch(roundedBoxes),
-    frame: new GeoBatch(roundedBoxes),
-    accent: new GeoBatch(roundedBoxes),
+    seat: new GeoBatch(roundedBoxes, true),
+    frame: new GeoBatch(roundedBoxes, true),
+    accent: new GeoBatch(roundedBoxes, true),
+    gilt: new GeoBatch(roundedBoxes),
+    marble: new GeoBatch(roundedBoxes),
   }));
   const at = (r: number) => rooms[Math.max(0, Math.min(last, r))];
 
@@ -640,27 +715,44 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     const zf = d.z + d.thickness / 2; // face toward the entrance (faces +z)
     const zb = d.z - d.thickness / 2; // face toward the far end (faces -z)
     const side = W / 2 - hw;
+    // the jambs rise to the springing of an arch, or to a square head
+    const js = dh - d.arch;
     // +z face: U = +x
     before.walls.quad(V(-W / 2, 0, zf), V(side, 0, 0), V(0, H, 0));
     before.walls.quad(V(hw, 0, zf), V(side, 0, 0), V(0, H, 0), [W / 2 + hw, 0]);
-    before.walls.quad(V(-hw, dh, zf), V(2 * hw, 0, 0), V(0, H - dh, 0), [W / 2 - hw, dh]);
+    if (d.arch > 0) before.walls.add(archSpandrel(hw, js, d.arch, H), new THREE.Matrix4().makeTranslation(0, 0, zf));
+    else before.walls.quad(V(-hw, dh, zf), V(2 * hw, 0, 0), V(0, H - dh, 0), [W / 2 - hw, dh]);
     // -z face: U = -x
     after.walls.quad(V(W / 2, 0, zb), V(-side, 0, 0), V(0, H, 0));
     after.walls.quad(V(-hw, 0, zb), V(-side, 0, 0), V(0, H, 0), [W / 2 + hw, 0]);
-    after.walls.quad(V(hw, dh, zb), V(-2 * hw, 0, 0), V(0, H - dh, 0), [W / 2 - hw, dh]);
+    if (d.arch > 0) after.walls.add(archSpandrel(hw, js, d.arch, H), new THREE.Matrix4().makeRotationY(Math.PI).setPosition(0, 0, zb));
+    else after.walls.quad(V(hw, dh, zb), V(-2 * hw, 0, 0), V(0, H - dh, 0), [W / 2 - hw, dh]);
     // reveals through the thickness
     const reveals = classical ? before.trim : before.walls;
     const T = d.thickness;
-    reveals.quad(V(-hw, 0, zf), V(0, 0, -T), V(0, dh, 0)); // left jamb faces +x
-    reveals.quad(V(hw, 0, zb), V(0, 0, T), V(0, dh, 0)); // right jamb faces -x
-    reveals.quad(V(-hw, dh, zb), V(2 * hw, 0, 0), V(0, 0, T)); // soffit faces -y
+    reveals.quad(V(-hw, 0, zf), V(0, 0, -T), V(0, js, 0)); // left jamb faces +x
+    reveals.quad(V(hw, 0, zb), V(0, 0, T), V(0, js, 0)); // right jamb faces -x
+    if (d.arch > 0) reveals.add(archSoffit(hw, js, d.arch, zb, zf));
+    else reveals.quad(V(-hw, dh, zb), V(2 * hw, 0, 0), V(0, 0, T)); // soffit faces -y
     if (classical) {
       // a stone / oak threshold flush with the floor boards
       before.trim.box(2 * hw, 0.008, T + 0.06, 0, 0.004, d.z);
     }
-    doorCase(before.trim, zf, 1, hw, dh, classical);
-    doorCase(after.trim, zb, -1, hw, dh, classical);
+    if (d.arch > 0) {
+      archivolt(before.trim, before.gilt, d, zf, 1);
+      archivolt(after.trim, after.gilt, d, zb, -1);
+    } else {
+      doorCase(before.trim, zf, 1, hw, dh, classical);
+      doorCase(after.trim, zb, -1, hw, dh, classical);
+    }
   });
+  // ---- a palace gallery's columns, either side of each arch on both faces
+  for (const c of columnsOf(layout)) {
+    const d = layout.doorways.find((x) => Math.abs(x.z - c.z) < 1);
+    if (!d) continue;
+    const { marble, gilt, trim } = at(c.z > d.z ? layout.doorways.indexOf(d) : layout.doorways.indexOf(d) + 1);
+    column(marble, gilt, trim, c.x, c.z, c.r, d.height - d.arch);
+  }
 
   // ---- the flagship's freestanding screen (a long suite's first room)
   const screen = layout.screen;
@@ -740,38 +832,45 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
       }
     }
     if (theme.room.pictureRail) {
-      const y = pictureRailY(H, spec.coveR);
+      const y = pictureRailY(specs[ri].coveBase);
       for (const q of [...runsOf(ri), ...(ri === 0 ? [nearFull] : []), ...cross.full]) {
         trim.sweep(PICTURE_RAIL, q.a.clone().setY(y), q.b.clone().setY(y), q.n);
       }
     }
   });
 
-  // ---- ceiling
-  const r = spec.coveR;
-  const yC = spec.yCeil;
-  if (r > 0) {
-    // cornice cove + a small bed moulding at its foot
-    const cove = coveProfile(r, H - r);
+  // ---- ceiling: each room's cornice cove (a vault's deep coves) and a small bed moulding at its foot
+  layout.rooms.forEach((_, ri) => {
+    const sp = specs[ri];
+    const r = sp.coveR;
+    if (r <= 0) return;
+    const b = sp.coveBase;
+    const cove = coveProfile(r, b, sp.kind === "vault" ? 16 : 8);
     const bed: [number, number][] = [
-      [0.0, H - r - 0.07],
-      [0.025, H - r - 0.07],
-      [0.032, H - r - 0.055],
-      [0.032, H - r - 0.035],
-      [0.045, H - r - 0.02],
-      [0.045, H - r],
-      [0.0, H - r + 0.001],
+      [0.0, b - 0.07],
+      [0.025, b - 0.07],
+      [0.032, b - 0.055],
+      [0.032, b - 0.035],
+      [0.045, b - 0.02],
+      [0.045, b],
+      [0.0, b + 0.001],
     ];
-    layout.rooms.forEach((_, ri) => {
-      const { ceiling } = rooms[ri];
-      for (const q of [...runsOf(ri), ...(ri === 0 ? [nearFull] : []), ...crossFaces(ri).full]) {
-        ceiling.sweep(cove, q.a, q.b, q.n, 50);
-        ceiling.sweep(bed, q.a, q.b, q.n);
-      }
-    });
-  }
+    const { ceiling, trim, gilt } = rooms[ri];
+    const runs = [...runsOf(ri), ...(ri === 0 ? [nearFull] : []), ...crossFaces(ri).full];
+    for (const q of runs) {
+      ceiling.sweep(cove, q.a, q.b, q.n, 50);
+      if (sp.kind === "vault") {
+        // a deep cornice at the springing, a gilt bead along it
+        trim.sweep(VAULT_CORNICE.map(([dd, hh]) => [dd, b + hh] as [number, number]), q.a, q.b, q.n);
+        if (theme.room.gilt) gilt.sweep(GILT_BEAD.map(([dd, hh]) => [dd, b - 0.2 + hh] as [number, number]), q.a, q.b, q.n);
+      } else ceiling.sweep(bed, q.a, q.b, q.n);
+    }
+    if (sp.kind === "vault" && theme.room.gilt) vaultRibs(gilt, sp, W);
+  });
   specs.forEach((sp, ri) => {
-    const { ceiling, trim } = at(ri);
+    const { ceiling, trim, gilt } = at(ri);
+    const r = sp.coveR;
+    const yC = sp.yCeil;
     // flat band around the opening (faces down)
     const x0 = -W / 2 + r;
     const x1 = W / 2 - r;
@@ -793,14 +892,15 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     ceiling.quad(V(wx, yC, sp.wellZ0), V(0, 0, sp.wellZ1 - sp.wellZ0), V(0, dy, 0)); // faces -x
     ceiling.quad(V(-wx, yC, sp.wellZ0), V(2 * wx, 0, 0), V(0, dy, 0)); // faces +z
     ceiling.quad(V(wx, yC, sp.wellZ1), V(-2 * wx, 0, 0), V(0, dy, 0)); // faces -z
-    if (sp.kind === "laylight") {
-      // moulded soffit frame round the opening
+    if (sp.kind === "laylight" || sp.kind === "vault") {
+      // moulded soffit frame round the opening (gilt in a vault)
       const fw = 0.12;
       const fd = 0.07;
       const lenZ = sp.wellZ1 - sp.wellZ0 + 2 * fw;
+      const frame = sp.kind === "vault" && theme.room.gilt ? gilt : ceiling;
       for (const s of [-1, 1]) {
-        ceiling.roundedBox(fw, fd, lenZ, s * (wx + fw / 2), yC - fd / 2 + 0.002, (sp.wellZ0 + sp.wellZ1) / 2, 0.012, 2);
-        ceiling.roundedBox(2 * wx, fd, fw, 0, yC - fd / 2 + 0.002, s < 0 ? sp.wellZ0 - fw / 2 : sp.wellZ1 + fw / 2, 0.012, 2);
+        frame.roundedBox(fw, fd, lenZ, s * (wx + fw / 2), yC - fd / 2 + 0.002, (sp.wellZ0 + sp.wellZ1) / 2, 0.012, 2);
+        frame.roundedBox(2 * wx, fd, fw, 0, yC - fd / 2 + 0.002, s < 0 ? sp.wellZ0 - fw / 2 : sp.wellZ1 + fw / 2, 0.012, 2);
       }
       // beams between the bays, spanning the well
       for (let i = 1; i < sp.bays.length; i++) {
@@ -832,7 +932,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     }
     track.roundedBox(2 * railX + RW, RH, RW, 0, yR, zCross, 0.004, 1);
     const rod = (x: number, z: number) => {
-      const top = yC; // all rods land on the solid ceiling band
+      const top = ceilingAt(sp, W, x, z); // the rods land on the ceiling band, or on a vault's cove
       const h = top - (yR + RH / 2);
       track.cylinder(0.0045, 0.0045, h, x, yR + RH / 2, z, 6);
       track.cylinder(0.032, 0.032, 0.014, x, top - 0.014, z, 16); // canopy
@@ -855,15 +955,32 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     }
   });
 
-  // ---- seating: the room style's furniture (furniture.ts), down the middle and against the walls
+  // ---- rope barriers before the most famous works: brass posts, a velvet rope sagging between them
+  const rope = new THREE.Color("#6e1418");
+  for (const b of layout.barriers) {
+    const { gilt, seat } = at(b.room);
+    b.posts.forEach(([x, z], i) => {
+      gilt.cylinder(0.16, 0.17, 0.035, x, 0, z, 24);
+      gilt.cylinder(0.02, 0.026, 0.9, x, 0.035, z, 12);
+      gilt.add(new THREE.SphereGeometry(0.04, 12, 8), new THREE.Matrix4().makeTranslation(x, 0.95, z));
+      const next = b.posts[i + 1];
+      if (!next) return;
+      const pts: THREE.Vector3[] = [];
+      for (let k = 0; k <= 8; k++) {
+        const t = k / 8;
+        pts.push(new THREE.Vector3(x + (next[0] - x) * t, 0.9 - 0.16 * 4 * t * (1 - t), z + (next[1] - z) * t));
+      }
+      seat.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, 0.018, 6, false), undefined, rope);
+    });
+  }
+
+  // ---- seating: the room style's furniture (furniture.ts), as the layout arranged it room by room
   const furniture = furnitureOf(theme);
-  const seats = seatsByRoom(layout);
-  const shadow = buildBenchShadows(seats.map((x) => x.seat));
-  for (const { seat, room, wall } of seats) {
-    const { seat: up, frame: wood, accent: metal } = at(room);
-    const out = { up, wood, metal };
-    if (wall) buildWallSeat(furniture, out, wall);
-    else buildBench(furniture, out, seat.position[0], seat.position[1], seat.size[0], seat.size[1]);
+  const seats = [...layout.furniture].sort((a, b) => a.room - b.room);
+  const shadow = buildBenchShadows(seats);
+  for (const f of seats) {
+    const { seat: up, frame: wood, accent: metal } = at(f.room);
+    buildFurnishing(furniture, { up, wood, metal }, f);
   }
 
   const walls = mergeRooms(rooms.map((x) => x.walls));
@@ -873,6 +990,8 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
   const seat = mergeRooms(rooms.map((x) => x.seat));
   const frame = mergeRooms(rooms.map((x) => x.frame));
   const accent = mergeRooms(rooms.map((x) => x.accent));
+  const gilt = mergeRooms(rooms.map((x) => x.gilt));
+  const marble = mergeRooms(rooms.map((x) => x.marble));
   // seat shadows: one quad (6 indices) per seat, seats in room order
   const shadowRanges: IndexRange[] = layout.rooms.map(() => ({ start: 0, count: 0 }));
   seats.forEach(({ room }, i) => {
@@ -894,6 +1013,8 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     benchFrame: frame.geometry,
     benchAccent: accent.geometry,
     benchShadow: shadow,
+    gilt: gilt.geometry,
+    marble: marble.geometry,
     spec,
     specs,
     ranges: {
@@ -905,31 +1026,27 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
       benchFrame: frame.ranges,
       benchAccent: accent.ranges,
       benchShadow: shadowRanges,
+      gilt: gilt.ranges,
+      marble: marble.ranges,
     },
   };
 }
 
-/** Every seat (centre benches and wall seats) with its room, in room order (the per-room draw ranges). */
-function seatsByRoom(layout: GalleryLayout) {
-  const last = layout.rooms.length - 1;
-  const room = (z: number) => Math.max(0, Math.min(last, roomAt(layout, z)));
-  return [
-    ...layout.benches.map((seat) => ({ seat, room: room(seat.position[1]), wall: null })),
-    ...layout.wallSeats.map((w) => ({ seat: w as Bench, room: room(w.position[1]), wall: w })),
-  ].sort((a, b) => a.room - b.room);
-}
-
-/** One floor quad per seat carrying its local coordinates for an SDF blob. */
-function buildBenchShadows(benches: Bench[]): THREE.BufferGeometry {
+/** One floor quad per piece (turned with it) carrying its local coordinates for an SDF blob. */
+function buildBenchShadows(pieces: Furnishing[]): THREE.BufferGeometry {
   const pos: number[] = [];
   const loc: number[] = [];
   const half: number[] = [];
   const idx: number[] = [];
   const PAD = 0.45;
-  for (const b of benches) {
+  for (const b of pieces) {
     const [bx, bz] = b.position;
-    const hw = b.size[0] / 2;
-    const hd = b.size[1] / 2;
+    // a chair's blob a little inside its footprint (its legs, not its arms' reach)
+    const k = b.kind === "chair" ? 0.42 : 0.5;
+    const hw = b.size[0] * k;
+    const hd = b.size[1] * k;
+    const c = Math.cos(b.rotation);
+    const sn = Math.sin(b.rotation);
     const base = pos.length / 3;
     for (const [sx, sz] of [
       [-1, -1],
@@ -939,7 +1056,8 @@ function buildBenchShadows(benches: Bench[]): THREE.BufferGeometry {
     ]) {
       const lx = sx * (hw + PAD);
       const lz = sz * (hd + PAD);
-      pos.push(bx + lx, 0.0015, bz + lz);
+      // rotation about y: x' = x cos + z sin, z' = -x sin + z cos
+      pos.push(bx + lx * c + lz * sn, 0.0015, bz - lx * sn + lz * c);
       loc.push(lx, lz);
       half.push(hw, hd);
     }
@@ -956,5 +1074,201 @@ function buildBenchShadows(benches: Bench[]): THREE.BufferGeometry {
 }
 
 export function disposeHall(h: HallGeometry) {
-  for (const g of [h.walls, h.ceiling, h.trim, h.track, h.benchSeat, h.benchFrame, h.benchAccent, h.benchShadow]) g.dispose();
+  for (const k of HALL_PARTS) h[k].dispose();
+}
+
+// ------------------------------------------------------------ palace parts
+
+// a vault's cornice at the springing (d out from the wall, h above the top of the wall)
+const VAULT_CORNICE: [number, number][] = [
+  [0.0, -0.32],
+  [0.03, -0.32],
+  [0.03, -0.26],
+  [0.06, -0.22],
+  [0.06, -0.12],
+  [0.1, -0.09],
+  [0.14, -0.04],
+  [0.18, 0.0],
+  [0.18, 0.03],
+  [0.0, 0.04],
+];
+// a gilt bead in the cornice
+const GILT_BEAD: [number, number][] = [
+  [0.0, -0.025],
+  [0.05, -0.025],
+  [0.07, -0.012],
+  [0.072, 0.0],
+  [0.07, 0.012],
+  [0.05, 0.025],
+  [0.0, 0.025],
+];
+
+/** The wall above an arch: from the springing (y0) to the top of the wall, less an elliptical head of half
+ *  width hw and rise `rise`; facing +z at z = 0, UVs in metres. */
+function archSpandrel(hw: number, y0: number, rise: number, H: number): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  shape.moveTo(-hw, y0);
+  const n = 24;
+  for (let i = 1; i <= n; i++) {
+    const t = Math.PI - (Math.PI * i) / n;
+    shape.lineTo(hw * Math.cos(t), y0 + rise * Math.sin(t));
+  }
+  shape.lineTo(hw, H);
+  shape.lineTo(-hw, H);
+  shape.closePath();
+  return new THREE.ShapeGeometry(shape, 1);
+}
+
+/** The underside of an arch through the wall's thickness (zb..zf), facing in toward its centre. */
+function archSoffit(hw: number, y0: number, rise: number, zb: number, zf: number): THREE.BufferGeometry {
+  const n = 24;
+  const pos: number[] = [];
+  const nor: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  let arc = 0;
+  let prev: [number, number] | null = null;
+  for (let i = 0; i <= n; i++) {
+    const t = Math.PI - (Math.PI * i) / n;
+    const x = hw * Math.cos(t);
+    const y = y0 + rise * Math.sin(t);
+    if (prev) arc += Math.hypot(x - prev[0], y - prev[1]);
+    prev = [x, y];
+    // inward: against the ellipse's gradient
+    const nx = -Math.cos(t) / hw;
+    const ny = -Math.sin(t) / rise;
+    const l = Math.hypot(nx, ny) || 1;
+    for (const z of [zf, zb]) {
+      pos.push(x, y, z);
+      nor.push(nx / l, ny / l, 0);
+      uv.push(arc, z - zb);
+    }
+    if (i > 0) {
+      const a = (i - 1) * 2;
+      // (a: zf, a+1: zb) → (a+2: zf, a+3: zb); seen from below: wind toward the normal
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  // make the geometric normal agree with the shading normal
+  const v = (k: number) => new THREE.Vector3(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2]);
+  const gn = new THREE.Vector3().crossVectors(v(1).sub(v(0)), v(2).sub(v(0)));
+  if (gn.dot(new THREE.Vector3(nor[0], nor[1], nor[2])) < 0) {
+    for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
+  }
+  g.setIndex(idx);
+  return g;
+}
+
+/** An arch's moulded surround on a face at z (facing ±z): a band round the head, a keystone, imposts at the
+ *  springing; a gilt bead inside the band. */
+function archivolt(trim: GeoBatch, gilt: GeoBatch, d: Doorway, z: number, facing: 1 | -1): void {
+  const hw = d.halfWidth;
+  const y0 = d.height - d.arch;
+  const ring = (grow: number, out: number) => {
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 32; i++) {
+      const t = Math.PI - (Math.PI * i) / 32;
+      pts.push(new THREE.Vector3((hw + grow) * Math.cos(t), y0 + (d.arch + grow) * Math.sin(t), z + facing * out));
+    }
+    return new THREE.CatmullRomCurve3(pts);
+  };
+  trim.add(new THREE.TubeGeometry(ring(0.1, 0.0), 48, 0.085, 8, false));
+  gilt.add(new THREE.TubeGeometry(ring(0.03, 0.035), 48, 0.022, 6, false));
+  // the keystone, and the imposts the arch springs from
+  trim.roundedBox(0.34, 0.5, 0.12, 0, d.height + 0.12, z + facing * 0.04, 0.02, 2);
+  for (const s of [-1, 1]) {
+    trim.roundedBox(0.36, 0.16, 0.1, s * (hw + 0.1), y0 - 0.06, z + facing * 0.035, 0.02, 2);
+    // pilaster strips down the jambs
+    trim.roundedBox(0.2, y0 - 0.14, 0.04, s * (hw + 0.1), (y0 - 0.14) / 2, z + facing * 0.02, 0.01, 1);
+  }
+}
+
+/** A column standing at (x, z) up to y1 (an arch's springing): a marble plinth and shaft, gilt base and
+ *  capital, an impost block on top. */
+function column(marble: GeoBatch, gilt: GeoBatch, trim: GeoBatch, x: number, z: number, r: number, y1: number): void {
+  marble.roundedBox(2.7 * r, 0.22, 2.7 * r, x, 0.11, z, 0.015, 2);
+  gilt.add(new THREE.TorusGeometry(r * 1.12, r * 0.14, 8, 28), new THREE.Matrix4().makeRotationX(Math.PI / 2).setPosition(x, 0.25, z));
+  gilt.add(new THREE.TorusGeometry(r * 1.04, r * 0.1, 8, 28), new THREE.Matrix4().makeRotationX(Math.PI / 2).setPosition(x, 0.32, z));
+  const capH = 0.46;
+  const shaftTop = y1 - 0.12 - capH;
+  marble.cylinder(r * 0.88, r, shaftTop - 0.34, x, 0.34, z, 28);
+  gilt.add(new THREE.TorusGeometry(r * 0.92, r * 0.08, 8, 28), new THREE.Matrix4().makeRotationX(Math.PI / 2).setPosition(x, shaftTop + 0.02, z));
+  // a Corinthian-ish capital: a flaring bell ringed with leaves, an abacus
+  gilt.cylinder(r * 1.45, r * 0.9, capH - 0.08, x, shaftTop, z, 24);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    gilt.add(
+      new THREE.SphereGeometry(r * 0.32, 8, 6),
+      new THREE.Matrix4().compose(
+        new THREE.Vector3(x + Math.cos(a) * r * 1.02, shaftTop + capH * 0.3, z + Math.sin(a) * r * 1.02),
+        new THREE.Quaternion(),
+        new THREE.Vector3(1, 1.6, 1)
+      )
+    );
+  }
+  gilt.roundedBox(3.2 * r, 0.08, 3.2 * r, x, shaftTop + capH - 0.04, z, 0.01, 1);
+  trim.roundedBox(3.3 * r, 0.12, 3.3 * r, x, y1 - 0.06, z, 0.015, 2);
+}
+
+/** A vault's coffering in gilt: ribs across each cove, a ring at mid-height, ribs up the corners' groins. */
+function vaultRibs(gilt: GeoBatch, sp: CeilingSpec, W: number): void {
+  const r = sp.coveR;
+  const b = sp.coveBase;
+  const R = r - 0.02;
+  const rod = (pts: THREE.Vector3[], rad: number) => gilt.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, rad, 6, false));
+  const arc = (at: (t: number) => THREE.Vector3) => {
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 10; i++) pts.push(at((i / 10) * (Math.PI / 2)));
+    rod(pts, 0.03);
+  };
+  const xIn = W / 2 - r;
+  // ribs across the side coves, between the corners
+  const zA = sp.z0 + r;
+  const zB = sp.z1 - r;
+  const nz = Math.max(1, Math.round((zB - zA) / 1.5));
+  for (let i = 0; i <= nz; i++) {
+    const z = zA + ((zB - zA) * i) / nz;
+    for (const s of [-1, 1]) arc((t) => new THREE.Vector3(s * (xIn + R * Math.cos(t)), b + R * Math.sin(t), z));
+  }
+  // and across the end coves
+  const nx = Math.max(1, Math.round((2 * xIn) / 1.5));
+  for (let i = 0; i <= nx; i++) {
+    const x = -xIn + (2 * xIn * i) / nx;
+    arc((t) => new THREE.Vector3(x, b + R * Math.sin(t), sp.z0 + r - R * Math.cos(t)));
+    arc((t) => new THREE.Vector3(x, b + R * Math.sin(t), sp.z1 - r + R * Math.cos(t)));
+  }
+  // the groins: where the coves meet in the corners
+  for (const sx of [-1, 1])
+    for (const [zw, sz] of [[sp.z0, 1], [sp.z1, -1]] as const) {
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= 12; i++) {
+        const dd = (r * i) / 12;
+        const y = b + Math.sqrt(Math.max(0, R * R - (R - dd) ** 2));
+        pts.push(new THREE.Vector3(sx * (W / 2 - dd), y, zw + sz * dd));
+      }
+      rod(pts, 0.04);
+    }
+  // a ring round the vault at mid-height: the contour, inset the same from every wall
+  for (const t of [Math.PI / 4, (Math.PI * 5) / 12]) {
+    const dd = r - R * Math.cos(t);
+    const y = b + R * Math.sin(t);
+    const pts = [
+      new THREE.Vector3(-W / 2 + dd, y, sp.z0 + dd),
+      new THREE.Vector3(W / 2 - dd, y, sp.z0 + dd),
+      new THREE.Vector3(W / 2 - dd, y, sp.z1 - dd),
+      new THREE.Vector3(-W / 2 + dd, y, sp.z1 - dd),
+    ];
+    for (let i = 0; i < 4; i++) {
+      const a = pts[i];
+      const c = pts[(i + 1) % 4];
+      const len = a.distanceTo(c);
+      const g = new THREE.CylinderGeometry(0.022, 0.022, len, 6, 1);
+      const q = new THREE.Quaternion().setFromUnitVectors(UP, c.clone().sub(a).normalize());
+      gilt.add(g, new THREE.Matrix4().compose(a.clone().add(c).multiplyScalar(0.5), q, new THREE.Vector3(1, 1, 1)));
+    }
+  }
 }
