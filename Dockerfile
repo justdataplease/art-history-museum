@@ -10,7 +10,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 # Every page is prerendered here. Without a database secret the build reads
-# data/cache/museum.json; to prerender from Neon instead:
+# data/wikipedia/museum.json; to prerender from Neon instead:
 #   docker build --secret id=db,env=DATABASE_URL .
 # (the secret is never written to an image layer)
 RUN --mount=type=secret,id=db \
@@ -23,7 +23,7 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     HOSTNAME=0.0.0.0
-# The standalone output already contains data/cache/museum.json (traced from
+# The standalone output already contains data/wikipedia/museum.json (traced from
 # src/lib/data.ts), the JSON fallback used when DATABASE_URL is absent.
 # Owned by `node` so ISR can write regenerated pages under .next/.
 COPY --from=build --chown=node:node /app/.next/standalone ./

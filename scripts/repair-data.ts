@@ -1,6 +1,6 @@
 // Re-check the cached ingest in place, without re-running the two-hour ingest:
 // the same vetting the ingest now applies (scripts/lib/passes.ts), run over
-// data/cache/museum.json and every data/cache/artists/*.json.
+// data/wikipedia/museum.json and every data/wikipedia/artists/*.json.
 //
 //   npm run repair-data              # fetch, repair, write museum.json + artist caches + reports
 //   npm run repair-data -- --dry-run # fetch and report, write nothing
@@ -8,7 +8,7 @@
 // With WIKI_HTTP_CACHE=<dir> the API responses are kept on disk, so a dry run
 // followed by the real run asks Wikimedia only once.
 //
-// What it does (every change is listed in data/cache/repair-report.json):
+// What it does (every change is listed in data/wikipedia/repair-report.json):
 //   - period descriptions whose seed article changed (scripts/seed.ts)
 //   - artist birth / death years: preferred-rank Wikidata statements, never deprecated ones
 //   - drops articles that are not artworks (the artist's own biography, sitters,
@@ -46,7 +46,7 @@ import {
 import type { FileMeta } from "./lib/credits";
 
 const ROOT = path.join(__dirname, "..");
-const CACHE = path.join(ROOT, "data", "cache");
+const CACHE = path.join(ROOT, "data", "wikipedia");
 const ARTIST_CACHE = path.join(CACHE, "artists");
 const MUSEUM = path.join(CACHE, "museum.json");
 const dryRun = process.argv.includes("--dry-run");
@@ -166,7 +166,7 @@ async function main() {
   }
   const after = count(museum.artists);
 
-  // ---- reports (data/cache/report.json, enrich-report.json, repair-report.json) ----
+  // ---- reports (data/wikipedia/report.json, enrich-report.json, repair-report.json) ----
   const repairReport = {
     generatedAt: new Date().toISOString(),
     before,

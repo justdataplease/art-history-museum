@@ -211,8 +211,9 @@ export interface WikiSummary {
   type?: string;
 }
 
-export async function getSummary(title: string): Promise<WikiSummary | null> {
-  const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(
+/** The article's REST summary; `lang` picks another Wikipedia (an artist without an English article). */
+export async function getSummary(title: string, lang = "en"): Promise<WikiSummary | null> {
+  const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(
     title.replace(/ /g, "_")
   )}?redirect=true`;
   const data = await fetchJson<WikiSummary & { wikibase_item?: string }>(url);

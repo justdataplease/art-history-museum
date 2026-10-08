@@ -15,7 +15,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { Pool, type PoolConfig } from "pg";
 
-const file = path.join(__dirname, "..", "data", "cache", "museum.json");
+// the site's snapshot (archive/site.py: the ingest plus the works only WikiArt has), else the ingest's own
+const siteFile = path.join(__dirname, "..", "data", "site", "museum.json");
+const file = fs.existsSync(siteFile) ? siteFile : path.join(__dirname, "..", "data", "wikipedia", "museum.json");
 
 // Staging tables carry explicit constraint names; the swap renames them (and
 // the index and serial sequences) to the live names, which leaves the *_new

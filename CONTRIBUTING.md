@@ -10,7 +10,7 @@ Every artist bio, painting, image, date, story and fact is pulled from
 **English Wikipedia, Wikidata and Wikimedia Commons** by the ingest scripts.
 Nothing is written by hand and nothing is AI-generated. If it isn't on
 Wikipedia, it doesn't go in. The way to add content is to improve the
-ingest or the seed list, never to edit `data/cache/` by hand.
+ingest or the seed list, never to edit `data/wikipedia/` by hand.
 
 - **Missing artist?** Add their English Wikipedia article title to the right
   period in [`scripts/seed.ts`](scripts/seed.ts) and run the ingest.
@@ -30,7 +30,7 @@ sets one up if you don't have it.
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000, reads data/cache/museum.json
+npm run dev          # http://localhost:3000, reads data/wikipedia/museum.json
 ```
 
 The repo ships with a complete ingest snapshot, so you don't need a database

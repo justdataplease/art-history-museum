@@ -85,6 +85,8 @@ function originalOf(f: WikiFile): string {
  * requested width when the original has it. Non-Wikimedia URLs pass through.
  */
 export function wikiThumb(url: string, width: number, originalWidth?: number | null): string {
+  const wikiArt = wikiArtSized(url, width, originalWidth);
+  if (wikiArt) return wikiArt;
   const f = parseWikimedia(url);
   return f ? sizedUrl(f, url, width, originalWidth, false) : url;
 }
@@ -238,6 +240,32 @@ export function inspectTexturePx(p: Painting, maxLongSide = INSPECT_MAX_LONG_SID
   return Math.max(wall, bucket);
 }
 
+// ---- WikiArt images ----------------------------------------------------
+// Works only WikiArt has (archive/site.py) load from uploads*.wikiart.org
+// (CORS: *). WikiArt serves fixed renditions of a file, each bounding the
+// image in a box: "!PinterestLarge.jpg" 280 px, "!Blog.jpg" 500, "!Large.jpg"
+// 750. Up close the full file (WikiArt's largest, often 1-3k px) is used.
+const WIKIART_HOST = /^uploads\d*\.wikiart\.org$/;
+const WIKIART_RENDITIONS: [number, string][] = [
+  [280, "!PinterestLarge.jpg"],
+  [500, "!Blog.jpg"],
+  [750, "!Large.jpg"],
+];
+
+/** A WikiArt image `width` px wide at least (the full file past 750 px). Null for any other URL. */
+function wikiArtSized(url: string, width: number, originalWidth?: number | null): string | null {
+  try {
+    const u = new URL(url);
+    if (!WIKIART_HOST.test(u.hostname)) return null;
+    const file = url.split("!")[0];
+    if (originalWidth && originalWidth <= width) return file;
+    const r = WIKIART_RENDITIONS.find(([w]) => w >= width);
+    return r ? file + r[1] : file;
+  } catch {
+    return null;
+  }
+}
+
 /** Too many bytes to download the original file as a texture (see ORIGINAL_MAX_BYTES). */
 function heavyOriginal(p: Painting, fileName: string): boolean {
   const lossless = LOSSLESS.test(fileName);
@@ -254,6 +282,8 @@ function heavyOriginal(p: Painting, fileName: string): boolean {
  */
 export function paintingTextureUrl(p: Painting, px: number): string | null {
   if (!p.imageUrl) return null;
+  const wikiArt = wikiArtSized(p.imageUrl, px, p.imageWidth);
+  if (wikiArt) return wikiArt;
   const f = parseWikimedia(p.imageUrl);
   if (!f) return p.imageUrl;
   const ow = p.imageWidth ?? 0;

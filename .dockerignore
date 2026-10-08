@@ -6,8 +6,15 @@ verify-artifacts
 *.md
 dev-server.log
 *.tsbuildinfo
-# Ingest working files: the build and runtime only read data/cache/museum.json
-data/cache/artists
-data/cache/report.json
-data/cache/*-report.json
+# Ingest working files: the build and runtime only read data/wikipedia/museum.json
+data/wikipedia/artists
+data/wikipedia/report.json
+data/wikipedia/*-report.json
 demo
+# Data archive (archive/, dagster/): not part of the site
+data/wikiart
+data/taxonomy
+data/*.duckdb
+archive
+dagster
+run_dagster.cmd

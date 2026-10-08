@@ -174,10 +174,11 @@ export const PERIODS: SeedPeriod[] = [
   },
   {
     slug: "cretan-school",
-    name: "Cretan School",
+    // the Ionian (Heptanese) school succeeded the Cretan school after 1669 and hangs with it
+    name: "Cretan & Ionian Schools",
     wikiTitle: "Cretan school",
     startYear: 1450,
-    endYear: 1700,
+    endYear: 1830,
     color: "#9a7b2c",
     artists: [
       "Michael Damaskinos",
@@ -185,7 +186,29 @@ export const PERIODS: SeedPeriod[] = [
       "Georgios Klontzas",
       "Andreas Ritzos",
       "Angelos Akotantos",
-      "Emmanuel Tzanes"
+      "Emmanuel Tzanes",
+      "Nikolaos Tzafouris",
+      "Angelos Pitzamanos",
+      "Thomas Bathas",
+      "Franghias Kavertzas",
+      "Ieremias Palladas",
+      "Elias Moskos",
+      "Leos Moskos",
+      "Ioannis Moskos",
+      "Victor (iconographer)",
+      "Philotheos Skoufos",
+      "Konstantinos Tzanes",
+      "Stephanos Tzangarolas",
+      "Panagiotis Doxaras",
+      "Andreas Karantinos",
+      "Nikolaos Kallergis",
+      "Nikolaos Doxaras",
+      "Stylianos Stavrakis",
+      "Spiridione Roma",
+      "Efstathios Karousos",
+      "Nikolaos Koutouzis",
+      "Ioannis Kornaros",
+      "Nikolaos Kantounis"
     ]
   },
   {
@@ -420,7 +443,8 @@ export const PERIODS: SeedPeriod[] = [
       "Marie-Guillemine Benoist",
       "Henry Raeburn",
       "Thomas Rowlandson",
-      "Christoffer Wilhelm Eckersberg"
+      "Christoffer Wilhelm Eckersberg",
+      "Gerasimos Pitsamanos"
     ]
   },
   {
@@ -462,7 +486,8 @@ export const PERIODS: SeedPeriod[] = [
       "Martinus Rørbye",
       "Constantin Hansen",
       "Christen Købke",
-      "Raden Saleh"
+      "Raden Saleh",
+      "Dionysios Tsokos"
     ]
   },
   {
@@ -518,7 +543,18 @@ export const PERIODS: SeedPeriod[] = [
       "Konstantinos Volanakis",
       "Nikolaos Gyzis",
       "Nicolae Grigorescu",
-      "Mihály Munkácsy"
+      "Mihály Munkácsy",
+      "Nikiforos Lytras",
+      "Théodore Ralli",
+      "Iakovos Rizos",
+      "Symeon Savvidis",
+      "Nikolaos Vokos",
+      "Georgios Roilos",
+      "Spyridon Prosalentis",
+      "Charalambos Pachis",
+      "Ioannis Zacharias",
+      "Emmanuel Zairis",
+      "Nikolaos Himonas"
     ]
   },
   {
@@ -565,7 +601,13 @@ export const PERIODS: SeedPeriod[] = [
       "Candido Portinari",
       "Rodolfo Amoedo",
       "Tivadar Csontváry Kosztka",
-      "Józef Chełmoński"
+      "Józef Chełmoński",
+      "Georgios Jakobides",
+      "Polychronis Lembesis",
+      "Ioannis Altamouras",
+      "Vasileios Hatzis",
+      "Yiannis Poulakas",
+      "Angelos Giallinas"
     ]
   },
   {
@@ -630,7 +672,8 @@ export const PERIODS: SeedPeriod[] = [
       "Pedro Figari",
       "Frederick McCubbin",
       "Charles Conder",
-      "Olga Boznańska"
+      "Olga Boznańska",
+      "Périclès Pantazis"
     ]
   },
   {
@@ -652,7 +695,9 @@ export const PERIODS: SeedPeriod[] = [
       "Théo van Rysselberghe",
       "Suzanne Valadon",
       "Émile Bernard",
-      "Édouard Vuillard"
+      "Édouard Vuillard",
+      "Konstantinos Maleas",
+      "Theophilos Hatzimihail"
     ]
   },
   {
@@ -685,7 +730,8 @@ export const PERIODS: SeedPeriod[] = [
       "Kuzma Petrov-Vodkin",
       "Mikalojus Konstantinas Čiurlionis",
       "Jan Toorop",
-      "Hugo Simberg"
+      "Hugo Simberg",
+      "Panos Aravantinos"
     ]
   },
   {
@@ -733,7 +779,8 @@ export const PERIODS: SeedPeriod[] = [
       "Josef Čapek",
       "Sonia Delaunay",
       "John Bauer (illustrator)",
-      "Kurt Schwitters"
+      "Kurt Schwitters",
+      "Nikolaos Lytras"
     ]
   },
   {
@@ -885,10 +932,25 @@ export const PERIODS: SeedPeriod[] = [
       "Keith Haring",
       "Banksy",
       "Gerhard Richter",
-      "Jean Dubuffet"
+      "Jean Dubuffet",
+      "fr:Yannis Gaïtis"
     ]
   }
 ];
+
+// Greek painters left out for now: still in copyright with no free images on Commons or WikiArt, so their
+// galleries would be empty or hold one © placard. Add them back when a free catalogue appears (as Yannis
+// Gaïtis's did): Konstantinos Parthenis, George Bouzianis, Nikos Hadjikyriakos-Ghikas, Nikos Engonopoulos,
+// Yannis Tsarouchis, Yiannis Moralis, Spyridon Vikatos (d. 1960); Spyros Papaloukas (public domain from 2028). Nikolaos Xydias Typaldos has
+// no sourced works yet.
+
+// Catalogues released on Commons under a free licence by an artist's rights holders, for artists still in
+// copyright: their works hang with images (ingest.ts commonsCatalogue). Keys are seed titles; a language
+// prefix ("fr:") names an artist without an English article.
+export const COMMONS_CATALOGUES: Record<string, string[]> = {
+  // catalogue raisonné released CC BY-SA 4.0 by Loretta Gaïtis (VRT permission confirmed)
+  "fr:Yannis Gaïtis": ["Category:Paintings by Yannis Gaïtis"],
+};
 
 // Specific painting articles to include for artists whose Wikidata/category
 // coverage misses works that do have illustrated Wikipedia articles.

@@ -1,6 +1,6 @@
 // Ingest all museum content from Wikipedia / Wikidata / Wikimedia Commons.
-// Writes data/cache/museum.json plus a report of anything thin or missing.
-// Re-runnable: per-artist results are cached in data/cache/artists/.
+// Writes data/wikipedia/museum.json plus a report of anything thin or missing.
+// Re-runnable: per-artist results are cached in data/wikipedia/artists/.
 //
 //   npm run ingest                # artists with a cache file are served from it
 //   npm run ingest -- --refresh   # re-fetch every artist (ignore the per-artist caches)
@@ -13,7 +13,7 @@
 import "./lib/env"; // .env.local (WIKI_USER_AGENT) before anything reads it
 import fs from "node:fs";
 import path from "node:path";
-import { EXTRA_PAINTINGS, PERIODS } from "./seed";
+import { COMMONS_CATALOGUES, EXTRA_PAINTINGS, PERIODS } from "./seed";
 import { enrichArtists } from "./lib/enrich";
 import type { ImageCredit } from "./lib/credits";
 import { orderArtist, vetCollection } from "./lib/passes";
@@ -42,7 +42,7 @@ import {
 } from "./lib/wiki";
 
 const ROOT = path.join(__dirname, "..");
-const CACHE = path.join(ROOT, "data", "cache");
+const CACHE = path.join(ROOT, "data", "wikipedia");
 const ARTIST_CACHE = path.join(CACHE, "artists");
 fs.mkdirSync(ARTIST_CACHE, { recursive: true });
 const REFRESH = process.argv.includes("--refresh");
@@ -54,6 +54,7 @@ const sparqlLimit = createLimiter(1);
 const artistLimit = createLimiter(3);
 
 const MIN_PAINTINGS = 8;
+const LANGUAGE_NAMES: Record<string, string> = { el: "Greek", fr: "French", de: "German", it: "Italian", es: "Spanish", pt: "Portuguese" };
 // Candidate articles fetched concurrently (the limiter still caps requests).
 const BATCH = 8;
 // A series article sometimes leads with a montage of every version rather
@@ -93,6 +94,9 @@ export interface PaintingOut {
   imageBytes?: number | null;
   /** Author / licence / file page of the image (src/lib/types.ts ImageCredit). */
   imageCredit?: ImageCredit | null;
+  /** Released by its rights holder under a free licence (a Commons catalogue): shown although the artist is
+   *  still in copyright. */
+  licensed?: boolean;
 }
 
 export interface ArtistOut {
@@ -206,6 +210,82 @@ async function commonsFileInfo(filePathUrl: string): Promise<CommonsFileInfo | n
   return (await commonsFileInfos([filePathUrl])).get(filePathUrl) ?? null;
 }
 
+// Licences under which a rights holder releases a work still in copyright; Commons hosts such a work only with
+// the holder's permission (VRT). Public-domain marks do not count: for these artists they mean "PD in the US".
+const FREE_LICENCE = /^(CC[ -]?BY|CC0|CC[ -]?Zero)/i;
+
+/**
+ * Every work in a Commons category whose files carry a free licence: for an artist whose catalogue was released
+ * on Commons without Wikidata items (seed.ts COMMONS_CATALOGUES). The title is the file's object name, else its
+ * file name without the catalogue number ("Sans titre - 329 GAÏTIS.jpg" -> "Untitled (329)").
+ */
+async function commonsCatalogue(category: string, artist: ArtistContext): Promise<PaintingOut[]> {
+  const files: string[] = [];
+  let cont: Record<string, string> = {};
+  for (;;) {
+    const data = await wikiLimit(() => fetchJson<any>(`https://commons.wikimedia.org/w/api.php?${new URLSearchParams({
+      action: "query", format: "json", formatversion: "2", list: "categorymembers", cmtitle: category,
+      cmtype: "file", cmlimit: "500", ...cont,
+    })}`));
+    files.push(...(data?.query?.categorymembers ?? []).map((m: any) => m.title as string));
+    if (!data?.continue) break;
+    cont = data.continue;
+  }
+  const out: PaintingOut[] = [];
+  for (let i = 0; i < files.length; i += 50) {
+    const data = await wikiLimit(() => fetchJson<any>(`https://commons.wikimedia.org/w/api.php?${new URLSearchParams({
+      action: "query", format: "json", formatversion: "2", prop: "imageinfo", iiprop: "url|size|extmetadata",
+      iiextmetadatafilter: "LicenseShortName|ObjectName|DateTimeOriginal|ImageDescription",
+      iiextmetadatalanguage: "en", titles: files.slice(i, i + 50).join("|"),
+    })}`));
+    for (const page of data?.query?.pages ?? []) {
+      const info = page.imageinfo?.[0];
+      const meta = info?.extmetadata ?? {};
+      if (!info?.url || !FREE_LICENCE.test(meta.LicenseShortName?.value ?? "")) continue;
+      const fileTitle = String(page.title).replace(/^File:/, "").replace(/\.[^.]+$/, "");
+      // "Sans titre - 329 GAÏTIS", '"Luna Park" ou "Le manège" - 931': a catalogue number, maybe a name
+      const tail = /\s*-\s*(\d+)(?:\s+[A-ZÀ-ÝΑ-Ω]+)?\s*$/u;
+      const number = tail.exec(fileTitle)?.[1];
+      let title = (stripHtml(meta.ObjectName?.value ?? "") || fileTitle).replace(tail, "").trim();
+      // French alternative titles: '"A" ou "B"' -> "A (B)"
+      const alt = /^["“]?(.+?)["”]?\s+ou\s+["“]?(.+?)["”]?$/.exec(title);
+      title = (alt ? `${alt[1]} (${alt[2]})` : title).replace(/^["“ ]+|["” ]+$/g, "").trim();
+      if (/^sans titre$/i.test(title)) title = "Untitled";
+      // the catalogue number tells the many untitled works apart
+      if (number && title === "Untitled") title = `Untitled (${number})`;
+      const y = Number(/\b(1[89]\d\d|20\d\d)\b/.exec(stripHtml(meta.DateTimeOriginal?.value ?? ""))?.[1]);
+      const year = y && (!artist.birthYear || y >= artist.birthYear) && (!artist.deathYear || y <= artist.deathYear) ? y : null;
+      out.push({
+        slug: number ? `${slugify(title.replace(` (${number})`, "")) || "work"}-${number}` : slugify(fileTitle),
+        title,
+        year,
+        imageUrl: canonicalImageUrl(info.url),
+        imageWidth: info.width,
+        imageHeight: info.height,
+        story: usableCommonsDescription(stripHtml(meta.ImageDescription?.value ?? ""), title),
+        facts: [],
+        wikipediaUrl: null,
+        sitelinks: 0,
+        licensed: true,
+      });
+    }
+  }
+  return out;
+}
+
+/** "fr:Yannis Gaïtis" -> ["fr", "Yannis Gaïtis"]; an English title has no prefix. */
+function articleOf(seedTitle: string): [string, string] {
+  const m = /^([a-z]{2,3}):(.+)$/.exec(seedTitle);
+  return m ? [m[1], m[2]] : ["en", seedTitle];
+}
+
+/** The English Wikidata description ("Greek painter (1923–1984)"), for an artist without an English article. */
+async function englishDescription(qid: string): Promise<string> {
+  const data = await wikiLimit(() => fetchJson<any>(
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=descriptions&languages=en&ids=${qid}`));
+  return data?.entities?.[qid]?.descriptions?.en?.value ?? "";
+}
+
 function usableCatalogueImage(cand: SparqlPainting, ci: CommonsFileInfo, periodSlug: string): boolean {
   const file = decodeURIComponent(ci.url.split("/").pop() ?? "");
   const text = `${file} ${cand.label}`;
@@ -312,14 +392,15 @@ export async function ingestArtist(
   wikiTitle: string,
   periodSlug: string
 ): Promise<ArtistOut | null> {
-  const slug = slugify(wikiTitle);
+  const [lang, articleTitle] = articleOf(wikiTitle);
+  const slug = slugify(articleTitle);
   const cacheFile = path.join(ARTIST_CACHE, `${slug}.json`);
   if (!REFRESH && fs.existsSync(cacheFile)) {
     const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as ArtistOut;
     if (cached.ingestVersion === INGEST_VERSION) return cached;
   }
 
-  const summary = await wikiLimit(() => getSummary(wikiTitle));
+  const summary = await wikiLimit(() => getSummary(articleTitle, lang));
   if (!summary) {
     console.error(`!! artist summary missing: ${wikiTitle}`);
     return null;
@@ -453,7 +534,7 @@ export async function ingestArtist(
 
     // Top up from the enwiki "Paintings by X" category (catches works whose
     // Wikidata items aren't linked to the artist or lack P31=painting).
-    {
+    if (lang === "en") {
       const have = new Set(paintings.flatMap((p) => [p.slug, ...(p.qid ? [p.qid] : [])]));
       const haveImage = new Set(paintings.map((p) => p.imageUrl));
       const titles = await wikiLimit(() =>
@@ -505,6 +586,14 @@ export async function ingestArtist(
     }
   }
 
+  // A catalogue released on Commons under a free licence (seed.ts COMMONS_CATALOGUES)
+  for (const category of COMMONS_CATALOGUES[wikiTitle] ?? []) {
+    const haveImage = new Set(paintings.map((p) => p.imageUrl));
+    const works = (await commonsCatalogue(category, ctx)).filter((p) => !haveImage.has(p.imageUrl));
+    console.log(`     ${category}: ${works.length} freely licensed works`);
+    paintings.push(...works);
+  }
+
   // Dedupe article/category repeats without losing same-titled versions.
   const seen = new Set<string>();
   paintings = paintings.filter((p) => {
@@ -537,12 +626,15 @@ export async function ingestArtist(
     periodSlug,
     // display name without a "(artist)" disambiguator; wikiTitle keeps the article title
     name: cleanArtistName(stripHtml(summary.displaytitle ?? summary.title)),
-    wikiTitle: summary.title,
+    wikiTitle: lang === "en" ? summary.title : wikiTitle,
     qid,
     birthYear: dates.birthYear ?? null,
     deathYear: dates.deathYear ?? null,
-    tagline: summary.description ?? "",
-    bio: summary.extract,
+    tagline: lang === "en" ? summary.description ?? "" : (qid ? await englishDescription(qid) : ""),
+    // no English article: the English description, and the article in its own language is linked
+    bio: lang === "en" ? summary.extract
+      : `${cleanArtistName(stripHtml(summary.displaytitle ?? summary.title))}: ${qid ? await englishDescription(qid) : ""}. `
+        + `There is no English Wikipedia article yet; the biography is on the ${LANGUAGE_NAMES[lang] ?? lang} Wikipedia.`,
     portraitUrl: portrait?.url ?? null,
     portraitWidth: portrait?.width ?? null,
     portraitHeight: portrait?.height ?? null,

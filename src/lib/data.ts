@@ -75,7 +75,9 @@ interface CacheShape {
 let cache: CacheShape | null = null;
 function readCache(): CacheShape | null {
   if (cache) return cache;
-  const file = path.join(process.cwd(), "data", "cache", "museum.json");
+  // data/site/museum.json: the ingest plus the works only WikiArt has (archive/site.py); else the ingest's own
+  const site = path.join(process.cwd(), "data", "site", "museum.json");
+  const file = fs.existsSync(site) ? site : path.join(process.cwd(), "data", "wikipedia", "museum.json");
   if (!fs.existsSync(file)) return null;
   cache = JSON.parse(fs.readFileSync(file, "utf8")) as CacheShape;
   return cache;

@@ -47,3 +47,22 @@ dev-server.log
 
 # launch drafts (local only)
 /hackernews.md
+
+# data archive (archive/, dagster/): crawls, the warehouse and local Dagster state stay local; the raw copies are
+# in gs://museum-archive. data/taxonomy/*.csv (our own categories) is tracked.
+/data/wikiart/
+/data/museum.duckdb
+/data/*.building.duckdb
+/archive/.venv/
+/dagster/.venv/
+/dagster/home/*
+!/dagster/home/dagster.yaml
+__pycache__/
+/data/wikidata/
+/data/wikimedia/
+# the narrator's recording sheets (python -m archive.guide sheet), generated
+/data/guide/
+
+# the site snapshot (archive/site.py), rebuilt from the ingest and the warehouse; deployed, not tracked (size)
+/data/site/
+/data/fingerprints/

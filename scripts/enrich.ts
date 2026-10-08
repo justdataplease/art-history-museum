@@ -5,7 +5,7 @@
 // Re-runnable: pageviews are refreshed on every run; a failed lookup never
 // overwrites values from an earlier run.
 //
-//   npm run enrich                # update data/cache/museum.json + data/cache/artists/*.json
+//   npm run enrich                # update data/wikipedia/museum.json + data/wikipedia/artists/*.json
 //   npm run enrich -- --dry-run   # fetch and report, write nothing
 //   npm run enrich -- --keep-years    # don't repair out-of-lifetime years
 //   npm run enrich -- --keep-foreign  # don't drop works Wikidata + title attribute to another artist
@@ -20,7 +20,7 @@ import path from "node:path";
 import { enrichArtists, type EnrichableArtist, type EnrichablePainting } from "./lib/enrich";
 
 const ROOT = path.join(__dirname, "..");
-const CACHE = path.join(ROOT, "data", "cache");
+const CACHE = path.join(ROOT, "data", "wikipedia");
 const ARTIST_CACHE = path.join(CACHE, "artists");
 const MUSEUM = path.join(CACHE, "museum.json");
 

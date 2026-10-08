@@ -208,9 +208,11 @@ export function reviewImages(
   const unreviewed: string[] = [];
   const names = artists.map((a) => a.name);
   for (const a of artists) {
-    const inCopyright = artistInCopyright(a.birthYear, a.deathYear);
+    const artistCopyright = artistInCopyright(a.birthYear, a.deathYear);
     a.paintings = a.paintings.filter((p) => {
       if (!p.imageUrl) return true;
+      // a work its rights holder released under a free licence is not withheld
+      const inCopyright = artistCopyright && !p.licensed;
       const k = key(a, p);
       const review = IMAGE_REVIEW[k];
       if (review === "ok") return true;
@@ -296,10 +298,11 @@ export function rejectNonPaintingImages(
     const book = BOOK_ART.has(a.periodSlug);
     const scroll = EAST_ASIAN_ART.has(a.periodSlug);
     if (!book && !scroll) continue;
-    const copyrighted = artistInCopyright(a.birthYear, a.deathYear);
+    const artistCopyright = artistInCopyright(a.birthYear, a.deathYear);
     a.paintings = a.paintings.filter((p) => {
       if (!p.imageUrl) return true;
       if (IMAGE_REVIEW[key(a, p)] === "ok") return true;
+      const copyrighted = artistCopyright && !p.licensed;
       const m = meta.get(p.imageUrl);
       const text = `${fileNameOf(p.imageUrl)} ${m?.objectName ?? ""}`;
       const cats = m?.categories ?? [];
@@ -327,13 +330,14 @@ export function rejectNonPaintingImages(
 
 // ---------- 3. copyright labels ----------
 
-/** Every work by an artist still in copyright is labelled ©, whatever the file's US status. */
+/** Every work by an artist still in copyright is labelled ©, whatever the file's US status, except a work its
+ *  rights holder released under a free licence (`licensed`: a Commons catalogue such as Yannis Gaïtis's). */
 export function labelCopyright(artists: ArtistOut[]): string[] {
   const out: string[] = [];
   for (const a of artists) {
     if (!artistInCopyright(a.birthYear, a.deathYear)) continue;
     for (const p of a.paintings) {
-      if (p.copyrighted) continue;
+      if (p.copyrighted || p.licensed) continue;
       p.copyrighted = true;
       out.push(`${key(a, p)}: labelled © (${a.name} d. ${a.deathYear ?? "—"})`);
     }
