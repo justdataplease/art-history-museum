@@ -13,9 +13,12 @@ import {
   inspectPanelInset,
   inspectPose,
   planRoute,
+  seatNear,
   spawnZ,
+  supportAt,
   type GalleryLayout,
   type Placement,
+  type SeatSpot,
 } from "./layout";
 import { setInspectFlying, setMoving } from "./renderer-motion";
 
@@ -37,20 +40,26 @@ const TAP_SLOP = 9; // px a touch may wander and still count as a tap
 const TAP_MAX_MS = 450;
 const LOOK_SPEED = 0.0042; // rad per px of drag
 const MAX_PITCH = 1.25; // rad
-// Jump: a plain ballistic hop (~0.45 m peak, ~0.6 s in the air), no air
-// control beyond the momentum at take-off; a slight eye dip on landing.
+// Jump: a plain ballistic hop (~0.6 m peak, ~0.7 s in the air), no air
+// control beyond the momentum at take-off; a slight eye dip on landing. High
+// enough to land on a bench (its top ~0.45 m): one stands on it and walks
+// off its end (supportAt, confine's `feet`).
 const GRAVITY = 9.8; // m/s²
-const JUMP_HEIGHT = 0.45; // m
+const JUMP_HEIGHT = 0.6; // m
 const JUMP_SPEED = Math.sqrt(2 * GRAVITY * JUMP_HEIGHT); // ~2.97 m/s
 const LAND_DIP = 0.05; // m, at full landing speed
 const LAND_DIP_TAU = 0.07; // s: the dip is deepest then, gone after ~6x
-// Crouch ("sit down"): the eye eases down to CROUCH_EYE, walking slows.
-// The lowest ceiling is a doorway head (>= 3 m) and nothing in the hall is
-// low enough to stand up into, so neither move can put the eye in geometry;
-// benches stay solid (confine) whatever the eye height.
+// Crouch: the eye eases down to CROUCH_EYE, walking slows. The lowest
+// ceiling is a doorway head (>= 3 m) and nothing in the hall is low enough to
+// stand up into, so neither move can put the eye in geometry.
 const CROUCH_EYE = 1.0; // m
 const CROUCH_S = 0.25; // s to go down or up
 const CROUCH_SPEED = 0.5; // walking speed factor, crouched
+// Sitting: C beside a chair, a settee or a bench sits down in it, facing the
+// way it faces; a walk key, Space or C stands up a step in front of it.
+const SIT_EYE = 0.68; // m above the seat
+const SIT_S = 0.6; // s to sit down
+const STAND_S = 0.35; // s to step back out
 
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
@@ -126,11 +135,11 @@ function flightSeconds(base: number, length: number): number {
 }
 
 /** Move the camera to (x, z) on the floor, kept inside the hall and off the
- *  benches, the eye `eye` metres up. */
-function placeOnFloor(camera: THREE.Camera, x: number, z: number, layout: GalleryLayout, eye = EYE_HEIGHT) {
+ *  furniture (but over a bench the feet are up at), the eye `eye` metres up. */
+function placeOnFloor(camera: THREE.Camera, x: number, z: number, layout: GalleryLayout, eye = EYE_HEIGHT, feet = 0) {
   _flat.x = x;
   _flat.z = z;
-  confine(_flat, layout);
+  confine(_flat, layout, feet);
   camera.position.set(_flat.x, eye, _flat.z);
 }
 
@@ -141,25 +150,33 @@ function isFieldOrControl(t: EventTarget | null): boolean {
   return !!el.closest('input, textarea, select, button, a, [contenteditable=""], [contenteditable="true"], [role="option"]');
 }
 
-/** The eye's vertical state: crouch level, jump arc, landing dip. */
+/** The body: crouch level, the feet's height (the floor, a bench top, a jump's arc), landing dip, a seat. */
 interface Body {
   /** Crouch toggled on. */
   crouch: boolean;
   /** 0 standing .. 1 crouched (linear in time; eased when applied). */
   k: number;
-  /** Height above the eye's base (the jump) and its vertical speed. */
-  y: number;
+  /** The feet's height above the floor, and their vertical speed. */
+  fy: number;
   vy: number;
   airborne: boolean;
   /** Landing dip: its depth, and the time since touchdown (-1: none). */
   dip: number;
   dipT: number;
+  /** Sitting: where, and the sit-down's progress from where the eye was. */
+  seat: SeatSpot | null;
+  sitT: number;
+  sitFrom: THREE.Vector3;
+  sitQ: THREE.Quaternion;
+  /** Standing up: a short glide from the seat to a step in front of it. */
+  glide: { x0: number; z0: number; x1: number; z1: number; t: number } | null;
 }
 
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
-/** Advance the body by dt; returns whether the eye is still moving. */
-function stepBody(b: Body, dt: number): boolean {
+/** Advance the body by dt over `ground` (the floor or a bench top under the feet); returns whether the eye
+ *  is still moving. */
+function stepBody(b: Body, dt: number, ground: number): boolean {
   let moving = false;
   const goal = b.crouch ? 1 : 0;
   if (b.k !== goal) {
@@ -167,15 +184,20 @@ function stepBody(b: Body, dt: number): boolean {
     b.k = goal > b.k ? Math.min(goal, b.k + step) : Math.max(goal, b.k - step);
     moving = true;
   }
+  if (!b.airborne && ground < b.fy - 0.005) {
+    // walked off the end of a bench: fall
+    b.airborne = true;
+    b.vy = 0;
+  }
   if (b.airborne) {
     // exact for constant gravity, whatever the frame rate
-    b.y += b.vy * dt - 0.5 * GRAVITY * dt * dt;
+    b.fy += b.vy * dt - 0.5 * GRAVITY * dt * dt;
     b.vy -= GRAVITY * dt;
-    if (b.y <= 0) {
-      // touchdown: a dip in proportion to the landing speed
+    if (b.vy <= 0 && b.fy <= ground) {
+      // touchdown (on the floor, or on a bench): a dip in proportion to the landing speed
       b.dip = LAND_DIP * Math.min(1, -b.vy / JUMP_SPEED);
       b.dipT = 0;
-      b.y = 0;
+      b.fy = ground;
       b.vy = 0;
       b.airborne = false;
     }
@@ -194,7 +216,16 @@ function eyeOf(b: Body): number {
   // a critically damped dip: down fast, eased back up
   const u = b.dipT >= 0 ? b.dipT / LAND_DIP_TAU : 0;
   const dip = b.dipT >= 0 ? b.dip * u * Math.exp(1 - u) : 0;
-  return base + b.y - dip;
+  return base + b.fy - dip;
+}
+
+/** Where the eye is, sitting in `s`: over the back half of the seat, facing the way it faces. */
+const _seatPos = new THREE.Vector3();
+const _seatQ = new THREE.Quaternion();
+const _seatE = new THREE.Euler(0, 0, 0, "YXZ");
+function seatPose(s: SeatSpot): void {
+  _seatPos.set(s.x - Math.sin(s.ry) * 0.08, s.h + SIT_EYE, s.z - Math.cos(s.ry) * 0.08);
+  _seatQ.setFromEuler(_seatE.set(-0.06, s.ry + Math.PI, 0));
 }
 
 // ------------------------------------------------------------- EntryDolly
@@ -256,8 +287,9 @@ const KEYS: Record<string, [number, number]> = {
 };
 
 export interface LockApi {
-  /** Request pointer lock; call from a user gesture (click). */
-  lock(): void;
+  /** Request pointer lock; call from a user gesture (a click, a key other than Esc). `early`: also while a
+   *  painting is still being left (the close button's click), so the visitor walks on when it is. */
+  lock(early?: boolean): void;
 }
 
 type PLC = ComponentRef<typeof PointerLockControls>;
@@ -294,7 +326,12 @@ export function Player({
   useEffect(() => {
     walkRef.current = walkEnabled;
   }, [walkEnabled]);
-  const body = useRef<Body>({ crouch: false, k: 0, y: 0, vy: 0, airborne: false, dip: 0, dipT: -1 });
+  const body = useRef<Body>({
+    crouch: false, k: 0, fy: 0, vy: 0, airborne: false, dip: 0, dipT: -1,
+    seat: null, sitT: 1, sitFrom: new THREE.Vector3(), sitQ: new THREE.Quaternion(), glide: null,
+  });
+  /** Where this component last left the camera (anything else moving it: a teleport, the elevator). */
+  const lastXZ = useRef<[number, number] | null>(null);
 
   const isLocked = () => {
     const el = controls.current?.domElement;
@@ -317,9 +354,40 @@ export function Player({
   useEffect(() => {
     let bareCtrl = false;
     const active = (e: KeyboardEvent) => walkRef.current && isLocked() && !isFieldOrControl(e.target);
+    /** Stand up from a seat: a step in front of it, the eye rising as from a crouch. */
+    const standUp = () => {
+      const b = body.current;
+      const s = b.seat;
+      if (!s) return;
+      b.seat = null;
+      _flat.x = s.x + Math.sin(s.ry) * 0.62;
+      _flat.z = s.z + Math.cos(s.ry) * 0.62;
+      confine(_flat, layout);
+      b.glide = { x0: camera.position.x, z0: camera.position.z, x1: _flat.x, z1: _flat.z, t: 0 };
+      b.fy = 0;
+      b.crouch = false;
+      // from about the seated eye height
+      b.k = 0.67;
+      invalidate();
+    };
+    /** C: sit down if a seat is in reach (standing on the floor), else crouch / stand. */
     const toggleCrouch = () => {
       const b = body.current;
-      if (b.airborne) return;
+      if (b.airborne || b.glide) return;
+      if (b.seat) {
+        standUp();
+        return;
+      }
+      const s = !b.crouch && b.fy === 0 ? seatNear(layout, camera.position.x, camera.position.z) : null;
+      if (s) {
+        b.seat = s;
+        b.sitT = 0;
+        b.sitFrom.copy(camera.position);
+        b.sitQ.copy(camera.quaternion);
+        vel.current.set(0, 0, 0);
+        invalidate();
+        return;
+      }
       b.crouch = !b.crouch;
       invalidate();
     };
@@ -330,9 +398,11 @@ export function Player({
         e.preventDefault(); // never scroll the page
         if (e.repeat) return;
         const b = body.current;
-        if (b.crouch) {
+        if (b.seat) {
+          standUp();
+        } else if (b.crouch) {
           b.crouch = false; // stand up first
-        } else if (!b.airborne && b.k === 0) {
+        } else if (!b.airborne && b.k === 0 && !b.glide) {
           b.airborne = true;
           b.vy = JUMP_SPEED;
           b.dipT = -1;
@@ -353,7 +423,12 @@ export function Player({
         }, 0);
         return;
       }
+      if (KEYS[e.code] && !e.ctrlKey && !e.metaKey && !e.altKey && walkRef.current && !isLocked() && !isFieldOrControl(e.target)) {
+        lockApi.current?.lock();
+      }
       if (!KEYS[e.code] || e.ctrlKey || e.metaKey || e.altKey || !active(e)) return;
+      // a walk key gets up out of a seat (and walks on once standing)
+      if (body.current.seat) standUp();
       if (e.code === "KeyW" && !pressed.current.has(e.code)) forwardSince.current = performance.now();
       pressed.current.add(e.code);
       invalidate();
@@ -387,7 +462,7 @@ export function Player({
       document.removeEventListener("visibilitychange", onVis);
       halt();
     };
-  }, [invalidate]);
+  }, [invalidate, lockApi, layout, camera]);
 
   // Lock state comes from the document itself, whether or not drei's controls
   // are currently connected (they disconnect during inspect).
@@ -407,9 +482,9 @@ export function Player({
   // click-to-lock is disabled via an empty `selector`).
   useEffect(() => {
     const api: LockApi = {
-      lock() {
+      lock(early = false) {
         const el = controls.current?.domElement as HTMLElement | undefined;
-        if (!el || !walkRef.current || document.pointerLockElement === el) return;
+        if (!el || (!walkRef.current && !early) || document.pointerLockElement === el) return;
         try {
           const r = el.requestPointerLock() as unknown as Promise<void> | undefined;
           // Chrome rejects a re-lock within ~1 s of an Esc exit; the overlay stays up.
@@ -448,14 +523,56 @@ export function Player({
   useFrame((_, rawDt) => {
     if (!walkRef.current) return; // inspecting: the inspect camera has the eye
     const dt = Math.min(rawDt, MAX_DT);
+    const b = body.current;
+    const p = camera.position;
+    // moved from outside (a room jump, the elevator): out of any seat, back on the floor
+    const last = lastXZ.current;
+    if (last && Math.hypot(p.x - last[0], p.z - last[1]) > 0.5) {
+      b.seat = null;
+      b.glide = null;
+      b.fy = 0;
+      b.vy = 0;
+      b.airborne = false;
+    }
+    const done = () => {
+      lastXZ.current = [p.x, p.z];
+    };
+
+    // sitting: ease into the seat, then only the mouse looks round
+    if (b.seat) {
+      if (b.sitT < 1) {
+        b.sitT = Math.min(1, b.sitT + dt / SIT_S);
+        const e = smooth(b.sitT);
+        seatPose(b.seat);
+        p.lerpVectors(b.sitFrom, _seatPos, e);
+        camera.quaternion.slerpQuaternions(b.sitQ, _seatQ, e);
+        invalidate();
+      }
+      setMoving(false);
+      done();
+      return;
+    }
+    // standing up: a short glide out of the seat while the eye rises
+    if (b.glide) {
+      const g = b.glide;
+      g.t = Math.min(1, g.t + dt / STAND_S);
+      const e = smooth(g.t);
+      stepBody(b, dt, 0);
+      p.set(g.x0 + (g.x1 - g.x0) * e, eyeOf(b), g.z0 + (g.z1 - g.z0) * e);
+      if (g.t >= 1) b.glide = null;
+      invalidate();
+      done();
+      return;
+    }
+
     // The eye's height (crouch, jump, landing) settles even if the lock is
     // released mid-jump; frames are asked for only while it changes.
-    const b = body.current;
-    const rising = stepBody(b, dt);
     const ctl = controls.current;
     if (!ctl?.isLocked) {
-      camera.position.y = eyeOf(b);
+      const rising = stepBody(b, dt, supportAt(layout, p.x, p.z, b.fy));
+      p.y = eyeOf(b);
       if (rising) invalidate();
+      done();
       return;
     }
 
@@ -483,17 +600,18 @@ export function Player({
     if (!b.airborne) vel.current.lerp(_dir, 1 - Math.exp(-10 * dt));
 
     const walking = pressed.current.size > 0;
-    const eye = eyeOf(b);
+    // across the floor (over a bench the feet are up at), then the feet onto what is under them
     if (walking || b.airborne || vel.current.lengthSq() > 1e-4) {
-      const p = camera.position;
-      placeOnFloor(camera, p.x + vel.current.x * dt, p.z + vel.current.z * dt, layout, eye);
+      placeOnFloor(camera, p.x + vel.current.x * dt, p.z + vel.current.z * dt, layout, p.y, b.fy);
       invalidate();
     } else {
       vel.current.set(0, 0, 0);
-      camera.position.y = eye;
     }
+    const rising = stepBody(b, dt, supportAt(layout, p.x, p.z, b.fy));
+    p.y = eyeOf(b);
     if (rising) invalidate();
     setMoving(walking);
+    done();
 
     // crosshair aim: only when the view actually changed
     if (

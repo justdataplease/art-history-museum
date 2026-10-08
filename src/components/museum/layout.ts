@@ -18,6 +18,8 @@ export interface Bench {
   position: [number, number];
   /** Footprint (width along x, depth along z), metres. */
   size: [number, number];
+  /** A piece one can stand on (a bench): its top; feet as high as that pass over it. */
+  top?: number;
 }
 
 /** The footprints a room style's furniture offers the layout to arrange (furniture.ts): across and deep, facing
@@ -26,6 +28,19 @@ export interface FurnishSizes {
   centre: [number, number][];
   wall: [number, number][];
   chairs: [number, number][];
+  /** The centre pieces one can stand on: their tops (null: not one to stand on). */
+  top?: (number | null)[];
+  /** Where one may sit on a placed piece. */
+  seats?: (f: Furnishing) => SeatSpot[];
+}
+
+/** A place to sit: on the floor at (x, z), the seat h high, facing ry (0: +z, toward the entrance). */
+export interface SeatSpot {
+  x: number;
+  z: number;
+  h: number;
+  ry: number;
+  room: number;
 }
 
 /** A piece of furniture the layout has placed: which of the style's pieces, where, turned how, in which colours. */
@@ -42,6 +57,8 @@ export interface Furnishing {
   room: number;
   /** In [0, 1): picks its fabric and wood from the style's (pieces in one room mostly match). */
   tint: number;
+  /** A piece one can stand on: its top. */
+  top?: number;
 }
 
 /** A rope barrier in front of a famous work, as museums rope off the Mona Lisa: brass posts on the floor from
@@ -115,6 +132,8 @@ export interface GalleryLayout {
   furniture: Furnishing[];
   /** Rope barriers in front of the most famous works. */
   barriers: Barrier[];
+  /** Every place to sit (C beside it). */
+  seats: SeatSpot[];
   /** A custom room's elevator (LayoutOptions.elevator). */
   elevator: ElevatorSpot | null;
   /** Entrance room first; a single-room gallery has exactly one. */
@@ -409,6 +428,7 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       placements: [],
       furniture: [],
       barriers: [],
+      seats: [],
       elevator: null,
       rooms: [{ index: 0, z0: -MIN_HALL_LENGTH / 2, z1: MIN_HALL_LENGTH / 2, years: null }],
       doorways: [],
@@ -637,34 +657,39 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
     : [];
 
   const barriers = placements.filter((pl) => (pl.painting.pageviews ?? 0) >= ROPED_VIEWS).map(ropeOff);
+  const seats = opts.furnish?.seats ? furniture.flatMap(opts.furnish.seats) : [];
 
   return {
-    hallWidth, hallLength, wallHeight, placements, furniture, barriers, elevator, rooms, doorways, screen,
+    hallWidth, hallLength, wallHeight, placements, furniture, barriers, seats, elevator, rooms, doorways, screen,
     trackInset: cab?.trackInset ?? TRACK_INSET,
   };
 }
 
-/** Narrowest hall that fits the entrance doors, the call buttons and an elevator side by side. */
-const ELEVATOR_HALL_WIDTH = 7.2;
+/** Narrowest hall that fits the entrance doors, a stretch of wall, the call buttons and an elevator side by side. */
+const ELEVATOR_HALL_WIDTH = 8.4;
 /** The entrance doors' casing, beyond the opening. */
 const DOOR_CASING = 0.25;
 
-/** The elevator: on the entrance wall to the right of the doors as one walks back to them (x < 0), the call
- *  buttons between the doors and the car, the floor directory beyond it if the wall leaves room. */
+/** The elevator: on the entrance wall to the right of the doors as one walks back to them (x < 0), well clear of
+ *  them (most of the spare wall lies between the doors and the call buttons, with the floor directory on it), the
+ *  call buttons beside the car. */
 function elevatorSpot(W: number): ElevatorSpot {
   const inner = ENTRANCE_DOOR.width / 2 + DOOR_CASING;
   const outer = W / 2 - 0.3;
   const frame = 0.1;
   const gap = 0.34; // the call buttons
-  const halfWidth = Math.max(0.42, Math.min(0.6, (outer - inner - gap) / 2 - frame));
-  const x = inner + gap + frame + halfWidth;
-  const dirLo = x + halfWidth + frame + 0.2;
+  const halfWidth = 0.6;
+  const spare = Math.max(0, outer - inner - gap - 2 * frame - 2 * halfWidth);
+  // the wall between the doors' casing and the call buttons
+  const clear = Math.min(2.4, spare * 0.72);
+  const x = inner + clear + gap + frame + halfWidth;
+  const beyond = outer - (x + halfWidth + frame);
   return {
     x: -x,
     halfWidth,
-    height: 2.3,
-    panelX: -(inner + gap / 2 + 0.02),
-    directoryX: outer - dirLo >= 0.5 ? -Math.min(dirLo + 0.3, (dirLo + outer) / 2) : null,
+    height: 2.5,
+    panelX: -(inner + clear + gap / 2 + 0.02),
+    directoryX: clear >= 0.8 ? -(inner + clear / 2) : beyond >= 0.8 ? -(x + halfWidth + frame + beyond / 2) : null,
   };
 }
 
@@ -776,7 +801,8 @@ function furnish(o: {
         const t = tint();
         for (let i = 0; i < count; i++) {
           const z = count === 1 ? lo + (hi - lo) * (0.3 + 0.4 * rng()) : lo + (i / (count - 1)) * (hi - lo);
-          out.push({ kind: "centre", index, position: [0, round(z)], rotation: 0, size: [w, d], room: r, tint: t });
+          const top = sizes.top?.[index];
+          out.push({ kind: "centre", index, position: [0, round(z)], rotation: 0, size: [w, d], room: r, tint: t, ...(top ? { top } : {}) });
           placed++;
         }
       }
@@ -940,9 +966,13 @@ function pushOut(
   else p.z = z1 + r;
 }
 
+/** How much higher than the feet a bench's top may be and still be stepped onto (landing from a jump). */
+const STEP_UP = 0.15;
+
 /** Keep a visitor (x, z on the floor) inside the suite, out of the cross
- *  walls (only the doorways let them through) and out of the benches. */
-export function confine(p: { x: number; z: number }, layout: GalleryLayout): void {
+ *  walls (only the doorways let them through) and out of the furniture: but over a bench once the feet are
+ *  up at its top (a jump onto it, standing on it). */
+export function confine(p: { x: number; z: number }, layout: GalleryLayout, feet = 0): void {
   const m = WALL_MARGIN;
   const clampHall = () => {
     p.x = Math.min(layout.hallWidth / 2 - m, Math.max(-layout.hallWidth / 2 + m, p.x));
@@ -950,6 +980,7 @@ export function confine(p: { x: number; z: number }, layout: GalleryLayout): voi
   };
   clampHall();
   for (const b of seatsOf(layout)) {
+    if (b.top !== undefined && b.top <= feet + STEP_UP) continue;
     const hx = b.size[0] / 2 + BODY_RADIUS;
     const hz = b.size[1] / 2 + BODY_RADIUS;
     const dx = p.x - b.position[0];
@@ -985,13 +1016,45 @@ export function confine(p: { x: number; z: number }, layout: GalleryLayout): voi
 function seatsOf(layout: GalleryLayout): Bench[] {
   const out: Bench[] = layout.furniture.map((f) => {
     const [hx, hz] = turnedHalf(f.size, f.rotation);
-    return { position: f.position, size: [2 * hx, 2 * hz] };
+    return { position: f.position, size: [2 * hx, 2 * hz], ...(f.top ? { top: f.top } : {}) };
   });
   for (const c of columnsOf(layout)) out.push({ position: [c.x, c.z], size: [2 * c.r + 0.1, 2 * c.r + 0.1] });
   for (const { box: [x0, x1, z0, z1] } of layout.barriers) {
     out.push({ position: [(x0 + x1) / 2, (z0 + z1) / 2], size: [x1 - x0 + 0.1, z1 - z0 + 0.1] });
   }
   return out;
+}
+
+/** What the feet stand on at (x, z): the top of a bench under them no higher than they can step (feet +
+ *  STEP_UP), else the floor. */
+export function supportAt(layout: GalleryLayout, x: number, z: number, feet: number): number {
+  let ground = 0;
+  for (const f of layout.furniture) {
+    if (!f.top || f.top > feet + STEP_UP || f.top <= ground) continue;
+    const dx = x - f.position[0];
+    const dz = z - f.position[1];
+    const c = Math.cos(f.rotation);
+    const s = Math.sin(f.rotation);
+    // into the piece's frame (the inverse of its turn)
+    const lx = dx * c - dz * s;
+    const lz = dx * s + dz * c;
+    if (Math.abs(lx) <= f.size[0] / 2 + 0.12 && Math.abs(lz) <= f.size[1] / 2 + 0.12) ground = f.top;
+  }
+  return ground;
+}
+
+/** The nearest place to sit within `reach` of (x, z), or null. */
+export function seatNear(layout: GalleryLayout, x: number, z: number, reach = 1.1): SeatSpot | null {
+  let best: SeatSpot | null = null;
+  let bd = reach * reach;
+  for (const s of layout.seats) {
+    const d = (s.x - x) ** 2 + (s.z - z) ** 2;
+    if (d < bd) {
+      bd = d;
+      best = s;
+    }
+  }
+  return best;
 }
 
 /** Seats, and the flagship's screen as one more (bench-like) obstacle. */

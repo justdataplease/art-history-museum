@@ -13,7 +13,7 @@
 
 import * as THREE from "three";
 import type { GeoBatch } from "./room-geometry";
-import type { FurnishSizes, Furnishing } from "./layout";
+import type { FurnishSizes, Furnishing, SeatSpot } from "./layout";
 import type { EraKey, GalleryTheme } from "./theme";
 
 export type Part = "up" | "wood" | "metal";
@@ -29,6 +29,9 @@ export interface Piece {
   /** Footprint facing +z: across (x) and deep (z). A wall piece's width is the most wall it wants. */
   size: [number, number];
   build: (k: Kit, w: number, d: number) => void;
+  /** Where one sits on it, in its frame: (x, z, turn) for a footprint w x d (default: a chair's one seat, a
+   *  bench's places along both sides, a wall piece's along its width). */
+  spots?: (w: number, d: number) => [number, number, number][];
 }
 
 export interface FurnitureSet {
@@ -187,7 +190,13 @@ function gueridon(k: Kit, top: Part, stem: Part, r = 0.26, h = 0.68): void {
 /** Two chairs against the wall turned toward each other with a small table between; one where the wall is
  *  short. */
 function pairWithTable(chair: (k: Kit) => void, chairW: number, chairD: number, table: (k: Kit) => void) {
-  return (k: Kit, width: number, depth: number) => {
+  const spots = (width: number, depth: number): [number, number, number][] => {
+    const z = -depth / 2 + chairD / 2 + 0.05;
+    if (width + 1e-6 < 2 * chairW + 0.55) return [[0, z + 0.02, 0]];
+    const x = Math.min(width / 2 - chairW / 2, chairW / 2 + 0.38);
+    return [[-x, z + 0.02, 0.38], [x, z + 0.02, -0.38]];
+  };
+  const build = (k: Kit, width: number, depth: number) => {
     const z = -depth / 2 + chairD / 2 + 0.05;
     if (width + 1e-6 >= 2 * chairW + 0.55) {
       const x = Math.min(width / 2 - chairW / 2, chairW / 2 + 0.38);
@@ -198,6 +207,7 @@ function pairWithTable(chair: (k: Kit) => void, chairW: number, chairD: number, 
       chair(k.at(0, z));
     }
   };
+  return Object.assign(build, { spots });
 }
 
 // ----------------------------------------------------------------- chairs
@@ -691,8 +701,18 @@ function steelBench(k: Kit, w: number, d: number): void {
 const alongWall = (bench: (k: Kit, w: number, d: number) => void, deep: number) => (k: Kit, width: number, depth: number) =>
   bench(k.at(0, -depth / 2 + deep / 2 + 0.01, PI / 2), deep, width);
 
-const piece = (name: string, size: [number, number], build: Piece["build"]): Piece => ({ name, size, build });
-const chair = (name: string, size: [number, number], build: (k: Kit) => void): Piece => ({ name, size, build: (k) => build(k) });
+const piece = (name: string, size: [number, number], build: Piece["build"] & { spots?: Piece["spots"] }): Piece => ({
+  name,
+  size,
+  build,
+  spots: build.spots,
+});
+const chair = (name: string, size: [number, number], build: (k: Kit) => void): Piece => ({
+  name,
+  size,
+  build: (k) => build(k),
+  spots: () => [[0, 0.02, 0]],
+});
 
 // --------------------------------------------------------------- the sets
 
@@ -1053,7 +1073,73 @@ export function furnishSizes(set: FurnitureSet): FurnishSizes {
     centre: set.centre.map((p) => p.size),
     wall: set.wall.map((p) => p.size),
     chairs: set.chairs.map((p) => p.size),
+    // the benches, ottomans and divans down the middle can be stood on (not a borne, round its column)
+    top: set.centre.map((p) => (p.name === "borne" ? null : SIT[p.name] ?? 0.48)),
+    seats: (f) => seatSpots(set, f),
   };
+}
+
+// ------------------------------------------------------------ sitting
+
+/** Each piece's seat height (the cushion's top), by name; 0.48 m where not given. */
+const SIT: Record<string, number> = {
+  "trestle bench": 0.49, cassapanca: 0.53, dantesca: 0.49, sedia: 0.5,
+  "gilt banquette": 0.48, "two armchairs and a table": 0.5, "gilt settee": 0.52, "Baroque armchair": 0.5,
+  "oak bench": 0.46, "Dutch armchair": 0.48, "Spanish chair": 0.48, "two chairs and a table": 0.5,
+  "canapé": 0.52, "bergère": 0.56, "gilt bergère": 0.56, "fauteuil à la reine": 0.5,
+  borne: 0.47, banquette: 0.48, "velvet banquette": 0.48, Chesterfield: 0.51, "two crapauds and a table": 0.47,
+  crapaud: 0.47, "gilt fauteuil": 0.5, "buttoned ottoman": 0.46, "spoon-back armchair": 0.51, "wing chair": 0.54,
+  "leather bench": 0.46, "two bentwood chairs and a table": 0.46, "Voltaire armchair": 0.51, "bentwood armchair": 0.46,
+  "slat bench": 0.46, "two Kubus armchairs": 0.53, "Kubus armchair": 0.53, "club chair": 0.5,
+  "Barcelona daybed": 0.465, "two Wassily chairs": 0.4, "Barcelona chair": 0.47, "Wassily chair": 0.4,
+  "low sofa": 0.47, "teak armchair": 0.44, "huanghuali bench": 0.48, "official's hat chair": 0.53,
+  "horseshoe armchair": 0.53, "shōgi": 0.45, divan: 0.36, "divan with cushions": 0.37, mora: 0.49,
+  "steel bench": 0.43,
+};
+/** How far in from the wall a wall piece's sitter sits (its seat's middle). */
+const WALL_SEAT: Record<string, number> = {
+  Chesterfield: 0.48, "low sofa": 0.44, cassapanca: 0.33, "divan with cushions": 0.45, "shōgi": 0.29, "steel bench": 0.29,
+};
+
+/** The places on a piece, in its frame, when it says nothing itself. */
+function defaultSpots(kind: Furnishing["kind"], name: string, w: number, d: number): [number, number, number][] {
+  if (kind === "chair") return [[0, 0.02, 0]];
+  if (kind === "wall") {
+    const n = Math.max(1, Math.floor((w - 0.2) / 0.62));
+    const z = -d / 2 + (WALL_SEAT[name] ?? 0.36);
+    return Array.from({ length: n }, (_, i) => [-((n - 1) * 0.62) / 2 + i * 0.62, z, 0] as [number, number, number]);
+  }
+  if (name === "borne") {
+    // round the column, facing out
+    const R = w / 2 - 0.22;
+    return Array.from({ length: 8 }, (_, i) => {
+      const a = (i / 8) * 2 * PI;
+      return [R * Math.sin(a), R * Math.cos(a), a] as [number, number, number];
+    });
+  }
+  // a bench: along both sides, facing the side walls
+  const n = Math.max(1, Math.floor((d - 0.3) / 0.7));
+  const out: [number, number, number][] = [];
+  for (const s of [-1, 1]) for (let i = 0; i < n; i++) out.push([s * Math.min(0.12, w * 0.2), -((n - 1) * 0.7) / 2 + i * 0.7, (s * PI) / 2]);
+  return out;
+}
+
+/** Where one may sit on a placed piece, in the room. */
+export function seatSpots(set: FurnitureSet, f: Furnishing): SeatSpot[] {
+  const list = f.kind === "centre" ? set.centre : f.kind === "wall" ? set.wall : set.chairs;
+  const p = list[f.index];
+  if (!p) return [];
+  const h = SIT[p.name] ?? 0.48;
+  const local = p.spots?.(f.size[0], f.size[1]) ?? defaultSpots(f.kind, p.name, f.size[0], f.size[1]);
+  const c = Math.cos(f.rotation);
+  const sn = Math.sin(f.rotation);
+  return local.map(([x, z, ry]) => ({
+    x: +(f.position[0] + x * c + z * sn).toFixed(3),
+    z: +(f.position[1] - x * sn + z * c).toFixed(3),
+    h,
+    ry: f.rotation + ry,
+    room: f.room,
+  }));
 }
 
 /** One of the style's colours for a piece: `tint` in [0, 1) picks it, `salt` decorrelates the parts. */

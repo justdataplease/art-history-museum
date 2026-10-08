@@ -19,14 +19,29 @@
   opacity: 0;
 }
 
-.topSpacer {
-  width: 110px;
+/* The title card centred on the screen (as the room navigator under it is): the way back on the left and a
+   custom room's Edit / Save / Share on the right get equal columns, so wider buttons on one side do not push
+   it over; only when they need more than half the spare width does it give way, never overlap. */
+@media (min-width: 641px) {
+  .top.top {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    column-gap: 16px;
+  }
+}
+.topSide.topSide {
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;
+}
+.topSide.topSide > * {
+  pointer-events: auto;
+}
+.topRight.topRight {
+  justify-content: flex-end;
 }
 
 @media (max-width: 640px) {
-  .topSpacer {
-    display: none;
-  }
   .placard.placard {
     padding: 8px 14px;
   }
@@ -415,4 +430,21 @@
   letter-spacing: normal;
   text-transform: none;
   opacity: 0.9;
+}
+
+/* Walking on after Esc (or after leaving a painting with Esc): the room stays in view, a click anywhere or a
+   walk key takes the cursor back. */
+.resume.resume {
+  background: transparent;
+  backdrop-filter: none;
+}
+.resumePill.resumePill {
+  padding: 10px 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(199, 169, 122, 0.4);
+  background: rgba(10, 9, 8, 0.6);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  opacity: 0.92;
 }

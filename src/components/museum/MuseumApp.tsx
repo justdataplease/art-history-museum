@@ -110,6 +110,9 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   const [entering, setEntering] = useState(false);
   const [arrived, setArrived] = useState(false);
   const [locked, setLocked] = useState(false);
+  // once inside, a lost cursor (Esc, leaving a painting with Esc) asks only for a click or a walk key, over the
+  // room itself: the full "step inside" card is the arrival's
+  const [stepped, setStepped] = useState(false);
   const [touchActive, setTouchActive] = useState(false);
   const [inspect, setInspect] = useState<Placement | null>(null);
   const [returning, setReturning] = useState(false);
@@ -229,7 +232,10 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   const onLockChange = useCallback(
     (l: boolean) => {
       setLocked(l);
-      if (l) announceStart();
+      if (l) {
+        setStepped(true);
+        announceStart();
+      }
     },
     [announceStart]
   );
@@ -242,12 +248,15 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
     inspectRef.current = pl;
     setInspect(pl);
   }, []);
-  const closeInspect = useCallback(() => {
+  /** Leave the painting. From a click (the close button) the cursor is captured again in the same gesture, so
+   *  the visitor walks on as soon as the camera is back; Esc is not a gesture that may capture it. */
+  const closeInspect = useCallback((relock = false) => {
     if (!inspectRef.current) return;
     inspectRef.current = null;
+    if (relock && !touch) lockApi.current?.lock(true);
     setReturning(true);
     setInspect(null);
-  }, []);
+  }, [touch]);
 
   // Safety net: never stay "returning" if the fly-back is interrupted (a
   // flight back through a suite's doorways takes up to ~2.1 s).
@@ -528,9 +537,11 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
       />
 
       <div className={`mus-top ${styles.top}`}>
-        <Link href="/" className="mus-back">
-          ← Timeline
-        </Link>
+        <div className={styles.topSide}>
+          <Link href="/" className="mus-back">
+            ← Timeline
+          </Link>
+        </div>
         <div className={`mus-placard ${styles.placard}${inspect ? ` ${styles.placardHidden}` : ""}`}>
           <h1>{artist.name}</h1>
           {roomInfo ? (
@@ -545,20 +556,21 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
             </p>
           )}
         </div>
-        <span className={styles.topSpacer} />
-        {roomInfo && !inspect && (
-          <div className={styles.roomActions}>
-            <Link href={`/rooms?${roomInfo.href.split("?")[1] ?? ""}`} className="mus-back">
-              Edit room
-            </Link>
-            <button type="button" className="mus-back" onClick={saveRoom} title="Keep this room in My rooms">
-              {savedRoom ? "Saved" : "Save"}
-            </button>
-            <button type="button" className="mus-back" onClick={share} title="Copy this room's link">
-              {shared ? "Link copied" : "Share"}
-            </button>
-          </div>
-        )}
+        <div className={`${styles.topSide} ${styles.topRight}`}>
+          {roomInfo && !inspect && (
+            <div className={styles.roomActions}>
+              <Link href={`/rooms?${roomInfo.href.split("?")[1] ?? ""}`} className="mus-back">
+                Edit room
+              </Link>
+              <button type="button" className="mus-back" onClick={saveRoom} title="Keep this room in My rooms">
+                {savedRoom ? "Saved" : "Save"}
+              </button>
+              <button type="button" className="mus-back" onClick={share} title="Copy this room's link">
+                {shared ? "Link copied" : "Share"}
+              </button>
+            </div>
+          )}
+        </div>
         {!inspect && <SourceLink className="mus-source" compact />}
         {/* hung just below the bar, so it clears the title card at any width */}
         <RoomNavigator
@@ -602,10 +614,10 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
                 <b>Click</b> a painting to inspect
               </span>
               <span>
-                <b>Space</b> jump
+                <b>Space</b> jump, onto benches
               </span>
               <span>
-                <b>C</b> crouch
+                <b>C</b> crouch, or sit
               </span>
               <span>
                 <b>M</b> music
@@ -631,12 +643,25 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
         </div>
       )}
 
-      {showStart && (
+      {showStart && stepped && (
+        <div
+          className={`mus-click-to-start ${styles.resume}`}
+          onClick={() => {
+            if (touch) setTouchActive(true);
+            else lockApi.current?.lock();
+          }}
+        >
+          <p className={styles.resumePill}>{touch ? "Tap to walk on" : "Click, or press W, to walk on"}</p>
+        </div>
+      )}
+
+      {showStart && !stepped && (
         <div
           className="mus-click-to-start"
           onClick={() => {
             if (touch) {
               setTouchActive(true);
+              setStepped(true);
               announceStart();
             } else lockApi.current?.lock();
           }}
@@ -659,7 +684,7 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
 
       <InspectPanel
         placement={inspect}
-        onClose={closeInspect}
+        onClose={() => closeInspect(true)}
         touch={touch}
         artistName={inspect?.painting.artistName ?? artist.name}
       />
