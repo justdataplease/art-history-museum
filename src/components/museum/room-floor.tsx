@@ -67,11 +67,13 @@ function createFloorMaterial(
     tReflectBlur: { value: tReflectBlur },
     textureMatrix: { value: textureMatrix },
     uReflectMix: { value: 0.92 },
-    // wood: (board width, mean board length); concrete: (joint spacing x, z)
+    // wood: (board width, mean board length); concrete: (joint spacing x, z), or stone slabs of plankWidth
     uPlank: {
       value: wood
         ? new THREE.Vector2(pw, 2.3)
-        : new THREE.Vector2(W / 3, L / Math.max(1, Math.round(L / 3.2))),
+        : pw < 2
+          ? new THREE.Vector2(W / Math.max(1, Math.round(W / pw)), L / Math.max(1, Math.round(L / pw)))
+          : new THREE.Vector2(W / 3, L / Math.max(1, Math.round(L / 3.2))),
     },
     // grain / aggregate tile size in metres
     uGrain: { value: wood ? new THREE.Vector2(0.62, 1.2) : new THREE.Vector2(1.1, 1.1) },

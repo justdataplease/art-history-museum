@@ -199,15 +199,17 @@ function eyeOf(b: Body): number {
 
 // ------------------------------------------------------------- EntryDolly
 
-/** Walk the camera through the doorway while the entry doors swing open. */
+/** Walk the camera through the doorway while the entry doors swing open (or out of the elevator, from fromX). */
 export function EntryDolly({
   entering,
   layout,
   onArrived,
+  fromX,
 }: {
   entering: boolean;
   layout: GalleryLayout;
   onArrived: () => void;
+  fromX?: number;
 }) {
   const camera = useThree((s) => s.camera);
   const invalidate = useThree((s) => s.invalidate);
@@ -219,6 +221,7 @@ export function EntryDolly({
 
   useEffect(() => {
     if (!entering || arrived.current) return;
+    if (fromX !== undefined) camera.position.x = fromX;
     const tween = gsap.to(camera.position, {
       z: spawnZ(layout),
       duration: 3.0,
@@ -235,7 +238,7 @@ export function EntryDolly({
     return () => {
       tween.kill();
     };
-  }, [entering, camera, layout, invalidate]);
+  }, [entering, camera, layout, invalidate, fromX]);
   return null;
 }
 

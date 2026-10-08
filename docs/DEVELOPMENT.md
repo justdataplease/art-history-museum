@@ -16,7 +16,7 @@ The app reads the bundled snapshot, so that's all you need. Optional extras:
 # to identify itself.
 
 # Pull the collection from Wikipedia. Resumable: each artist is cached in
-# data/cache/artists, and --refresh re-fetches them all.
+# data/wikipedia/artists, and --refresh re-fetches them all.
 npm run ingest
 npm run ingest -- --refresh
 
@@ -43,7 +43,42 @@ batch boundaries don't trigger lookups of unchanged works.
 so it can run against a live database. Every gallery is prerendered at build
 time and refreshed hourly.
 
+### Data archive and the site snapshot
+
+Other sources (WikiArt so far), Wikidata life facts, our own taxonomy
+(`data/taxonomy/`) and a DuckDB warehouse in our own format
+(`data/museum.duckdb`) are run by a local Dagster (`run_dagster.cmd`,
+<http://127.0.0.1:3080>). See [`archive/README.md`](../archive/README.md).
+
+The site reads `data/site/museum.json` when it exists: the ingest's snapshot
+plus the works only WikiArt has, for public-domain artists. Otherwise it reads
+`data/wikipedia/museum.json`. The full refresh, in order:
+
+```bash
+npm run ingest && npm run repair-data          # data/wikipedia
+archive/.venv/Scripts/python -m archive.wikimedia manifest
+archive/.venv/Scripts/python -m archive.wikidata artists
+archive/.venv/Scripts/python -m archive.warehouse build
+archive/.venv/Scripts/python -m archive.fingerprints
+archive/.venv/Scripts/python -m archive.warehouse build
+archive/.venv/Scripts/python -m archive.site   # data/site/museum.json, rooms.json (`archive.site rooms`: rooms.json only)
+archive/.venv/Scripts/python -m archive.guide build   # data/site/guide: audio guide scripts
+npm run load-db                                # reads data/site when present
+```
+
+(or Dagster's `wikidata_facts` then `warehouse_build` jobs after the ingest).
+WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
+(`next.config.ts`).
+
 ## How it's built
+
+- **Routes:** `/` the timeline; `/museum/<artist>` an artist's gallery (prerendered); `/rooms` make a room and
+  `/room?...` walk it (rendered on request: the selection, the room's design and its floor plan are the URL,
+  `src/lib/room-query.ts`, chosen and hung by `src/lib/rooms.ts`; a room with floors has `&f=2` ..., joined by an
+  elevator by the entrance); `/museums/<slug>` a recreated museum (`src/lib/museum-rooms.ts`), an ordinary room
+  link; `/api/room` the picker's live count and preview (`?preview=1`); `/api/room/works?q=` the works to pick by
+  hand; `/api/guide/<artist>` the audio guide's scripts (`data/site/guide`); `/furniture` (development only) every
+  room style's seating, for modelling it.
 
 - **Next.js 16** (App Router). The timeline and all 526 galleries are
   prerendered; data comes from the JSON snapshot or Postgres.

@@ -3,7 +3,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import type { ArtistWithPaintings } from "@/lib/types";
+import type { ArtistWithPaintings, RoomFloor } from "@/lib/types";
 import {
   confine,
   entryGate,
@@ -22,6 +22,7 @@ import { planExhibitLights, roomDims } from "./exhibit-lights";
 import { lodAt, SuiteRuntime, type Lod } from "./suite-runtime";
 import { textureStats } from "./exhibit-texture";
 import { FxSlot } from "./fx/Slot";
+import { Elevator, type ElevatorApi, type LiftDirection } from "./Elevator";
 
 export type { LockApi };
 
@@ -32,6 +33,8 @@ const MOUNTS_PER_FRAME = 3;
 export interface TeleportApi {
   /** Put the visitor at the entrance of `room`, facing into it. */
   go(room: number): void;
+  /** Put the visitor in front of the elevator, facing it (a custom room's floors). */
+  toElevator(): void;
   /** The room's lights are up and its works hung: the fade may clear. */
   settled(): boolean;
 }
@@ -75,6 +78,19 @@ export interface GalleryProps {
   onRoom?: (room: number) => void;
   /** Filled here: the room navigator's jump (MuseumApp fades around it). */
   teleportApi?: RefObject<TeleportApi | null>;
+  /** Filled here: the camera, for the audio guide (it checks what the visitor stands near). */
+  cameraRef?: RefObject<THREE.Camera | null>;
+  /** A custom room's floors: the elevator beside the entrance doors (layout.elevator). */
+  lift?: {
+    floors: RoomFloor[];
+    /** This floor, 1-based. */
+    floor: number;
+    /** The visitor came up (or down) by the elevator: step out of it rather than in through the doors. */
+    arrivedByLift: boolean;
+    apiRef: RefObject<ElevatorApi | null>;
+    onNear: (near: boolean) => void;
+    onPress: (dir: LiftDirection) => void;
+  };
 }
 
 export const Gallery = memo(function Gallery(props: GalleryProps) {
@@ -157,6 +173,14 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
   // ---- the room navigator's jump
   const camera = useThree((s) => s.camera);
   useEffect(() => {
+    const ref = props.cameraRef;
+    if (!ref) return;
+    ref.current = camera;
+    return () => {
+      if (ref.current === camera) ref.current = null;
+    };
+  }, [props.cameraRef, camera]);
+  useEffect(() => {
     const api = props.teleportApi;
     if (!api) return;
     const tp: TeleportApi = {
@@ -172,6 +196,17 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
         camera.rotation.set(0, 0, 0, "YXZ");
         camera.updateMatrixWorld();
         runtime.teleport(to);
+        invalidate();
+      },
+      toElevator() {
+        const lift = layout.elevator;
+        if (!lift) return this.go(0);
+        const p = { x: lift.x, z: layout.hallLength / 2 - 2.1 };
+        confine(p, layout);
+        camera.position.set(p.x, EYE_HEIGHT, p.z);
+        camera.rotation.set(0, Math.PI, 0, "YXZ");
+        camera.updateMatrixWorld();
+        runtime.teleport(0);
         invalidate();
       },
       settled() {
@@ -204,7 +239,7 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
           <PaintingExhibit
             key={pl.painting.slug}
             placement={pl}
-            artistName={artist.name}
+            artistName={pl.painting.artistName ?? artist.name}
             focusSlug={focusSlug}
             registry={meshRegistry.current}
             theme={theme}
@@ -235,7 +270,26 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
         />
       )}
       <InspectCamera inspect={props.inspect} layout={layout} onReturned={props.onReturned} />
-      <EntryDolly entering={props.entering} layout={layout} onArrived={props.onArrived} />
+      <EntryDolly
+        entering={props.entering}
+        layout={layout}
+        onArrived={props.onArrived}
+        fromX={props.lift?.arrivedByLift && layout.elevator ? layout.elevator.x : undefined}
+      />
+      {layout.elevator && props.lift && (
+        <Elevator
+          spot={layout.elevator}
+          hallLength={layout.hallLength}
+          theme={theme}
+          floors={props.lift.floors}
+          floor={props.lift.floor}
+          runtime={runtime}
+          enabled={props.walkEnabled}
+          apiRef={props.lift.apiRef}
+          onNear={props.lift.onNear}
+          onPress={props.lift.onPress}
+        />
+      )}
       {/* after the controls: it reads the camera they have just moved */}
       <SuiteDirector
         runtime={runtime}

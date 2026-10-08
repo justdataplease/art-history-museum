@@ -65,6 +65,46 @@ export interface Painting {
   story: string;
   facts: string[];
   wikipediaUrl: string | null;
+  /** Set in a custom room, where works by several artists hang together (src/lib/rooms.ts). */
+  artistSlug?: string;
+  artistName?: string;
+}
+
+/** What the audio guide says about an artist the first time the visitor meets their work. */
+export interface GuideArtist {
+  slug: string;
+  name: string;
+  birthYear: number | null;
+  deathYear: number | null;
+  tagline: string;
+  bio: string;
+}
+
+/** One floor of a custom room (rooms spanning eras get one floor per era, joined by an elevator). */
+export interface RoomFloor {
+  label: string;
+  href: string;
+  works: number;
+  /** The number the elevator shows (a museum may count from 0, the ground floor). */
+  number: number;
+}
+
+/** A custom room: works chosen by a selection (era, movement, genre, artists ...), shareable by its URL. */
+export interface RoomInfo {
+  /** The selection in words, e.g. "Baroque · Portrait". */
+  subtitle: string;
+  /** The URL of this floor (the share link). */
+  href: string;
+  floors: RoomFloor[];
+  floor: number;
+  /** Every artist hung on this floor, for the audio guide. */
+  artists: GuideArtist[];
+  /** The visitor's design: a room style (theme.ts ROOM_STYLES key; null: each floor its era's), a wall colour
+   *  (#rrggbb), the hanging order, and an introduction shown at the doors. */
+  style: string | null;
+  wall: string | null;
+  order: "year" | "artist" | "fame";
+  intro: string | null;
 }
 
 export interface TimelineData {
@@ -76,4 +116,6 @@ export interface ArtistWithPaintings extends Artist {
   periodName: string;
   periodColor: string;
   paintings: Painting[];
+  /** Present when this "artist" is a custom room (works by several artists). */
+  room?: RoomInfo;
 }

@@ -11,14 +11,17 @@ const isDev = process.env.NODE_ENV === "development";
 //   a fallback (MuseumAudio)
 // - 'unsafe-eval' only in dev (React's dev tooling); 'unsafe-inline' scripts
 //   are required for Next's inline RSC payload without nonces.
+// - works only WikiArt has (archive/site.py) load from its image hosts,
+//   uploads0..uploads8.wikiart.org (CORS: *).
 const WIKIMEDIA = "https://upload.wikimedia.org https://thumb.wikimedia.org";
+const WIKIART = "https://*.wikiart.org";
 const csp = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob: ${WIKIMEDIA}`,
+  `img-src 'self' data: blob: ${WIKIMEDIA} ${WIKIART}`,
   "media-src 'self' blob: https://upload.wikimedia.org",
-  `connect-src 'self' ${WIKIMEDIA}`,
+  `connect-src 'self' ${WIKIMEDIA} ${WIKIART}`,
   "font-src 'self' data:",
   "worker-src 'self' blob:",
   "object-src 'none'",
@@ -30,6 +33,17 @@ const csp = [
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+
+  // Read by path at run time, so the standalone trace would miss them: the custom rooms' index (src/lib/rooms.ts)
+  // and the audio guide's scripts (archive/guide.py, served by /api/guide/<artist>). Written by archive/site.py
+  // and archive/guide.py; data/site/museum.json is traced from src/lib/data.ts.
+  outputFileTracingIncludes: {
+    "/room": ["./data/site/rooms.json"],
+    "/rooms": ["./data/site/rooms.json"],
+    "/api/room": ["./data/site/rooms.json"],
+    "/api/room/works": ["./data/site/rooms.json"],
+    "/api/guide/*": ["./data/site/guide/*.json"],
+  },
 
   // No images config: painting textures and portraits load straight from
   // upload.wikimedia.org (see src/lib/img.ts for why they are not proxied

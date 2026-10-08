@@ -22,7 +22,8 @@ export type EraKey =
   | "postwar"
   | "east-asian"
   | "print-room"
-  | "court-miniature";
+  | "court-miniature"
+  | "museum";
 
 /**
  * tabernacle — wide flat gilded frame with a raised outer bead (pre-1500)
@@ -55,7 +56,6 @@ export type CeilingKind = "laylight" | "lightbox";
  */
 export type WallFinish = "plaster" | "damask" | "paint";
 
-export type BenchStyle = "leather" | "modern-leather" | "oak-block";
 
 /**
  * What kind of object the room mostly hangs, for sizing works whose
@@ -83,9 +83,6 @@ export interface RoomStyle {
   daylightLevel: number;
   /** Lighting-track rail colour. */
   track: string;
-  bench: BenchStyle;
-  benchSeat: string;
-  benchFrame: string;
   /** Floor finish roughness (lower = glossier, stronger reflections). */
   floorRoughness: number;
   /** Board width in metres (wood floors) / slab size (concrete). */
@@ -141,9 +138,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#fff4e4",
       daylightLevel: 1.6,
       track: "#1d1c1a",
-      bench: "leather",
-      benchSeat: "#3a2a20",
-      benchFrame: "#2e2219",
       floorRoughness: 0.32,
       plankWidth: 0.18,
       wallWash: 0,
@@ -168,9 +162,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#fff2e0",
       daylightLevel: 1.6,
       track: "#1d1b18",
-      bench: "leather",
-      benchSeat: "#3b2219",
-      benchFrame: "#2a1a12",
       floorRoughness: 0.3,
       plankWidth: 0.17,
       wallWash: 0,
@@ -195,9 +186,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#f7f3ec",
       daylightLevel: 1.6,
       track: "#1b1c1d",
-      bench: "leather",
-      benchSeat: "#2a2522",
-      benchFrame: "#1d1916",
       floorRoughness: 0.32,
       plankWidth: 0.18,
       wallWash: 0,
@@ -221,9 +209,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#fff4e6",
       daylightLevel: 1.6,
       track: "#1d1c1a",
-      bench: "leather",
-      benchSeat: "#4c3a2a",
-      benchFrame: "#e0d8c6",
       floorRoughness: 0.3,
       plankWidth: 0.17,
       wallWash: 0,
@@ -247,9 +232,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#fff5e8",
       daylightLevel: 1.6,
       track: "#1d1c1a",
-      bench: "leather",
-      benchSeat: "#2f2a22",
-      benchFrame: "#241c15",
       floorRoughness: 0.32,
       plankWidth: 0.18,
       wallWash: 0,
@@ -274,9 +256,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#fff4e6",
       daylightLevel: 1.6,
       track: "#1d1c1a",
-      bench: "leather",
-      benchSeat: "#3a2a24",
-      benchFrame: "#241a14",
       floorRoughness: 0.3,
       plankWidth: 0.17,
       wallWash: 0,
@@ -300,9 +279,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#f8f6f0",
       daylightLevel: 1.7,
       track: "#1d1c1a",
-      bench: "leather",
-      benchSeat: "#3a3632",
-      benchFrame: "#5a4632",
       floorRoughness: 0.34,
       plankWidth: 0.2,
       wallWash: 0,
@@ -327,9 +303,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#f8f6f0",
       daylightLevel: 1.6,
       track: "#1d1c1a",
-      bench: "modern-leather",
-      benchSeat: "#1c1a18",
-      benchFrame: "#a8864a",
       floorRoughness: 0.32,
       plankWidth: 0.2,
       wallWash: 0,
@@ -353,12 +326,35 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#f6f5f2",
       daylightLevel: 1.5,
       track: "#232323",
-      bench: "modern-leather",
-      benchSeat: "#1e1c1a",
-      benchFrame: "#b9bcbf",
       floorRoughness: 0.36,
       plankWidth: 0.24,
       wallWash: 0.26,
+    },
+  },
+  // A museum of today, as the renovated galleries hang old art: painted grey-blue walls, a pale stone floor in
+  // large slabs, gilt frames under a luminous ceiling, no mouldings (the National Gallery of Greece since 2021,
+  // the Louvre's Richelieu wing). Not any period's own room: a custom room's style.
+  museum: {
+    era: "museum",
+    works: "painting",
+    wall: { color: "#8e9ba5", roughness: 0.9 },
+    trim: "#7c8790",
+    ceiling: "#eef0f1",
+    floor: { kind: "concrete", tint: "#d8d2c6" },
+    frame: { style: "gilt-simple", color: "#d2ae62", metalness: 1, roughness: 0.34, width: 0.08 },
+    light: { spot: "#fff0dc", ambient: "#eef0f2" },
+    room: {
+      ceiling: "lightbox",
+      wallFinish: "paint",
+      classical: false,
+      pictureRail: false,
+      daylight: "#f3f5f7",
+      daylightLevel: 1.3,
+      track: "#d4d6d8",
+      floorRoughness: 0.22,
+      // stone slabs (a concrete floor's joint spacing when under 2 m)
+      plankWidth: 1.2,
+      wallWash: 0.22,
     },
   },
   // Post-war: the white cube — polished concrete, unframed canvases.
@@ -379,9 +375,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#f4f6f8",
       daylightLevel: 1.5,
       track: "#e8e7e4",
-      bench: "oak-block",
-      benchSeat: "#b49a78",
-      benchFrame: "#a58b69",
       floorRoughness: 0.28,
       plankWidth: 3.0,
       wallWash: 0.28,
@@ -407,9 +400,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#f6e9d6",
       daylightLevel: 1.0,
       track: "#2a2420",
-      bench: "oak-block",
-      benchSeat: "#4a3424",
-      benchFrame: "#3a281b",
       floorRoughness: 0.38,
       plankWidth: 0.16,
       wallWash: 0.12,
@@ -435,9 +425,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#f2eee6",
       daylightLevel: 0.85,
       track: "#232323",
-      bench: "modern-leather",
-      benchSeat: "#24211e",
-      benchFrame: "#6b6660",
       floorRoughness: 0.4,
       plankWidth: 0.2,
       wallWash: 0.06,
@@ -466,9 +453,6 @@ const THEMES: Record<EraKey, GalleryTheme> = {
       daylight: "#f5ece0",
       daylightLevel: 0.85,
       track: "#1d1c1a",
-      bench: "leather",
-      benchSeat: "#3a2620",
-      benchFrame: "#241a14",
       floorRoughness: 0.34,
       plankWidth: 0.17,
       wallWash: 0.07,
@@ -537,6 +521,41 @@ const PERIOD_TWEAKS: Record<string, (t: GalleryTheme) => GalleryTheme> = {
   }),
 };
 
+/** The room styles a custom room can choose (src/lib/rooms.ts `style`), named for what the visitor sees. */
+export const ROOM_STYLES: { key: EraKey; label: string }[] = [
+  { key: "sacred", label: "Stone chapel (early Italian)" },
+  { key: "old-master", label: "Crimson damask (Baroque)" },
+  { key: "northern", label: "Slate blue (Dutch Golden Age)" },
+  { key: "eighteenth", label: "Sage silk (18th century)" },
+  { key: "nineteenth", label: "Deep green (19th century)" },
+  { key: "victorian", label: "Peacock blue (Victorian)" },
+  { key: "impressionist", label: "Skylit grey (Impressionists)" },
+  { key: "secession", label: "Charcoal and gold (Vienna 1900)" },
+  { key: "early-modern", label: "White walls, oak floor (Modern)" },
+  { key: "postwar", label: "White cube (Contemporary)" },
+  { key: "east-asian", label: "Dark wood and paper (East Asian)" },
+  { key: "print-room", label: "Print room" },
+  { key: "court-miniature", label: "Jewel cabinet (court miniatures)" },
+  { key: "museum", label: "Grey-blue and stone (a museum of today)" },
+];
+const STYLE_KEYS = new Set<string>(ROOM_STYLES.map((s) => s.key));
+export const isRoomStyle = (s: string | null | undefined): s is EraKey => !!s && STYLE_KEYS.has(s);
+
+const custom = new Map<string, GalleryTheme>();
+
+/** A custom room's theme: its period's, or a chosen room style, with an optional wall colour (#rrggbb). The
+ *  works scale (how unknown sizes are hung) stays the period's: it follows what hangs, not the decoration. */
+export function roomTheme(periodSlug: string, style?: string | null, wall?: string | null): GalleryTheme {
+  const key = `${periodSlug}|${style ?? ""}|${wall ?? ""}`;
+  const hit = custom.get(key);
+  if (hit) return hit;
+  const period = galleryTheme(periodSlug);
+  let t = isRoomStyle(style) ? { ...THEMES[style], works: period.works } : period;
+  if (wall && /^#[0-9a-f]{6}$/i.test(wall)) t = { ...t, wall: { ...t.wall, color: wall } };
+  custom.set(key, t);
+  return t;
+}
+
 const byPeriod = new Map<string, GalleryTheme>();
 
 /** The gallery theme of a period (one stable object per period). */
@@ -547,4 +566,10 @@ export function galleryTheme(periodSlug: string): GalleryTheme {
   const t = PERIOD_TWEAKS[periodSlug]?.(base) ?? base;
   byPeriod.set(periodSlug, t);
   return t;
+}
+
+/** A room style's colours for the room picker's swatches: wall, trim, floor, frame and ceiling. */
+export function styleSwatch(key: EraKey): { wall: string; trim: string; floor: string; frame: string; ceiling: string } {
+  const t = THEMES[key];
+  return { wall: t.wall.color, trim: t.trim, floor: t.floor.tint, frame: t.frame.color, ceiling: t.ceiling };
 }

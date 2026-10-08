@@ -48,7 +48,7 @@ const C = "https://commons.wikimedia.org/wiki/File:";
 const U = "https://upload.wikimedia.org/wikipedia/commons/";
 const T = "https://upload.wikimedia.org/wikipedia/commons/transcoded/";
 
-const PLAYLISTS: Record<Exclude<EraKey, "northern" | "victorian" | "secession" | "print-room">, Track[]> = {
+const PLAYLISTS: Record<Exclude<EraKey, "northern" | "victorian" | "secession" | "print-room" | "museum">, Track[]> = {
   // Medieval / Gothic, Early + Northern Renaissance
   sacred: [
     {
@@ -479,6 +479,7 @@ export const ERA_MUSIC: Record<EraKey, Track[]> = {
   northern: PLAYLISTS["old-master"],
   victorian: PLAYLISTS.nineteenth,
   secession: PLAYLISTS.impressionist,
+  museum: PLAYLISTS.impressionist,
   "print-room": [
     {
       title: "Koto performance",

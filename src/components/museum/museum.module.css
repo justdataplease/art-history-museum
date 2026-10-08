@@ -32,9 +32,9 @@
   }
 }
 
-/* Controls hint: wrap instead of running off narrower screens (eight
-   entries on desktop: ~1100 px on one line). */
-@media (max-width: 1180px) {
+/* Controls hint: wrap instead of running off narrower screens (up to eleven
+   entries on desktop, with the audio guide and a custom room's elevator: ~1420 px on one line). */
+@media (max-width: 1480px) {
   .hint.hint {
     bottom: 16px;
     max-width: calc(100vw - 32px);
@@ -336,4 +336,83 @@
 .credits a:focus-visible {
   color: var(--ink);
   border-bottom-color: var(--gold-ink);
+}
+
+/* A custom room's elevator (Elevator.tsx, beside the entrance doors): its buttons while the visitor stands
+   at it, else a way to walk there. */
+.lift {
+  position: absolute;
+  right: 20px;
+  bottom: 72px; /* above the controls hint */
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.liftTitle {
+  padding: 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(233, 229, 226, 0.7);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+.elevator {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 20px 12px 14px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--light);
+  border: 1px solid var(--gold-soft);
+  border-radius: 14px;
+  background: rgba(10, 9, 8, 0.6);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+.elevator small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: rgba(233, 229, 226, 0.65);
+}
+.elevatorArrow {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(233, 229, 226, 0.4);
+  border-radius: 50%;
+  color: var(--gold-soft);
+}
+
+/* A custom room's Edit / Share, clear of the source badge pinned top-right (.mus-source, 36 px at 24 px). */
+.roomActions {
+  display: flex;
+  gap: 8px;
+  margin-right: 52px;
+}
+@media (max-width: 640px) {
+  .roomActions {
+    margin-right: 0;
+  }
+}
+
+/* A custom room's introduction (its wall text), on the doors and the "step inside" card. */
+.intro.intro {
+  max-width: 560px;
+  margin: 14px auto 0;
+  font-family: var(--serif);
+  font-size: 19px;
+  font-style: italic;
+  line-height: 1.5;
+  letter-spacing: normal;
+  text-transform: none;
+  opacity: 0.9;
 }

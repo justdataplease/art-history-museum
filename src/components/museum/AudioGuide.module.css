@@ -1,0 +1,75 @@
+/* The audio guide: its switch top-left under the back link (the music caption takes the bottom-left), its
+   subtitle above the controls hint. Same pill style as the HUD. */
+.guide {
+  position: absolute;
+  left: 24px;
+  top: 86px;
+  z-index: 35;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.toggle,
+.small {
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(233, 229, 226, 0.8);
+  border: 1px solid rgba(233, 229, 226, 0.25);
+  border-radius: 999px;
+  background: rgba(10, 9, 8, 0.5);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+
+.toggle kbd {
+  margin-left: 8px;
+  font: inherit;
+  color: var(--gold-soft);
+}
+
+.on {
+  color: var(--gold-soft);
+  border-color: var(--gold-soft);
+}
+
+.subtitle {
+  position: absolute;
+  left: 50%;
+  bottom: 128px;
+  z-index: 34;
+  transform: translateX(-50%);
+  width: min(760px, calc(100vw - 40px));
+  padding: 12px 20px;
+  font-size: 17px;
+  line-height: 1.45;
+  text-align: center;
+  color: #f3efe9;
+  background: rgba(10, 9, 8, 0.66);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.credit {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(233, 229, 226, 0.55);
+}
+
+@media (max-width: 720px) {
+  .guide {
+    left: 12px;
+    top: 64px;
+  }
+  .subtitle {
+    bottom: 150px;
+    font-size: 15px;
+  }
+}

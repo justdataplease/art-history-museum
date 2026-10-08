@@ -20,6 +20,33 @@ export interface Bench {
   size: [number, number];
 }
 
+/** A seat against a wall (a pair of chairs, a settee, a chest bench): the theme's furniture
+ *  (furniture.ts) decides what stands there. */
+export interface WallSeat {
+  /** Centre of the footprint on the floor (x, z), metres. */
+  position: [number, number];
+  /** Footprint (along the wall, out from it), metres. */
+  size: [number, number];
+  /** The way the seat faces: +1 toward the entrance (+z), -1 toward the far end. */
+  facing: 1 | -1;
+}
+
+/** A custom room's elevator, in the entrance wall beside the doors (a room with more than one floor). */
+export interface ElevatorSpot {
+  /** Centre of the opening (x) on the entrance wall (z = hallLength / 2). */
+  x: number;
+  /** Half the opening's clear width, and its height. */
+  halfWidth: number;
+  height: number;
+  /** The call buttons, between the entrance doors' casing and the elevator. */
+  panelX: number;
+  /** The floor directory beside it, where the wall leaves room. */
+  directoryX: number | null;
+}
+
+/** The entrance doors in the near wall (z = +hallLength / 2), centred on the hall axis. */
+export const ENTRANCE_DOOR = { width: 1.9, height: 3.05, depth: 0.32 };
+
 /** One room of the suite. Rooms run along the hall axis from the entrance
  *  (+z) to the far end wall (−z). */
 export interface SuiteRoom {
@@ -60,6 +87,10 @@ export interface GalleryLayout {
   wallHeight: number;
   placements: Placement[];
   benches: Bench[];
+  /** Seats against the walls: either side of the entrance doors, and flanking each room's far doorway. */
+  wallSeats: WallSeat[];
+  /** A custom room's elevator (LayoutOptions.elevator). */
+  elevator: ElevatorSpot | null;
   /** Entrance room first; a single-room gallery has exactly one. */
   rooms: SuiteRoom[];
   /** doorways[i] joins rooms[i] and rooms[i + 1]. */
@@ -206,6 +237,14 @@ const HANGING: Record<WorkScale, Hanging> = {
 export interface LayoutOptions {
   /** What the gallery hangs (the theme's `works`); paintings by default. */
   works?: WorkScale;
+  /** Hang in the order given instead of by year (a custom room ordered by artist or by fame). */
+  keepOrder?: boolean;
+  /** The centre benches' footprint (the theme's furniture; a round ottoman is wider). */
+  bench?: [number, number];
+  /** Seats against the walls: the furniture's width (at most) along the wall and depth out from it. */
+  wallSeat?: { width: number; depth: number };
+  /** An elevator beside the entrance doors (a custom room with more than one floor). */
+  elevator?: boolean;
 }
 
 /** Physical canvas size in metres. Prefers Wikidata's measured size
@@ -344,6 +383,8 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       wallHeight: BASE_WALL_HEIGHT,
       placements: [],
       benches: [],
+      wallSeats: [],
+      elevator: null,
       rooms: [{ index: 0, z0: -MIN_HALL_LENGTH / 2, z1: MIN_HALL_LENGTH / 2, years: null }],
       doorways: [],
       screen: null,
@@ -360,7 +401,8 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
   // Chronological along both walls, alternating left / right, so walking
   // toward the flagship walks forward in time. (Array.prototype.sort is
   // stable, so undated works keep their curated order at the end.)
-  const rest = paintings.filter((_, i) => i !== anchorIdx).sort(byYear);
+  const rest = paintings.filter((_, i) => i !== anchorIdx);
+  if (!opts.keepOrder) rest.sort(byYear);
 
   // A big collection becomes a suite: chronological chapters of at most
   // ROOM_MAX works in rooms along one axis. The flagship closes the last
@@ -432,7 +474,9 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       // big side-wall canvases want a longer viewing distance
       sideMax * 1.1 + 2.6,
       // walk-round passages either side of the flagship's screen
-      overture ? 2 * (screenHalf + SCREEN_PASSAGE) : 0
+      overture ? 2 * (screenHalf + SCREEN_PASSAGE) : 0,
+      // the entrance doors, the call buttons and the elevator side by side
+      opts.elevator ? ELEVATOR_HALL_WIDTH : 0
     )) / 10
   );
 
@@ -512,18 +556,19 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
   // Benches down each room's centre line, clear of the spawn point, the far
   // wall and the doorways.
   const benches: Bench[] = [];
+  const benchSize = opts.bench ?? BENCH_SIZE;
   spans.forEach(({ z0, z1 }, r) => {
     // clear of the flagship (its wall or screen), the spawn point and doorways
     const front = overture && r === 0 ? screenZ + SCREEN_THICKNESS / 2 : z0;
-    const farKeep = r === anchorRoom ? 3.2 - BENCH_SIZE[1] / 2 : DOOR_KEEP_OUT;
+    const farKeep = r === anchorRoom ? 3.2 - benchSize[1] / 2 : DOOR_KEEP_OUT;
     const nearKeep = r === 0 ? SPAWN_KEEP_OUT : DOOR_KEEP_OUT;
-    const lo = front + farKeep + BENCH_SIZE[1] / 2;
-    const hi = z1 - nearKeep - BENCH_SIZE[1] / 2;
+    const lo = front + farKeep + benchSize[1] / 2;
+    const hi = z1 - nearKeep - benchSize[1] / 2;
     if (hi > lo) {
-      const count = Math.max(1, Math.floor((hi - lo + BENCH_SIZE[1]) / 7));
+      const count = Math.max(1, Math.floor((hi - lo + benchSize[1]) / 7));
       for (let i = 0; i < count; i++) {
         const z = count === 1 ? (lo + hi) / 2 : lo + (i / (count - 1)) * (hi - lo);
-        benches.push({ position: [0, +z.toFixed(3)], size: [...BENCH_SIZE] });
+        benches.push({ position: [0, +z.toFixed(3)], size: [...benchSize] });
       }
     }
   });
@@ -562,7 +607,68 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       }
     : null;
 
-  return { hallWidth, hallLength, wallHeight, placements, benches, rooms, doorways, screen, trackInset: cab?.trackInset ?? TRACK_INSET };
+  const elevator = opts.elevator ? elevatorSpot(hallWidth) : null;
+  const wallSeats = opts.wallSeat
+    ? wallSeatsFor(hallWidth, hallLength, doorways, opts.wallSeat, elevator, overture)
+    : [];
+
+  return {
+    hallWidth, hallLength, wallHeight, placements, benches, wallSeats, elevator, rooms, doorways, screen,
+    trackInset: cab?.trackInset ?? TRACK_INSET,
+  };
+}
+
+/** Narrowest hall that fits the entrance doors, the call buttons and an elevator side by side. */
+const ELEVATOR_HALL_WIDTH = 7.2;
+/** The entrance doors' casing, beyond the opening. */
+const DOOR_CASING = 0.25;
+
+/** The elevator: on the entrance wall to the right of the doors as one walks back to them (x < 0), the call
+ *  buttons between the doors and the car, the floor directory beyond it if the wall leaves room. */
+function elevatorSpot(W: number): ElevatorSpot {
+  const inner = ENTRANCE_DOOR.width / 2 + DOOR_CASING;
+  const outer = W / 2 - 0.3;
+  const frame = 0.1;
+  const gap = 0.34; // the call buttons
+  const halfWidth = Math.max(0.42, Math.min(0.6, (outer - inner - gap) / 2 - frame));
+  const x = inner + gap + frame + halfWidth;
+  const dirLo = x + halfWidth + frame + 0.2;
+  return {
+    x: -x,
+    halfWidth,
+    height: 2.3,
+    panelX: -(inner + gap / 2 + 0.02),
+    directoryX: outer - dirLo >= 0.5 ? -Math.min(dirLo + 0.3, (dirLo + outer) / 2) : null,
+  };
+}
+
+/** Seats against the walls: either side of the entrance doors (not where the elevator is), and either side of
+ *  each room's far doorway, facing into the room; clear of the side walls' first and last works. */
+function wallSeatsFor(
+  W: number,
+  L: number,
+  doorways: Doorway[],
+  seat: { width: number; depth: number },
+  elevator: ElevatorSpot | null,
+  overture: boolean
+): WallSeat[] {
+  const out: WallSeat[] = [];
+  const add = (zWall: number, facing: 1 | -1, inner: number, sides: (1 | -1)[]) => {
+    const lo = inner;
+    const hi = W / 2 - 0.55;
+    if (hi - lo < 0.7) return;
+    const width = Math.min(seat.width, hi - lo);
+    const x = (lo + hi) / 2;
+    const z = +(zWall + facing * (seat.depth / 2 + 0.03)).toFixed(3);
+    for (const s of sides) out.push({ position: [+(s * x).toFixed(3), z], size: [width, seat.depth], facing });
+  };
+  add(L / 2, -1, ENTRANCE_DOOR.width / 2 + DOOR_CASING + 0.1, elevator ? [1] : [-1, 1]);
+  doorways.forEach((d, i) => {
+    // (behind an overture's screen, nobody would see them)
+    if (overture && i === 0) return;
+    add(d.z + d.thickness / 2, 1, d.halfWidth + DOOR_CASING + 0.1, [-1, 1]);
+  });
+  return out;
 }
 
 /** Works per room for a collection of `n`: chronological chapters of at
@@ -667,7 +773,7 @@ export function confine(p: { x: number; z: number }, layout: GalleryLayout): voi
     p.z = Math.min(layout.hallLength / 2 - m, Math.max(-layout.hallLength / 2 + m, p.z));
   };
   clampHall();
-  for (const b of layout.benches) {
+  for (const b of seatsOf(layout)) {
     const hx = b.size[0] / 2 + BODY_RADIUS;
     const hz = b.size[1] / 2 + BODY_RADIUS;
     const dx = p.x - b.position[0];
@@ -698,12 +804,17 @@ export function confine(p: { x: number; z: number }, layout: GalleryLayout): voi
   clampHall();
 }
 
-/** Benches, and the flagship's screen as one more (bench-like) obstacle. */
+/** Everything one sits on, as footprints: the centre benches and the seats against the walls. */
+function seatsOf(layout: GalleryLayout): Bench[] {
+  return layout.wallSeats.length ? [...layout.benches, ...layout.wallSeats] : layout.benches;
+}
+
+/** Seats, and the flagship's screen as one more (bench-like) obstacle. */
 function blockers(layout: GalleryLayout): Bench[] {
   const s = layout.screen;
-  if (!s) return layout.benches;
+  if (!s) return seatsOf(layout);
   const depth = s.thickness + 2 * (WALL_MARGIN - BODY_RADIUS);
-  return [...layout.benches, { position: [0, s.z], size: [2 * s.halfWidth, depth] }];
+  return [...seatsOf(layout), { position: [0, s.z], size: [2 * s.halfWidth, depth] }];
 }
 
 type P2 = { x: number; z: number };

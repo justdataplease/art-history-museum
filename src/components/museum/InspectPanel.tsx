@@ -13,10 +13,12 @@ const ext = { target: "_blank", rel: "noopener noreferrer" } as const;
 
 const isPublicDomain = (license: string) => /^\s*(pd\b|public[\s-]*domain)/i.test(license);
 
-/** "Wikimedia Commons" or "Wikipedia", from the file page's host. */
+/** "Wikimedia Commons", "WikiArt" or "Wikipedia", from the file page's host. */
 function sourceName(page: string): string {
   try {
-    return new URL(page).hostname === "commons.wikimedia.org" ? "Wikimedia Commons" : "Wikipedia";
+    const host = new URL(page).hostname;
+    if (host === "www.wikiart.org") return "WikiArt";
+    return host === "commons.wikimedia.org" ? "Wikimedia Commons" : "Wikipedia";
   } catch {
     return "Wikimedia Commons";
   }

@@ -12,17 +12,21 @@ import {
   useSyncExternalStore,
 } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import gsap from "gsap";
-import type { ArtistWithPaintings } from "@/lib/types";
+import type { ArtistWithPaintings, GuideArtist } from "@/lib/types";
 import { buildLayout, entryGate, entryZ, EYE_HEIGHT, type Placement } from "./layout";
+import { furnitureOf } from "./furniture";
+import type { ElevatorApi, LiftDirection } from "./Elevator";
 import { Gallery, type LockApi, type TeleportApi, type WarmupApi } from "./Gallery";
 import { RoomNavigator } from "./RoomNavigator";
 import { InspectPanel } from "./InspectPanel";
 import { duckMusic, MuseumAudio, musicMuted } from "./MuseumAudio";
+import { AudioGuide } from "./AudioGuide";
 import { FxGate } from "./fx/Gate";
-import { galleryTheme } from "./theme";
+import { galleryTheme, roomTheme } from "./theme";
 import { createSettleTracker, type SettleTracker } from "./renderer-motion";
 import styles from "./museum.module.css";
 import { SourceLink } from "@/components/timeline/SourceLink";
@@ -72,11 +76,28 @@ function getTouch() {
 const getTouchServer = () => false;
 
 const FX_AUDIO = { duck: duckMusic, muted: musicMuted };
+/** Set before an elevator ride, read by the next floor: step out of the elevator instead of through the doors. */
+const LIFT_KEY = "timeline-museum:arrived-by-elevator";
 const placardEl = () => document.querySelector(".mus-placard");
 
 export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
-  const theme = useMemo(() => galleryTheme(artist.periodSlug), [artist.periodSlug]);
-  const layout = useMemo(() => buildLayout(artist.paintings, { works: theme.works }), [artist, theme.works]);
+  // a custom room may choose its room style, wall colour and hanging order (src/lib/rooms.ts)
+  const design = artist.room;
+  const theme = useMemo(
+    () => (design ? roomTheme(artist.periodSlug, design.style, design.wall) : galleryTheme(artist.periodSlug)),
+    [artist.periodSlug, design]
+  );
+  const layout = useMemo(() => {
+    // the room style's seating sizes the benches; a room with floors has an elevator by the doors
+    const furniture = furnitureOf(theme);
+    return buildLayout(artist.paintings, {
+      works: theme.works,
+      keepOrder: !!design && design.order !== "year",
+      bench: furniture.bench.size,
+      wallSeat: { width: furniture.wall.width, depth: furniture.wall.depth },
+      elevator: (design?.floors.length ?? 0) > 1,
+    });
+  }, [artist, theme, design]);
   // the flagship (a thumbnail, in a suite) and the entrance room's nearest works
   const gate = useMemo(() => entryGate(layout), [layout]);
   const rooms = layout.rooms.length;
@@ -98,8 +119,59 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   const [room, setRoom] = useState(0);
   const [pulse, setPulse] = useState(0);
   const [fading, setFading] = useState(false);
+  // a custom room's elevator: standing at it, riding it, and whether this floor was reached by it
+  const [nearLift, setNearLift] = useState(false);
+  const [riding, setRiding] = useState(false);
+  const [arrivedByLift, setArrivedByLift] = useState(false);
+  const arrivedByLiftRef = useRef(false);
   const announced = useRef(false);
   const teleportApi = useRef<TeleportApi | null>(null);
+  const cameraRef = useRef<THREE.Camera | null>(null);
+  const router = useRouter();
+  const roomInfo = artist.room;
+  // the audio guide's artists: a custom room's, or the gallery's own
+  const guideArtists = useMemo<GuideArtist[]>(
+    () =>
+      roomInfo?.artists ?? [
+        {
+          slug: artist.slug,
+          name: artist.name,
+          birthYear: artist.birthYear,
+          deathYear: artist.deathYear,
+          tagline: artist.tagline,
+          bio: artist.bio,
+        },
+      ],
+    [roomInfo, artist]
+  );
+  const [shared, setShared] = useState(false);
+  const [savedRoom, setSavedRoom] = useState(false);
+  // a room saved (or shared) from inside is kept in "My rooms" on /rooms (same entry shape as RoomPicker's)
+  const saveRoom = useCallback(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      q.delete("f");
+      const query = q.toString().replace(/%2C/g, ",").replace(/%3A/g, ":").replace(/%2F/g, "/");
+      const key = "timeline-museum:my-rooms";
+      const rooms = (JSON.parse(localStorage.getItem(key) ?? "[]") as { query: string }[]).filter((r) => r.query !== query);
+      localStorage.setItem(key, JSON.stringify([{ title: artist.name, query, savedAt: new Date().toISOString() }, ...rooms].slice(0, 60)));
+      setSavedRoom(true);
+      setTimeout(() => setSavedRoom(false), 2200);
+    } catch {}
+  }, [artist.name]);
+  const share = useCallback(async () => {
+    const url = window.location.href;
+    saveRoom();
+    try {
+      if (navigator.share && (navigator as Navigator & { maxTouchPoints?: number }).maxTouchPoints > 0) {
+        await navigator.share({ title: artist.name, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setShared(true);
+      setTimeout(() => setShared(false), 2200);
+    } catch {}
+  }, [artist.name, saveRoom]);
 
   const doorsRef = useRef<HTMLDivElement>(null);
   const crosshairRef = useRef<HTMLDivElement>(null);
@@ -211,6 +283,18 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
           setTimeout(() => setArrived(true), 1500);
         },
       });
+      if (arrivedByLiftRef.current) {
+        // the elevator's doors part sideways
+        tl.to(el.querySelector(".doors-status"), { opacity: 0, duration: 0.3 })
+          .to(el.querySelector(".doors-name"), { opacity: 0, y: -20, duration: 0.5, ease: "power2.in" }, "<")
+          .to(el.querySelector(".light-shaft"), { opacity: 1, duration: 0.35, ease: "power2.out" }, "-=0.1")
+          .to(el.querySelector(".door-l"), { xPercent: -100, duration: 1.5, ease: "power2.inOut" }, "-=0.1")
+          .to(el.querySelector(".door-r"), { xPercent: 100, duration: 1.5, ease: "power2.inOut" }, "<")
+          .to(el.querySelector(".light-shaft"), { scaleX: 120, opacity: 0.5, duration: 1.4, ease: "power2.inOut" }, "<")
+          .to(el, { opacity: 0, duration: 0.6, ease: "power2.inOut" }, "-=0.6")
+          .set(el, { display: "none" });
+        return;
+      }
       tl.to(el.querySelector(".doors-status"), { opacity: 0, duration: 0.4 })
         .to(el.querySelector(".doors-name"), { opacity: 0, y: -30, duration: 0.7, ease: "power2.in" }, "<")
         // light splits through the crack first…
@@ -281,21 +365,20 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [inspect, closeInspect]);
 
-  const walkEnabled = doorsOpen && arrived && !inspect && !returning;
-  const navEnabled = rooms > 1 && doorsOpen && arrived && !inspect && !returning;
+  const walkEnabled = doorsOpen && arrived && !inspect && !returning && !riding;
+  const navEnabled = rooms > 1 && doorsOpen && arrived && !inspect && !returning && !riding;
 
   // ---- jump to a room: a quick fade through black around the move, held
   // until the new room's works are hung and its lights are up
   const jumping = useRef(false);
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(jumpTimer.current), []);
-  const goRoom = useCallback(
-    (to: number) => {
-      if (jumping.current || !navEnabled || to < 0 || to >= rooms) return;
-      jumping.current = true;
-      setFading(true);
-      jumpTimer.current = setTimeout(() => {
-        teleportApi.current?.go(to);
+  const jump = useCallback((move: (api: TeleportApi | null) => void) => {
+    if (jumping.current) return;
+    jumping.current = true;
+    setFading(true);
+    jumpTimer.current = setTimeout(() => {
+      move(teleportApi.current);
         const t0 = performance.now();
         const poll = () => {
           const api = teleportApi.current;
@@ -309,8 +392,13 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
         };
         jumpTimer.current = setTimeout(poll, JUMP_HOLD_MIN_MS);
       }, JUMP_FADE_MS);
+  }, []);
+  const goRoom = useCallback(
+    (to: number) => {
+      if (!navEnabled || to < 0 || to >= rooms) return;
+      jump((api) => api?.go(to));
     },
-    [navEnabled, rooms]
+    [navEnabled, rooms, jump]
   );
   useEffect(() => {
     if (!navEnabled) return;
@@ -324,6 +412,75 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [navEnabled, goRoom, room]);
+  // ---- a custom room's elevator, beside the entrance doors (Elevator.tsx): up to the next floor, down to
+  // the one before. At it: E (up, or the only way) and Q (down), or its buttons; elsewhere E walks there.
+  const floors = roomInfo?.floors ?? [];
+  const floorNo = roomInfo?.floor ?? 1;
+  const up = floorNo < floors.length ? floors[floorNo] : null;
+  const down = floorNo > 1 ? floors[floorNo - 2] : null;
+  const liftApi = useRef<ElevatorApi | null>(null);
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(LIFT_KEY) !== "1") return;
+      sessionStorage.removeItem(LIFT_KEY);
+      arrivedByLiftRef.current = true;
+      setArrivedByLift(true);
+    } catch {
+      // no session storage: in through the doors
+    }
+  }, []);
+  const ride = useCallback(
+    async (dir: LiftDirection) => {
+      const to = dir === "up" ? up : down;
+      if (!to || riding) return;
+      setRiding(true);
+      duckMusic(0.25, 0.8);
+      const call = liftApi.current?.call(dir) ?? Promise.resolve();
+      await Promise.race([call, new Promise((r) => setTimeout(r, 2600))]);
+      try {
+        sessionStorage.setItem(LIFT_KEY, "1");
+      } catch {}
+      setFading(true);
+      if (document.pointerLockElement) document.exitPointerLock();
+      setTimeout(() => router.push(to.href), JUMP_FADE_MS + 200);
+    },
+    [up, down, riding, router]
+  );
+  const rideRef = useRef(ride);
+  useEffect(() => {
+    rideRef.current = ride;
+  }, [ride]);
+  const pressLift = useCallback((dir: LiftDirection) => void rideRef.current(dir), []);
+  const goToLift = useCallback(() => jump((api) => api?.toElevator()), [jump]);
+  const lift = useMemo(
+    () =>
+      layout.elevator && roomInfo
+        ? {
+            floors: roomInfo.floors,
+            floor: floorNo,
+            arrivedByLift,
+            apiRef: liftApi,
+            onNear: setNearLift,
+            onPress: pressLift,
+          }
+        : undefined,
+    [layout.elevator, roomInfo, floorNo, arrivedByLift, pressLift]
+  );
+  useEffect(() => {
+    if (!walkEnabled || !layout.elevator || (!up && !down)) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      if (e.code === "KeyE") {
+        if (nearLift) void ride(up ? "up" : "down");
+        else goToLift();
+      } else if (e.code === "KeyQ" && nearLift && down) {
+        void ride("down");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [walkEnabled, layout.elevator, up, down, nearLift, ride, goToLift]);
+
   const engaged = touch ? touchActive : locked; // walking with input captured
   const showStart = doorsOpen && arrived && !inspect && !returning && !engaged;
   const dpr = useMemo(() => [1, dprCap] as [number, number], [dprCap]);
@@ -358,6 +515,8 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
           touchActive={touchActive}
           onRoom={rooms > 1 ? showRoom : undefined}
           teleportApi={teleportApi}
+          cameraRef={cameraRef}
+          lift={lift}
         />
       </Canvas>
 
@@ -374,11 +533,32 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
         </Link>
         <div className={`mus-placard ${styles.placard}${inspect ? ` ${styles.placardHidden}` : ""}`}>
           <h1>{artist.name}</h1>
-          <p>
-            {artist.periodName} · {artist.birthYear} — {artist.deathYear ?? ""}
-          </p>
+          {roomInfo ? (
+            <p>
+              {roomInfo.floors.length > 1 ? `${roomInfo.floors[floorNo - 1].label} · ` : ""}
+              {roomInfo.subtitle !== artist.name ? `${roomInfo.subtitle} · ` : ""}
+              {artist.paintings.length} works
+            </p>
+          ) : (
+            <p>
+              {artist.periodName} · {artist.birthYear} — {artist.deathYear ?? ""}
+            </p>
+          )}
         </div>
         <span className={styles.topSpacer} />
+        {roomInfo && !inspect && (
+          <div className={styles.roomActions}>
+            <Link href={`/rooms?${roomInfo.href.split("?")[1] ?? ""}`} className="mus-back">
+              Edit room
+            </Link>
+            <button type="button" className="mus-back" onClick={saveRoom} title="Keep this room in My rooms">
+              {savedRoom ? "Saved" : "Save"}
+            </button>
+            <button type="button" className="mus-back" onClick={share} title="Copy this room's link">
+              {shared ? "Link copied" : "Share"}
+            </button>
+          </div>
+        )}
         {!inspect && <SourceLink className="mus-source" compact />}
         {/* hung just below the bar, so it clears the title card at any width */}
         <RoomNavigator
@@ -436,6 +616,14 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
                 </span>
               )}
               <span>
+                <b>G</b> audio guide
+              </span>
+              {layout.elevator && (up || down) && (
+                <span>
+                  <b>E</b> elevator
+                </span>
+              )}
+              <span>
                 <b>Esc</b> release cursor
               </span>
             </>
@@ -454,17 +642,73 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
           }}
         >
           <h2>{artist.name}</h2>
+          {roomInfo && <p>{roomInfo.floors.length > 1 ? roomInfo.floors[floorNo - 1].label : roomInfo.subtitle}</p>}
+          {roomInfo?.intro && <p className={styles.intro}>{roomInfo.intro}</p>}
           <p>
             {touch ? "Tap" : "Click"} to step inside · {artist.paintings.length} works
+            {roomInfo ? ` by ${roomInfo.artists.length} artists` : ""}
           </p>
           <p className="mus-start-credit">
-            All credit goes to Wikipedia, Wikidata and Wikimedia Commons · for educational
-            purposes only
+            {artist.paintings.some((p) => p.imageUrl?.includes(".wikiart.org/"))
+              ? "All credit goes to Wikipedia, Wikidata, Wikimedia Commons and WikiArt"
+              : "All credit goes to Wikipedia, Wikidata and Wikimedia Commons"}{" "}
+            · for educational purposes only
           </p>
         </div>
       )}
 
-      <InspectPanel placement={inspect} onClose={closeInspect} touch={touch} artistName={artist.name} />
+      <InspectPanel
+        placement={inspect}
+        onClose={closeInspect}
+        touch={touch}
+        artistName={inspect?.painting.artistName ?? artist.name}
+      />
+
+      {layout.elevator && (up || down) && walkEnabled && (
+        <div className={styles.lift} role="group" aria-label="Elevator">
+          {nearLift ? (
+            <>
+              <span className={styles.liftTitle}>Elevator · you are on floor {floors[floorNo - 1]?.number ?? floorNo}</span>
+              {up && (
+                <button type="button" className={styles.elevator} onClick={() => void ride("up")}>
+                  <span className={styles.elevatorArrow}>▲</span>
+                  <span>
+                    {up.label}
+                    <small>{up.works} works{touch ? "" : " · press E"}</small>
+                  </span>
+                </button>
+              )}
+              {down && (
+                <button type="button" className={styles.elevator} onClick={() => void ride("down")}>
+                  <span className={styles.elevatorArrow}>▼</span>
+                  <span>
+                    {down.label}
+                    <small>{down.works} works{touch ? "" : up ? " · press Q" : " · press E"}</small>
+                  </span>
+                </button>
+              )}
+            </>
+          ) : (
+            <button type="button" className={styles.elevator} onClick={goToLift}>
+              <span className={styles.elevatorArrow}>⇅</span>
+              <span>
+                Elevator by the entrance
+                <small>{touch ? "Tap to walk there" : "Press E to walk there"}</small>
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+
+      <AudioGuide
+        placements={layout.placements}
+        cameraRef={cameraRef}
+        artists={guideArtists}
+        gallerySlug={roomInfo ? null : artist.slug}
+        active={walkEnabled}
+        inspect={inspect}
+        touch={touch}
+      />
 
       <MuseumAudio era={theme.era} period={artist.periodSlug} started={doorsOpen} inspecting={!!inspect} />
 
@@ -477,7 +721,7 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
       />
 
       {/* entry doors */}
-      <div className="doors" ref={doorsRef}>
+      <div className={`doors${arrivedByLift ? " lift" : ""}`} ref={doorsRef}>
         <div className="hall-glow" style={{ opacity: 0.55 }} />
         <div className="light-shaft" />
         <div className="door door-l">
@@ -494,7 +738,8 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
         </div>
         <div className="doors-name">
           <h1>{artist.name}</h1>
-          <p>{artist.periodName}</p>
+          <p>{arrivedByLift && roomInfo ? roomInfo.floors[floorNo - 1].label : artist.periodName}</p>
+          {design?.intro && <p className={styles.intro}>{design.intro}</p>}
         </div>
         <DoorsStatus tracker={tracker} gate={gate} />
       </div>

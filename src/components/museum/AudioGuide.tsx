@@ -1,0 +1,374 @@
+"use client";
+
+// The audio guide narrates the painting the visitor stands in front of: what you see in it first, then what it is
+// and its story, and the first time they meet an artist's work, the artist. Three modes (G, or the button, cycles
+// them): famous works (the default: it starts by itself at the works most people come to see), every work, off.
+//
+// The text is standard, prepared data (archive/guide.py -> /api/guide/<artist>): one script per artist and per
+// work, with a stable id and version. The voice is separate: a recording of the script when there is one
+// (public/audio/guide/<id>.mp3, subtitles timed by sentence length), else the browser's own voice (Web Speech
+// API), one sentence at a time. A live AI voice can later read the same scripts. The sentence being read shows
+// as a subtitle; the gallery music steps back while the guide speaks.
+//
+// "In front of": within NEAR metres, the painting ahead of the visitor (FACING), for DWELL_MS. Checked on a
+// timer, not per frame: the canvas renders on demand and stops drawing when the visitor stands still.
+
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import * as THREE from "three";
+import type { GuideArtist, Painting } from "@/lib/types";
+import type { Placement } from "./layout";
+import { duckMusic } from "./MuseumAudio";
+import styles from "./AudioGuide.module.css";
+
+const STORAGE_KEY = "timeline-museum:audio-guide";
+const NEAR = 2.8;
+const FACING = 0.5; // cosine: within about 60° of the view direction
+const DWELL_MS = 900;
+const CHECK_MS = 300;
+/** Yearly Wikipedia pageviews of a work's article from which it counts as famous (about 2,000 works). */
+const FAMOUS_VIEWS = 5000;
+
+type Mode = "famous" | "all" | "off";
+const MODES: Mode[] = ["famous", "all", "off"];
+const MODE_LABEL: Record<Mode, string> = { famous: "famous works", all: "every work", off: "off" };
+function readMode(): Mode {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (v === "on") return "all"; // the earlier on / off switch
+    if (v === "famous" || v === "all" || v === "off") return v;
+  } catch {}
+  return "famous";
+}
+
+/** The works the guide starts at by itself in "famous works": the well-known ones, the gallery's flagship, and
+ *  the room's three most-read works (so every room has its highlights). */
+function famousOf(placements: Placement[]): Set<string> {
+  const views = (pl: Placement) => pl.painting.pageviews ?? 0;
+  const out = new Set(placements.filter((pl) => views(pl) >= FAMOUS_VIEWS).map((pl) => pl.painting.slug));
+  if (placements[0]) out.add(placements[0].painting.slug);
+  const byRoom = new Map<number, Placement[]>();
+  for (const pl of placements) if (views(pl) > 0) byRoom.set(pl.room, [...(byRoom.get(pl.room) ?? []), pl]);
+  for (const list of byRoom.values()) list.sort((a, b) => views(b) - views(a)).slice(0, 3).forEach((pl) => out.add(pl.painting.slug));
+  return out;
+}
+
+/** One prepared script (archive/guide.py). */
+interface Script {
+  id: string;
+  version: string;
+  lines: string[];
+  seconds: number;
+  sources: { name: string; url: string | null; license: string }[];
+  audio: string | null;
+}
+interface ArtistScripts {
+  artist: Script;
+  works: Record<string, Script>;
+}
+
+/** When no prepared script loads: the same shape from the text already on the page. */
+function fallbackArtist(a: GuideArtist): Script {
+  const lines = [`${a.name}${a.birthYear != null ? `, ${a.birthYear}–${a.deathYear ?? ""}` : ""}.`, a.bio]
+    .filter(Boolean);
+  return { id: `artist:${a.slug}`, version: "page", lines, seconds: 0, sources: [], audio: null };
+}
+const DESCRIBES = /\b(depict(s|ed|ing)?|shows?|showing|portray(s|ed|ing)?)\b/i;
+const NEGATED = /\b(not|never|misnomer)\b/i;
+function fallbackWork(p: Painting, artistName: string): Script {
+  const story = toSentences([p.story ?? ""]);
+  const seen = story.filter((x) => DESCRIBES.test(x) && !NEGATED.test(x)).slice(0, 2);
+  const lines = [
+    ...seen,
+    `${p.title}, by ${artistName}${p.year != null ? `, ${p.year}` : ""}.`,
+    ...story.filter((x) => !seen.includes(x)).slice(0, 4),
+    ...p.facts.slice(0, 2),
+  ].filter(Boolean);
+  return { id: `work:${p.slug}`, version: "page", lines, seconds: 0, sources: [], audio: null };
+}
+
+/** The script's lines as sentences (the page fallback carries whole paragraphs). */
+function toSentences(lines: string[]): string[] {
+  return lines.flatMap(
+    (l) => l.replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]+["”’)\]]*(\s+|$)|[^.!?]+$/g)?.map((s) => s.trim()) ?? []
+  ).filter((s) => s.length > 1);
+}
+
+function pickVoice(): SpeechSynthesisVoice | null {
+  const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith("en"));
+  const rank = (v: SpeechSynthesisVoice) =>
+    (/natural|neural|online/i.test(v.name) ? 4 : 0) + (/google/i.test(v.name) ? 2 : 0) +
+    (v.lang === "en-GB" || v.lang === "en-US" ? 1 : 0) + (v.localService ? 0 : 1);
+  return voices.sort((a, b) => rank(b) - rank(a))[0] ?? null;
+}
+
+interface Props {
+  placements: Placement[];
+  cameraRef: RefObject<THREE.Camera | null>;
+  /** Artists hung here (one in an artist's gallery, several in a custom room): the fallback text. */
+  artists: GuideArtist[];
+  /** The gallery's own artist; null in a custom room, where every work carries its artist. */
+  gallerySlug: string | null;
+  /** Walking: doors open, not inspecting or flying back. */
+  active: boolean;
+  inspect: Placement | null;
+  touch: boolean;
+}
+
+export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active, inspect, touch }: Props) {
+  const [supported, setSupported] = useState(false);
+  const [mode, setMode] = useState<Mode>("off");
+  const on = mode !== "off";
+  const famous = useMemo(() => famousOf(placements), [placements]);
+  const [line, setLine] = useState<string | null>(null);
+  const [credit, setCredit] = useState<string | null>(null);
+  const [speaking, setSpeaking] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const current = useRef<string | null>(null);
+  const introduced = useRef(new Set<string>());
+  const voice = useRef<SpeechSynthesisVoice | null>(null);
+  const scripts = useRef(new Map<string, Promise<ArtistScripts | null>>());
+  const audioEl = useRef<HTMLAudioElement | null>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const modeRef = useRef<Mode>("off");
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  const load = useCallback((slug: string) => {
+    let p = scripts.current.get(slug);
+    if (!p) {
+      p = fetch(`/api/guide/${slug}`).then((r) => (r.ok ? (r.json() as Promise<ArtistScripts>) : null)).catch(() => null);
+      scripts.current.set(slug, p);
+    }
+    return p;
+  }, []);
+
+  useEffect(() => {
+    const speech = "speechSynthesis" in window;
+    setSupported(true); // recordings play without speech synthesis
+    setMode(readMode());
+    if (!speech) return;
+    const pick = () => (voice.current = pickVoice());
+    pick();
+    window.speechSynthesis.addEventListener?.("voiceschanged", pick);
+    return () => {
+      window.speechSynthesis.removeEventListener?.("voiceschanged", pick);
+      window.speechSynthesis.cancel();
+      duckMusic(1, 1);
+    };
+  }, []);
+
+  // the gallery's scripts, ahead of the first painting
+  useEffect(() => {
+    if (on && gallerySlug) load(gallerySlug);
+  }, [on, gallerySlug, load]);
+
+  const silence = useCallback(() => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    audioEl.current?.pause();
+  }, []);
+
+  const stop = useCallback(() => {
+    silence();
+    current.current = null;
+    setSpeaking(false);
+    setPaused(false);
+    setLine(null);
+    duckMusic(1, 1.2);
+  }, [silence]);
+
+  const finished = useCallback((key: string) => {
+    if (current.current !== key) return;
+    current.current = null;
+    setSpeaking(false);
+    duckMusic(1, 1.5);
+    timers.current.push(setTimeout(() => setLine(null), 1500));
+  }, []);
+
+  /** Read the scripts in order: a recording when there is one, else the browser's voice. */
+  const play = useCallback(
+    (key: string, queue: Script[]) => {
+      silence();
+      current.current = key;
+      setSpeaking(true);
+      setPaused(false);
+      duckMusic(0.25, 0.8);
+      const credits = [...new Set(queue.flatMap((s) => s.sources.filter((x) => x.name === "Wikipedia").map(() => "Wikipedia, CC BY-SA 4.0")))];
+      setCredit(credits.length ? `Text: ${credits.join(" · ")}` : null);
+      const next = (i: number) => {
+        if (current.current !== key) return;
+        if (i >= queue.length) return finished(key);
+        const s = queue[i];
+        const lines = toSentences(s.lines);
+        if (s.audio) {
+          // a recording: subtitles by each sentence's share of the text
+          const a = audioEl.current ?? (audioEl.current = new Audio());
+          a.src = s.audio;
+          a.onended = () => next(i + 1);
+          a.onerror = () => speakLines(lines, () => next(i + 1));
+          a.onloadedmetadata = () => {
+            const total = lines.reduce((n, l) => n + l.length, 0) || 1;
+            let t = 0;
+            for (const l of lines) {
+              const at = (t / total) * a.duration * 1000;
+              timers.current.push(setTimeout(() => current.current === key && setLine(l), at));
+              t += l.length;
+            }
+          };
+          a.play().catch(() => speakLines(lines, () => next(i + 1)));
+        } else speakLines(lines, () => next(i + 1));
+      };
+      const speakLines = (lines: string[], done: () => void) => {
+        if (!("speechSynthesis" in window) || !lines.length) return done();
+        lines.forEach((text, j) => {
+          const u = new SpeechSynthesisUtterance(text);
+          if (voice.current) u.voice = voice.current;
+          u.lang = voice.current?.lang ?? "en-GB";
+          u.rate = 0.98;
+          u.onstart = () => current.current === key && setLine(text);
+          if (j === lines.length - 1) u.onend = () => done();
+          window.speechSynthesis.speak(u);
+        });
+      };
+      next(0);
+    },
+    [silence, finished]
+  );
+
+  const narrate = useCallback(
+    async (pl: Placement) => {
+      const p = pl.painting;
+      const slug = p.artistSlug ?? gallerySlug;
+      if (!slug) return;
+      const key = p.slug;
+      current.current = key; // claim it now: the scripts may still be loading
+      // in a custom room a work's slug is "<artist>--<work>"
+      const workSlug = p.artistSlug && p.slug.startsWith(`${slug}--`) ? p.slug.slice(slug.length + 2) : p.slug;
+      const doc = await load(slug);
+      if (current.current !== key) return;
+      const who = artists.find((a) => a.slug === slug);
+      const queue: Script[] = [doc?.works[workSlug] ?? fallbackWork(p, p.artistName ?? who?.name ?? "")];
+      if (!introduced.current.has(slug)) {
+        introduced.current.add(slug);
+        const life = doc?.artist ?? (who ? fallbackArtist(who) : null);
+        // after the painting: the artist (who they were, in "famous works"; their life, in "every work")
+        if (life) queue.push(modeRef.current === "all" ? life : { ...life, lines: life.lines.slice(0, 2) });
+      }
+      play(key, queue);
+    },
+    [artists, gallerySlug, load, play]
+  );
+
+  const toggle = useCallback(() => {
+    setMode((m) => {
+      const next = MODES[(MODES.indexOf(m) + 1) % MODES.length];
+      try {
+        localStorage.setItem(STORAGE_KEY, next);
+      } catch {}
+      if (next === "off") stop();
+      return next;
+    });
+  }, [stop]);
+
+  // G switches the guide on and off
+  useEffect(() => {
+    if (!supported) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.code !== "KeyG") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      toggle();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [supported, toggle]);
+
+  // inspecting a painting narrates it at once
+  useEffect(() => {
+    if (on && inspect && current.current !== inspect.painting.slug) void narrate(inspect);
+  }, [on, inspect, narrate]);
+
+  // walking: the painting the visitor stands in front of, held for DWELL_MS
+  useEffect(() => {
+    if (!on || !active || inspect) return;
+    const dir = new THREE.Vector3();
+    let candidate: string | null = null;
+    let since = 0;
+    const iv = setInterval(() => {
+      const cam = cameraRef.current;
+      if (!cam) return;
+      cam.getWorldDirection(dir);
+      const fl = Math.hypot(dir.x, dir.z) || 1;
+      let best: Placement | null = null;
+      let bestD = NEAR;
+      for (const pl of placements) {
+        const dx = pl.position[0] - cam.position.x, dz = pl.position[2] - cam.position.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= bestD || d < 0.01) continue;
+        if ((dx * dir.x + dz * dir.z) / (d * fl) < FACING) continue;
+        best = pl;
+        bestD = d;
+      }
+      // in "famous works", only the famous ones start it
+      if (best && mode === "famous" && !famous.has(best.painting.slug)) best = null;
+      const key = best?.painting.slug ?? null;
+      const now = performance.now();
+      if (key !== candidate) {
+        candidate = key;
+        since = now;
+        return;
+      }
+      if (best && key !== current.current && now - since >= DWELL_MS) void narrate(best);
+    }, CHECK_MS);
+    return () => clearInterval(iv);
+  }, [on, mode, famous, active, inspect, placements, cameraRef, narrate]);
+
+  useEffect(() => () => silence(), [silence]);
+
+  if (!supported) return null;
+  const pauseResume = () => {
+    const a = audioEl.current;
+    if (paused) {
+      if (a && a.src && a.currentTime > 0 && !a.ended) void a.play();
+      else window.speechSynthesis?.resume();
+    } else {
+      if (a && !a.paused) a.pause();
+      else window.speechSynthesis?.pause();
+    }
+    setPaused(!paused);
+  };
+  return (
+    <>
+      <div className={styles.guide}>
+        <button
+          type="button"
+          className={`${styles.toggle}${on ? ` ${styles.on}` : ""}`}
+          onClick={toggle}
+          aria-pressed={on}
+          title="Audio guide (G): famous works (it starts by itself at them), every work, or off"
+        >
+          <span aria-hidden>🎧</span> Audio guide: {MODE_LABEL[mode]}
+          {!touch && <kbd>G</kbd>}
+        </button>
+        {on && speaking && (
+          <>
+            <button type="button" className={styles.small} onClick={pauseResume}>
+              {paused ? "Resume" : "Pause"}
+            </button>
+            <button type="button" className={styles.small} onClick={stop}>
+              Skip
+            </button>
+          </>
+        )}
+      </div>
+      {on && line && (
+        <div className={styles.subtitle} role="status" aria-live="polite">
+          {line}
+          {credit && <small className={styles.credit}>{credit}</small>}
+        </div>
+      )}
+    </>
+  );
+}

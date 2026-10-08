@@ -1,0 +1,431 @@
+// Custom rooms: works chosen by a selection (era, period, movement, school, genre, nationality, artists, the
+// museum that holds them, years, title words, works picked by hand), hung like a museum room, shareable by URL.
+// The selection, the room's design and its floor plan live entirely in the URL (src/lib/room-query.ts).
+//
+// The index is data/site/rooms.json (archive/site.py): every hung work with its era, period, movement, genre and
+// the museums holding it, every artist's nationalities and terms. Works are ranked by Wikipedia pageviews with the
+// Featured artists first, no artist taking more than a fair share, then hung by year. A selection spanning eras
+// gets one floor per era (joined by an elevator), each with its era's room style; or the visitor's own floor
+// plan: floors by years, each with its own style, wall colour, size and wall text (a museum's floors).
+
+import "server-only";
+import fs from "node:fs";
+import path from "node:path";
+import type { ArtistWithPaintings, GuideArtist, Painting, RoomFloor } from "./types";
+import { getArtist } from "./data";
+import { FEATURED_ARTIST_SLUGS } from "@/components/timeline/featured-artists";
+import { paintingTextureUrl } from "./img";
+import { hasFilters, selectionQuery, workFloor, workKey, type FloorSpec, type Selection } from "./room-query";
+
+export { parseSelection, selectionQuery, MAX_DEFAULT, type Selection, type FloorSpec } from "./room-query";
+
+export interface RoomTerm {
+  id: string;
+  kind: string;
+  name: string;
+  parent: string | null;
+  start: number | null;
+  end: number | null;
+  place: string | null;
+  ancestors: string[];
+  works: number;
+}
+interface IndexArtist {
+  nationalities: string[];
+  citizenship: string[];
+  terms: string[];
+}
+interface IndexMuseum {
+  id: string;
+  name: string;
+  works: number;
+}
+/** [artist, painting, era, period, movement, genre, year, pageviews, museums (positions in `museums`)] */
+type IndexWork = [
+  string, string, string | null, string | null, string | null, string | null, number | null, number, (number[] | null)?,
+];
+interface RoomIndex {
+  terms: RoomTerm[];
+  artists: Record<string, IndexArtist>;
+  museums?: IndexMuseum[];
+  works: IndexWork[];
+}
+
+let index: RoomIndex | null = null;
+let termById: Map<string, RoomTerm> | null = null;
+/** A museum's link id to its positions in `museums` (two places can share a name). */
+let museumsById: Map<string, number[]> | null = null;
+let workByKey: Map<string, IndexWork> | null = null;
+function readIndex(): RoomIndex | null {
+  if (index) return index;
+  const file = path.join(process.cwd(), "data", "site", "rooms.json");
+  if (!fs.existsSync(file)) return null;
+  index = JSON.parse(fs.readFileSync(file, "utf8")) as RoomIndex;
+  termById = new Map(index.terms.map((t) => [t.id, t]));
+  museumsById = new Map();
+  (index.museums ?? []).forEach((m, i) => museumsById!.set(m.id, [...(museumsById!.get(m.id) ?? []), i]));
+  workByKey = new Map(index.works.map((w) => [`${w[0]}/${w[1]}`, w]));
+  return index;
+}
+
+const TIME_KINDS = new Set(["era", "tradition", "period", "movement", "umbrella", "historical-period"]);
+const SCHOOL_KINDS = new Set(["school", "group", "academy", "exhibition"]);
+function groupOf(kind: string): "time" | "school" | "genre" {
+  return TIME_KINDS.has(kind) ? "time" : SCHOOL_KINDS.has(kind) ? "school" : "genre";
+}
+
+interface Picked {
+  work: IndexWork;
+  score: number;
+  /** Picked by hand: hangs whatever the caps say. */
+  pinned: boolean;
+}
+
+interface Floor {
+  eras: (string | null)[];
+  works: IndexWork[];
+  /** The visitor's own floor (a floor plan). */
+  spec?: FloorSpec;
+}
+
+const byYear = (x: IndexWork, y: IndexWork) => (x[6] ?? 9999) - (y[6] ?? 9999);
+
+/** Is an artist of one of the nationalities (WikiArt's or Wikidata's; "Ital" matches "Italians")? */
+function ofNation(a: IndexArtist | undefined, nations: string[]): boolean {
+  // nationality first; citizenship only when none is known (Wikidata gives Holbein a French citizenship)
+  const have = (a?.nationalities?.length ? a.nationalities : a?.citizenship ?? []).map((x) => x.toLowerCase());
+  return nations.some((n) => {
+    const l = n.toLowerCase();
+    return have.some((h) => h === l || h.startsWith(l));
+  });
+}
+
+/** The floor of a plan a work belongs on: the first whose years (and nationalities, when it names any) hold it;
+ *  undated works go to the first floor without years. */
+function planFloor(plan: FloorSpec[], w: IndexWork, a: IndexArtist | undefined): number {
+  const y = w[6];
+  for (let i = 0; i < plan.length; i++) {
+    const f = plan[i];
+    if (f.who.length && !ofNation(a, f.who)) continue;
+    if (y == null) {
+      if (f.from == null && f.to == null) return i;
+      continue;
+    }
+    if ((f.from == null || y >= f.from) && (f.to == null || y <= f.to)) return i;
+  }
+  return -1;
+}
+
+/** Take works best first: hand-picked ones always, others up to `max`, an artist at most `share` of them. */
+function take(picked: Picked[], max: number, share: number): IndexWork[] {
+  const perArtist = new Map<string, number>();
+  const chosen: IndexWork[] = picked.filter((p) => p.pinned).map((p) => p.work);
+  for (const p of picked) {
+    if (chosen.length >= max) break;
+    if (p.pinned) continue;
+    const n = perArtist.get(p.work[0]) ?? 0;
+    if (n >= share) continue;
+    perArtist.set(p.work[0], n + 1);
+    chosen.push(p.work);
+  }
+  return chosen;
+}
+
+/** The works a selection hangs (ranked, capped), and its floors. */
+export function selectWorks(s: Selection): { works: IndexWork[]; floors: Floor[] } {
+  const idx = readIndex();
+  if (!idx || !termById || !workByKey) return { works: [], floors: [] };
+  const terms = termById;
+  const wanted = { time: [] as string[], school: [] as string[], genre: [] as string[] };
+  for (const id of s.terms) {
+    const t = terms.get(id);
+    if (t) wanted[groupOf(t.kind)].push(id);
+  }
+  const under = (termId: string | null, want: string[]) =>
+    !!termId && (terms.get(termId)?.ancestors ?? [termId]).some((a) => want.includes(a));
+  const artists = new Set(s.artists);
+  const nats = s.nationalities.map((n) => n.toLowerCase());
+  const museums = new Set(s.museums.flatMap((m) => museumsById?.get(m) ?? []));
+  const excluded = new Set(s.exclude);
+  const pinned = new Set(s.include.map(workKey).filter((k) => !excluded.has(k)));
+  // a kept work may name its floor of the plan ("...@2")
+  const pinnedFloor = new Map(s.include.flatMap((k) => (workFloor(k) ? [[workKey(k), workFloor(k)! - 1] as const] : [])));
+  const plan = s.floors === "plan" ? s.plan : [];
+  const fits = (w: IndexWork) => !plan.length || planFloor(plan, w, idx.artists[w[0]]) >= 0;
+  const score = (w: IndexWork) => Math.log10(w[7] + 10) + (FEATURED_ARTIST_SLUGS.has(w[0]) ? 1.5 : 0);
+
+  const picked: Picked[] = [];
+  for (const key of pinned) {
+    const w = workByKey.get(key);
+    if (w && (fits(w) || (plan.length && (pinnedFloor.get(key) ?? -1) in plan)))
+      picked.push({ work: w, score: Infinity, pinned: true });
+  }
+  // with only works picked by hand, the room hangs exactly those
+  if (hasFilters(s) || !pinned.size) {
+    for (const w of idx.works) {
+      const [artist, , era, period, movement, genre, y] = w;
+      if (pinned.has(`${artist}/${w[1]}`)) continue;
+      if (artists.size && !artists.has(artist)) continue;
+      if (excluded.size && excluded.has(`${artist}/${w[1]}`)) continue;
+      if (museums.size && !(w[8] ?? []).some((m) => museums.has(m))) continue;
+      const a = idx.artists[artist];
+      if (nats.length && !ofNation(a, nats)) continue;
+      if (wanted.time.length && !(under(era, wanted.time) || under(period, wanted.time) || under(movement, wanted.time)))
+        continue;
+      if (wanted.genre.length && !under(genre, wanted.genre)) continue;
+      if (wanted.school.length && !(a?.terms ?? []).some((t) => under(t, wanted.school))) continue;
+      if (s.from != null && (y == null || y < s.from)) continue;
+      if (s.to != null && (y == null || y > s.to)) continue;
+      if (s.words.length) {
+        // the painting's slug is its title, lower-case: a word matches at the start of a word ("night" finds
+        // "Nighthawks", not "knight")
+        const title = ` ${w[1].replace(/-/g, " ")}`;
+        if (!s.words.every((word) => title.includes(` ${word}`))) continue;
+      }
+      if (!fits(w)) continue;
+      picked.push({ work: w, score: score(w), pinned: false });
+    }
+  }
+  picked.sort((x, y) => y.score - x.score);
+  // a fair share per artist, unless the visitor chose only one or two artists
+  const nArtists = new Set(picked.map((p) => p.work[0])).size;
+  const shareOf = (max: number) =>
+    artists.size && artists.size <= 2 ? Infinity : Math.max(3, Math.ceil((max * 2) / Math.max(1, nArtists)));
+
+  // the visitor's own floors: each takes its own works (its size, or an even share of max)
+  if (plan.length) {
+    const floors: Floor[] = plan.map((spec) => ({ eras: [], works: [], spec }));
+    const pools = plan.map(() => [] as Picked[]);
+    for (const p of picked) {
+      const asked = p.pinned ? pinnedFloor.get(`${p.work[0]}/${p.work[1]}`) : undefined;
+      pools[asked != null && asked < plan.length ? asked : planFloor(plan, p.work, idx.artists[p.work[0]])]?.push(p);
+    }
+    const even = Math.max(4, Math.round(s.max / plan.length));
+    pools.forEach((pool, i) => {
+      const max = plan[i].works ?? even;
+      floors[i].works = take(pool, max, shareOf(max)).sort(byYear);
+      floors[i].eras = [...new Set(floors[i].works.map((w) => w[2]))];
+    });
+    const kept = floors.filter((f) => f.works.length);
+    return { works: kept.flatMap((f) => f.works), floors: kept };
+  }
+
+  const chosen = take(picked, Math.max(s.max, pinned.size), shareOf(s.max)).sort(byYear);
+
+  // floors: one per era when the room spans eras. An era with too few works for a room of its own shares the
+  // floor of the era before it (or after it, for the first): "Medieval & Renaissance".
+  const byEra = new Map<string | null, IndexWork[]>();
+  for (const w of chosen) byEra.set(w[2], [...(byEra.get(w[2]) ?? []), w]);
+  // in the order of their works' median year (a tradition such as East Asian painting spans many centuries)
+  const median = (ws: IndexWork[]) => {
+    const ys = ws.map((w) => w[6]).filter((y): y is number => y != null).sort((x, y) => x - y);
+    return ys.length ? ys[ys.length >> 1] : 9999;
+  };
+  const floors: Floor[] = [];
+  for (const [era, works] of [...byEra.entries()].sort((x, y) => median(x[1]) - median(y[1]))) {
+    const last = floors[floors.length - 1];
+    if (last && (works.length < MIN_FLOOR || last.works.length < MIN_FLOOR)) {
+      last.eras.push(era);
+      last.works.push(...works);
+    } else floors.push({ eras: [era], works: [...works] });
+  }
+  if (floors.length > 1 && floors[0].works.length < MIN_FLOOR) {
+    const [first, second] = floors.splice(0, 2);
+    floors.unshift({ eras: [...first.eras, ...second.eras], works: [...first.works, ...second.works] });
+  }
+  if (s.floors === "one" || floors.length < 2 || chosen.length < 20)
+    return { works: chosen, floors: [{ eras: [...byEra.keys()], works: chosen }] };
+  for (const f of floors) f.works.sort(byYear);
+  return { works: chosen, floors };
+}
+
+const MIN_FLOOR = 8;
+
+/** A floor's name: the visitor's own, or one or two eras by name ("Baroque", "Nineteenth century & Modern"),
+ *  more by their years. */
+function floorName(f: Floor): string {
+  if (f.spec?.label) return f.spec.label;
+  const names = f.eras.map((e) => (e ? termById?.get(e)?.name : null)).filter(Boolean) as string[];
+  if (names.length && names.length <= 2) return names.join(" & ");
+  const ys = f.works.map((w) => w[6]).filter((y): y is number => y != null);
+  return ys.length ? `${Math.min(...ys)}–${Math.max(...ys)}` : names.join(", ");
+}
+
+/** The floors as the elevator and the picker name them ("Floor 0 · Middle Ages"). */
+function floorLabels(s: Selection, floors: Floor[], single: string): string[] {
+  return floors.map((f, i) => {
+    if (floors.length < 2) return f.spec?.label || single;
+    const name = floorName(f);
+    // a floor the visitor named "Floor 2" or "Level 0" keeps its own name
+    return /^(floor|level|storey)\s*-?\d/i.test(name) ? name : `Floor ${s.firstFloor + i} · ${name}`;
+  });
+}
+
+/** The selection in words: its terms, museums, artists, nationalities and years. */
+export function describeSelection(s: Selection, artistName: (slug: string) => string | undefined): string {
+  const idx = readIndex();
+  const museumName = (id: string) => idx?.museums?.[museumsById?.get(id)?.[0] ?? -1]?.name;
+  const parts = [
+    ...s.museums.map(museumName).filter(Boolean),
+    ...s.terms.map((id) => termById?.get(id)?.name).filter(Boolean),
+    ...s.nationalities,
+    ...s.artists.map(artistName).filter(Boolean),
+  ] as string[];
+  if (s.from != null || s.to != null) parts.push(`${s.from ?? "…"}–${s.to ?? "…"}`);
+  if (s.words.length) parts.push(`“${s.words.join(" ")}”`);
+  if (!parts.length && s.include.length) parts.push("Chosen works");
+  return parts.join(" · ") || "Highlights of the collection";
+}
+
+const dominant = <T,>(xs: T[]): T | undefined => {
+  const n = new Map<T, number>();
+  for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1);
+  return [...n.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+};
+
+/** A floor's works in the visitor's order: by year (the default), by artist (artists by their first work, each
+ *  artist's works by year), or best known first. */
+function orderWorks(works: IndexWork[], order: Selection["order"]): IndexWork[] {
+  if (order === "fame") return [...works].sort((x, y) => y[7] - x[7]);
+  if (order === "artist") {
+    const first = new Map<string, number>();
+    for (const w of [...works].sort(byYear)) if (!first.has(w[0])) first.set(w[0], first.size);
+    return [...works].sort((x, y) => first.get(x[0])! - first.get(y[0])! || byYear(x, y));
+  }
+  return [...works].sort(byYear);
+}
+
+/** The custom room (one floor of it) as a gallery: works by several artists, each carrying its artist. */
+export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | null> {
+  const { floors } = selectWorks(s);
+  if (!floors.length || !floors[0].works.length) return null;
+  const floorNo = Math.min(s.floor, floors.length);
+  const floor = floors[floorNo - 1];
+  const slugs = [...new Set(floor.works.map((w) => w[0]))];
+  const loaded = new Map((await Promise.all(slugs.map((a) => getArtist(a)))).filter(Boolean).map((a) => [a!.slug, a!]));
+  const paintings: Painting[] = [];
+  for (const [artistSlug, paintingSlug] of orderWorks(floor.works, s.order)) {
+    const a = loaded.get(artistSlug);
+    const p = a?.paintings.find((x) => x.slug === paintingSlug);
+    // slugs are unique per artist only: two artists' "self-portrait" must not collide in one room
+    if (a && p && p.imageUrl) paintings.push({ ...p, slug: `${artistSlug}--${p.slug}`, artistSlug, artistName: a.name });
+  }
+  if (!paintings.length) return null;
+  const guide: GuideArtist[] = [...loaded.values()].map((a) => ({
+    slug: a.slug, name: a.name, birthYear: a.birthYear, deathYear: a.deathYear, tagline: a.tagline, bio: a.bio,
+  }));
+  const periodSlug = (dominant(floor.works.map((w) => w[3]).filter(Boolean) as string[]) ?? "period:contemporary")
+    .replace(/^period:/, "");
+  const period = loaded.get(dominant(floor.works.map((w) => w[0]))!);
+  const subtitle = describeSelection(s, (slug) => loaded.get(slug)?.name);
+  const title = s.title ?? subtitle;
+  const labels = floorLabels(s, floors, title);
+  const roomFloors: RoomFloor[] = floors.map((f, i) => ({
+    label: labels[i],
+    href: `/room?${selectionQuery(s, i + 1)}`,
+    works: f.works.length,
+    number: s.firstFloor + i,
+  }));
+  const years = paintings.map((p) => p.year).filter((y): y is number => y != null);
+  const spec = floor.spec;
+  return {
+    slug: `room-${floorNo}`,
+    periodSlug,
+    name: title,
+    birthYear: years.length ? Math.min(...years) : null,
+    deathYear: years.length ? Math.max(...years) : null,
+    tagline: subtitle,
+    bio: "",
+    portraitUrl: null,
+    portraitWidth: null,
+    portraitHeight: null,
+    wikipediaUrl: null,
+    paintingCount: paintings.length,
+    periodName: floors.length > 1 ? roomFloors[floorNo - 1].label : `${slugs.length} artists`,
+    periodColor: period?.periodColor ?? "#888",
+    paintings,
+    room: {
+      subtitle, href: roomFloors[floorNo - 1].href, floors: roomFloors, floor: floorNo, artists: guide,
+      // a floor of the visitor's plan may have its own style, wall and wall text
+      style: spec?.style ?? s.style,
+      wall: spec?.wall ?? s.wall,
+      order: s.order,
+      intro: spec?.intro ?? s.intro,
+    },
+  };
+}
+
+/** What the room picker offers: the terms in use (with work counts), the nationalities and the museums. */
+export function roomOptions(): {
+  terms: RoomTerm[];
+  nationalities: { name: string; works: number }[];
+  museums: IndexMuseum[];
+} {
+  const idx = readIndex();
+  if (!idx) return { terms: [], nationalities: [], museums: [] };
+  const n = new Map<string, number>();
+  const worksBy = new Map<string, number>();
+  for (const w of idx.works) worksBy.set(w[0], (worksBy.get(w[0]) ?? 0) + 1);
+  for (const [slug, a] of Object.entries(idx.artists))
+    for (const nat of a.nationalities) n.set(nat, (n.get(nat) ?? 0) + (worksBy.get(slug) ?? 0));
+  const museums = new Map<string, IndexMuseum>();
+  for (const m of idx.museums ?? []) {
+    const had = museums.get(m.id);
+    museums.set(m.id, had ? { ...had, works: had.works + m.works } : m);
+  }
+  return {
+    terms: idx.terms.filter((t) => t.works > 0 || SCHOOL_KINDS.has(t.kind)),
+    nationalities: [...n.entries()].filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1])
+      .map(([name, works]) => ({ name, works })),
+    museums: [...museums.values()].filter((m) => m.works >= 5).sort((a, b) => b.works - a.works),
+  };
+}
+
+/** How many works and artists a selection hangs, and on how many floors (the picker's live count). */
+export function roomCount(s: Selection): { works: number; artists: number; floors: number } {
+  const { works, floors } = selectWorks(s);
+  return { works: works.length, artists: new Set(works.map((w) => w[0])).size, floors: floors.length };
+}
+
+export interface PreviewWork {
+  /** artist/painting: what `x` leaves out and `w` picks */
+  key: string;
+  title: string;
+  year: number | null;
+  artist: string;
+  thumb: string | null;
+}
+
+async function previewWorks(works: IndexWork[]): Promise<PreviewWork[]> {
+  const slugs = [...new Set(works.map((w) => w[0]))];
+  const loaded = new Map((await Promise.all(slugs.map((a) => getArtist(a)))).filter(Boolean).map((a) => [a!.slug, a!]));
+  return works.flatMap(([a, slug, , , , , year]) => {
+    const artist = loaded.get(a);
+    const p = artist?.paintings.find((x) => x.slug === slug);
+    return p ? [{ key: `${a}/${slug}`, title: p.title, year: year ?? p.year, artist: artist!.name,
+                  thumb: paintingTextureUrl(p, 120) }] : [];
+  });
+}
+
+/** What each floor of a selection hangs, with small images: the picker's preview, where works can be left out. */
+export async function roomPreview(s: Selection): Promise<{ label: string; works: PreviewWork[] }[]> {
+  const { floors } = selectWorks(s);
+  const labels = floorLabels(s, floors, "The room");
+  return Promise.all(floors.map(async (f, i) => ({ label: labels[i], works: await previewWorks(orderWorks(f.works, s.order)) })));
+}
+
+/** Works whose titles hold every word (at word starts), optionally by one artist, best known first: the
+ *  picker's "add a work by hand". */
+export async function searchWorks(q: string, artist?: string | null, limit = 12): Promise<PreviewWork[]> {
+  const idx = readIndex();
+  const words = q.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+  if (!idx || (!words.length && !artist)) return [];
+  const hits: IndexWork[] = [];
+  for (const w of idx.works) {
+    if (artist && w[0] !== artist) continue;
+    const title = ` ${w[1].replace(/-/g, " ")}`;
+    if (words.every((word) => title.includes(` ${word}`))) hits.push(w);
+  }
+  hits.sort((x, y) => y[7] - x[7]);
+  return previewWorks(hits.slice(0, limit));
+}

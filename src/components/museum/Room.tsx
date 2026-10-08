@@ -27,6 +27,7 @@ import {
   roomState,
 } from "./room-env";
 import { ReflectiveFloor } from "./room-floor";
+import { furnitureOf } from "./furniture";
 import { RoomSigns } from "./room-signs";
 import { CROSS_SLOTS, crossWalls, patchRoomMaterial, setCrossWindow } from "./room-shading";
 import {
@@ -480,14 +481,15 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       metalness: 0.55,
     });
 
-    // Benches: wooden parts get oak grain projected in world space (the
-    // merged rounded boxes have no meaningful UVs); leather is plain satin.
-    // A wooden floor shares the same grain texture (one canvas, one upload).
-    const oakSeat = theme.room.bench === "oak-block";
-    const steel = theme.room.bench === "modern-leather";
+    // Seating (furniture.ts): wooden frames get grain projected in world space
+    // (the merged primitives have no meaningful UVs); upholstery is plain;
+    // lacquer, paint and steel have no grain. A wooden floor shares the same
+    // grain texture (one canvas, one upload).
+    const furniture = furnitureOf(theme);
+    const grainy = furniture.wood.finish === "grain";
     const woodFloor = theme.floor.kind !== "concrete";
     const grain =
-      woodFloor || oakSeat || !steel
+      woodFloor || grainy
         ? woodGrainTexture(theme.floor.kind === "oak-dark" ? "oak-dark" : "oak-light")
         : null;
     if (grain) textures.push(grain);
@@ -506,17 +508,22 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       });
     };
     const benchSeat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(theme.room.benchSeat),
-      roughness: oakSeat ? 0.5 : 0.46,
+      color: new THREE.Color(furniture.up.color),
+      roughness: furniture.up.roughness,
       metalness: 0,
     });
-    if (oakSeat) woodGrain(benchSeat, "bench-wood");
+    const frameFinish = furniture.wood.finish;
     const benchFrame = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(theme.room.benchFrame),
-      roughness: steel ? 0.3 : 0.5,
-      metalness: steel ? 1 : 0,
+      color: new THREE.Color(furniture.wood.color),
+      roughness: { grain: 0.5, lacquer: 0.2, paint: 0.6, steel: 0.3 }[frameFinish],
+      metalness: frameFinish === "steel" ? 1 : 0,
     });
-    if (!steel) woodGrain(benchFrame, "bench-wood");
+    if (grainy) woodGrain(benchFrame, "bench-wood");
+    const benchAccent = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(furniture.metal.color),
+      roughness: furniture.metal.roughness,
+      metalness: furniture.metal.metalness,
+    });
 
     // soft contact shadow under each bench: an SDF blob, no texture, no pass
     const benchShadow = new THREE.ShaderMaterial({
@@ -551,7 +558,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         }`,
     });
 
-    const all = [wall, ceiling, trim, track, benchSeat, benchFrame, benchShadow];
+    const all = [wall, ceiling, trim, track, benchSeat, benchFrame, benchAccent, benchShadow];
     return {
       wall,
       ceiling,
@@ -559,6 +566,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       track,
       benchSeat,
       benchFrame,
+      benchAccent,
       benchShadow,
       dimmers,
       floorGrain: woodFloor ? grain : null,
@@ -621,6 +629,7 @@ export function Room({
       <mesh geometry={hall.trim} material={mats.trim} matrixAutoUpdate={false} />
       <mesh geometry={hall.benchSeat} material={mats.benchSeat} matrixAutoUpdate={false} />
       <mesh geometry={hall.benchFrame} material={mats.benchFrame} matrixAutoUpdate={false} />
+      <mesh geometry={hall.benchAccent} material={mats.benchAccent} matrixAutoUpdate={false} />
       {/* small props: skipped by the floor reflection */}
       <mesh geometry={hall.track} material={mats.track} matrixAutoUpdate={false} layers={1} />
       <mesh

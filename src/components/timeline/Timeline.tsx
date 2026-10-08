@@ -11,6 +11,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import gsap from "gsap";
+import Link from "next/link";
 import type { Artist, Period, TimelineData } from "@/lib/types";
 import {
   assignLanes,
@@ -100,6 +101,12 @@ const TimelineHeader = memo(function TimelineHeader({
         <nav className="tl-collection" aria-label="Artist selection">
           <button type="button" aria-pressed={!showAll} title="A curated introduction to influential painters across the collection" onClick={() => onCollection(false)}>Featured</button>
           <button type="button" aria-pressed={showAll} onClick={() => onCollection(true)}>All artists</button>
+          <Link href="/rooms" className="tl-room-link" title="Hang your own room: an era, a movement, a genre, a country, artists">
+            Make a room
+          </Link>
+          <Link href="/rooms#museums" className="tl-room-link" title="Walk real museums, recreated: the Louvre, the Rijksmuseum, the National Gallery of Greece">
+            Museums
+          </Link>
         </nav>
       </div>
       <FilterDropdown periods={periods} artists={artists} filter={filter} onChange={onFilter} hidden={inert} showAll={showAll} onCollection={onCollection} />
@@ -822,7 +829,11 @@ export function Timeline({ data }: { data: TimelineData }) {
             <a href="https://en.wikipedia.org/" target="_blank" rel="noopener noreferrer">
               Wikipedia
             </a>{" "}
-            · for educational purposes only.
+            and{" "}
+            <a href="https://www.wikiart.org/" target="_blank" rel="noopener noreferrer">
+              WikiArt
+            </a>{" "}
+            · for educational use only.
           </span>{" "}
           <span className="tl-note-give">
             Free knowledge keeps democracies strong.{" "}

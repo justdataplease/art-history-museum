@@ -9,8 +9,9 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { roomAt, TRACK_DROP, TRACK_INSET, type GalleryLayout } from "./layout";
+import { ENTRANCE_DOOR, roomAt, TRACK_DROP, TRACK_INSET, type Bench, type GalleryLayout } from "./layout";
 import type { GalleryTheme } from "./theme";
+import { buildBench, buildWallSeat, furnitureOf } from "./furniture";
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -61,6 +62,18 @@ export class GeoBatch {
       this.roundedBoxes?.set(key, g);
     }
     return this.add(this.roundedBoxes ? g.clone() : g, xform(x, y, z, rotY));
+  }
+
+  /** Rounded box under any transform (the furniture's tilted backs and cushions). */
+  roundedBoxAt(w: number, h: number, d: number, radius: number, segments: number, m: THREE.Matrix4): this {
+    const r = Math.min(radius, w / 2 - 1e-4, h / 2 - 1e-4, d / 2 - 1e-4);
+    const key = `${w},${h},${d},${segments},${r}`;
+    let g = this.roundedBoxes?.get(key);
+    if (!g) {
+      g = indexRoundedBox(new RoundedBoxGeometry(w, h, d, segments, r));
+      this.roundedBoxes?.set(key, g);
+    }
+    return this.add(this.roundedBoxes ? g.clone() : g, m);
   }
 
   /** Vertical cylinder (frustum) whose base sits at y. */
@@ -422,9 +435,11 @@ export interface HallGeometry {
   trim: THREE.BufferGeometry;
   /** Lighting track, suspension rods and canopies (layer 1). */
   track: THREE.BufferGeometry;
+  /** The seating (furniture.ts): upholstery, frame, and the gilt / brass / chrome accents. */
   benchSeat: THREE.BufferGeometry;
   benchFrame: THREE.BufferGeometry;
-  /** Soft contact shadows under the benches (custom attributes aLocal/aHalf). */
+  benchAccent: THREE.BufferGeometry;
+  /** Soft contact shadows under the seats (custom attributes aLocal/aHalf). */
   benchShadow: THREE.BufferGeometry;
   /** The entrance room's ceiling. */
   spec: CeilingSpec;
@@ -434,7 +449,7 @@ export interface HallGeometry {
   ranges: Record<HallPart, IndexRange[]>;
 }
 
-export const DOOR = { width: 1.9, height: 3.05, depth: 0.32 };
+export const DOOR = ENTRANCE_DOOR;
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -476,7 +491,7 @@ export function pictureRailY(H: number, coveR: number): number {
 }
 
 /** One room's share of every merged architecture geometry, by material. */
-export const HALL_PARTS = ["walls", "ceiling", "trim", "track", "benchSeat", "benchFrame", "benchShadow"] as const;
+export const HALL_PARTS = ["walls", "ceiling", "trim", "track", "benchSeat", "benchFrame", "benchAccent", "benchShadow"] as const;
 export type HallPart = (typeof HALL_PARTS)[number];
 
 /** A run of indices in a merged geometry (for setDrawRange). */
@@ -548,6 +563,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     track: new GeoBatch(roundedBoxes),
     seat: new GeoBatch(roundedBoxes),
     frame: new GeoBatch(roundedBoxes),
+    accent: new GeoBatch(roundedBoxes),
   }));
   const at = (r: number) => rooms[Math.max(0, Math.min(last, r))];
 
@@ -569,7 +585,16 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     const dw = DOOR.width / 2;
     const dh = DOOR.height;
     walls.quad(V(W / 2, 0, L / 2), V(-(W / 2 - dw), 0, 0), V(0, H, 0)); // right of door (seen from inside: left)
-    walls.quad(V(-dw, 0, L / 2), V(-(W / 2 - dw), 0, 0), V(0, H, 0), [W / 2 + dw, 0]);
+    const lift = layout.elevator;
+    if (!lift) walls.quad(V(-dw, 0, L / 2), V(-(W / 2 - dw), 0, 0), V(0, H, 0), [W / 2 + dw, 0]);
+    else {
+      // the elevator's opening (Elevator.tsx lines it and builds the car behind it): U = W/2 - x
+      const e1 = lift.x + lift.halfWidth;
+      const e0 = lift.x - lift.halfWidth;
+      walls.quad(V(-dw, 0, L / 2), V(e1 + dw, 0, 0), V(0, H, 0), [W / 2 + dw, 0]);
+      walls.quad(V(e1, lift.height, L / 2), V(e0 - e1, 0, 0), V(0, H - lift.height, 0), [W / 2 - e1, lift.height]);
+      walls.quad(V(e0, 0, L / 2), V(-W / 2 - e0, 0, 0), V(0, H, 0), [W / 2 - e0, 0]);
+    }
     walls.quad(V(dw, dh, L / 2), V(-2 * dw, 0, 0), V(0, H - dh, 0), [W / 2 - dw, dh]);
     // reveals (jambs + head) through the wall thickness
     const D = DOOR.depth;
@@ -676,8 +701,14 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     if (ri === last) out.push({ a: V(-W / 2, 0, -L / 2), b: V(W / 2, 0, -L / 2), n: V(0, 0, 1) });
     return out;
   };
+  const lift = layout.elevator;
   const nearRuns: Run[] = [
-    { a: V(-W / 2, 0, L / 2), b: V(-DOOR.width / 2 - 0.2, 0, L / 2), n: V(0, 0, -1) },
+    ...(lift
+      ? [
+          { a: V(-W / 2, 0, L / 2), b: V(lift.x - lift.halfWidth - 0.1, 0, L / 2), n: V(0, 0, -1) },
+          { a: V(lift.x + lift.halfWidth + 0.1, 0, L / 2), b: V(-DOOR.width / 2 - 0.2, 0, L / 2), n: V(0, 0, -1) },
+        ]
+      : [{ a: V(-W / 2, 0, L / 2), b: V(-DOOR.width / 2 - 0.2, 0, L / 2), n: V(0, 0, -1) }]),
     { a: V(DOOR.width / 2 + 0.2, 0, L / 2), b: V(W / 2, 0, L / 2), n: V(0, 0, -1) },
   ];
   const nearFull: Run = { a: V(-W / 2, 0, L / 2), b: V(W / 2, 0, L / 2), n: V(0, 0, -1) };
@@ -824,48 +855,15 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     }
   });
 
-  // ---- benches
-  const shadow = buildBenchShadows(layout);
-  for (const b of layout.benches) {
-    const [bx, bz] = b.position;
-    const [bw, bd] = b.size;
-    const { seat, frame } = at(roomAt(layout, bz));
-    switch (theme.room.bench) {
-      case "leather": {
-        // button-less upholstered top on a dark wood frame with turned legs
-        seat.roundedBox(bw, 0.11, bd, bx, 0.46 - 0.055, bz, 0.04, 3);
-        frame.roundedBox(bw - 0.03, 0.075, bd - 0.03, bx, 0.33, bz, 0.01, 1);
-        for (const sx of [-1, 1])
-          for (const sz of [-1, 1]) {
-            const lx = bx + sx * (bw / 2 - 0.055);
-            const lz = bz + sz * (bd / 2 - 0.055);
-            frame.cylinder(0.026, 0.018, 0.3, lx, 0, lz, 12);
-            frame.cylinder(0.024, 0.026, 0.035, lx, 0.0, lz, 12); // foot
-          }
-        // stretcher along the length
-        frame.roundedBox(0.035, 0.035, bd - 0.14, bx, 0.12, bz, 0.008, 1);
-        break;
-      }
-      case "modern-leather": {
-        // slim black leather cushion on a brushed steel frame
-        seat.roundedBox(bw, 0.09, bd, bx, 0.43 - 0.045, bz, 0.03, 3);
-        frame.roundedBox(bw - 0.06, 0.03, bd - 0.06, bx, 0.37, bz, 0.006, 1);
-        for (const sz of [-1, 1]) {
-          const lz = bz + sz * (bd / 2 - 0.12);
-          frame.roundedBox(bw - 0.1, 0.022, 0.03, bx, 0.011, lz, 0.006, 1);
-          for (const sx of [-1, 1]) frame.roundedBox(0.022, 0.36, 0.03, bx + sx * (bw / 2 - 0.06), 0.18, lz, 0.006, 1);
-        }
-        break;
-      }
-      case "oak-block": {
-        // Judd-like solid oak: a slab on two plinths
-        seat.roundedBox(bw, 0.065, bd, bx, 0.44 - 0.0325, bz, 0.008, 2);
-        for (const sz of [-1, 1]) {
-          frame.roundedBox(bw - 0.08, 0.375, 0.065, bx, 0.1875, bz + sz * (bd / 2 - 0.28), 0.006, 2);
-        }
-        break;
-      }
-    }
+  // ---- seating: the room style's furniture (furniture.ts), down the middle and against the walls
+  const furniture = furnitureOf(theme);
+  const seats = seatsByRoom(layout);
+  const shadow = buildBenchShadows(seats.map((x) => x.seat));
+  for (const { seat, room, wall } of seats) {
+    const { seat: up, frame: wood, accent: metal } = at(room);
+    const out = { up, wood, metal };
+    if (wall) buildWallSeat(furniture, out, wall);
+    else buildBench(furniture, out, seat.position[0], seat.position[1], seat.size[0], seat.size[1]);
   }
 
   const walls = mergeRooms(rooms.map((x) => x.walls));
@@ -874,10 +872,11 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
   const track = mergeRooms(rooms.map((x) => x.track));
   const seat = mergeRooms(rooms.map((x) => x.seat));
   const frame = mergeRooms(rooms.map((x) => x.frame));
-  // bench shadows: one quad (6 indices) per bench, benches in room order
+  const accent = mergeRooms(rooms.map((x) => x.accent));
+  // seat shadows: one quad (6 indices) per seat, seats in room order
   const shadowRanges: IndexRange[] = layout.rooms.map(() => ({ start: 0, count: 0 }));
-  layout.benches.forEach((b, i) => {
-    const rr = shadowRanges[Math.max(0, Math.min(last, roomAt(layout, b.position[1])))];
+  seats.forEach(({ room }, i) => {
+    const rr = shadowRanges[room];
     if (rr.count === 0) rr.start = i * 6;
     rr.count += 6;
   });
@@ -893,6 +892,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     track: track.geometry,
     benchSeat: seat.geometry,
     benchFrame: frame.geometry,
+    benchAccent: accent.geometry,
     benchShadow: shadow,
     spec,
     specs,
@@ -903,19 +903,30 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
       track: track.ranges,
       benchSeat: seat.ranges,
       benchFrame: frame.ranges,
+      benchAccent: accent.ranges,
       benchShadow: shadowRanges,
     },
   };
 }
 
-/** One floor quad per bench carrying its local coordinates for an SDF blob. */
-function buildBenchShadows(layout: GalleryLayout): THREE.BufferGeometry {
+/** Every seat (centre benches and wall seats) with its room, in room order (the per-room draw ranges). */
+function seatsByRoom(layout: GalleryLayout) {
+  const last = layout.rooms.length - 1;
+  const room = (z: number) => Math.max(0, Math.min(last, roomAt(layout, z)));
+  return [
+    ...layout.benches.map((seat) => ({ seat, room: room(seat.position[1]), wall: null })),
+    ...layout.wallSeats.map((w) => ({ seat: w as Bench, room: room(w.position[1]), wall: w })),
+  ].sort((a, b) => a.room - b.room);
+}
+
+/** One floor quad per seat carrying its local coordinates for an SDF blob. */
+function buildBenchShadows(benches: Bench[]): THREE.BufferGeometry {
   const pos: number[] = [];
   const loc: number[] = [];
   const half: number[] = [];
   const idx: number[] = [];
   const PAD = 0.45;
-  for (const b of layout.benches) {
+  for (const b of benches) {
     const [bx, bz] = b.position;
     const hw = b.size[0] / 2;
     const hd = b.size[1] / 2;
@@ -945,5 +956,5 @@ function buildBenchShadows(layout: GalleryLayout): THREE.BufferGeometry {
 }
 
 export function disposeHall(h: HallGeometry) {
-  for (const g of [h.walls, h.ceiling, h.trim, h.track, h.benchSeat, h.benchFrame, h.benchShadow]) g.dispose();
+  for (const g of [h.walls, h.ceiling, h.trim, h.track, h.benchSeat, h.benchFrame, h.benchAccent, h.benchShadow]) g.dispose();
 }
