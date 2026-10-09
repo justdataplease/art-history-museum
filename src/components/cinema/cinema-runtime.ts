@@ -1,12 +1,28 @@
-// What every part of the cinema reads each frame: the deck, and the light it makes, eased like a real room's
-// (the house lights dim over a few seconds when a film starts; the lamp comes on at once).
+// What every part of a screening room reads each frame: the deck, and the light it makes, eased like a real
+// room's (the house lights dim over a few seconds when a film starts; the lamp comes on at once).
 
 import * as THREE from "three";
 import type { FilmDeck } from "./film-deck";
-import { pictureRect } from "./cinema-layout";
+
+/** The screen's frame: the largest picture (16:9), centred on x = cx, its bottom edge, its plane (z). */
+export interface ScreenFrame {
+  w: number;
+  h: number;
+  bottom: number;
+  cx: number;
+  z: number;
+}
+
+/** The picture on the screen for a film of this shape: as large as the frame allows, centred. */
+export function pictureRect(aspect: number, f: ScreenFrame): { w: number; h: number; cx: number; cy: number } {
+  const a = aspect > 0 ? aspect : 16 / 9;
+  const w = Math.min(f.w, f.h * a);
+  return { w, h: w / a, cx: f.cx, cy: f.bottom + f.h / 2 };
+}
 
 export interface CinemaRuntime {
   deck: FilmDeck;
+  frame: ScreenFrame;
   /** The projector's lamp, 0..1. */
   level: number;
   /** The house lights, 0..1. */
@@ -16,16 +32,16 @@ export interface CinemaRuntime {
   /** The light the screen throws back into the room (linear RGB) and how bright it is. */
   color: THREE.Color;
   lum: number;
-  /** Projected (the beam and the dust carry the picture) or embedded (a neutral flicker). */
+  /** Projected (the beam carries the picture) or embedded (a neutral flicker). */
   textured: boolean;
   /** The reels' turn this frame (radians). */
   reel: number;
   time: number;
 }
 
-export function createRuntime(deck: FilmDeck): CinemaRuntime {
+export function createRuntime(deck: FilmDeck, frame: ScreenFrame): CinemaRuntime {
   return {
-    deck, level: 0, house: 1, rect: pictureRect(16 / 9), color: new THREE.Color(0, 0, 0), lum: 0,
+    deck, frame, level: 0, house: 1, rect: pictureRect(16 / 9, frame), color: new THREE.Color(0, 0, 0), lum: 0,
     textured: false, reel: 0, time: 0,
   };
 }
@@ -51,7 +67,7 @@ export function stepRuntime(rt: CinemaRuntime, dt: number, now: number): void {
     const v = rt.deck.video;
     const natural = v && v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 0;
     const aspect = mode === "texture" ? natural || film.aspect || 16 / 9 : 16 / 9;
-    if (Math.abs(rt.rect.w / rt.rect.h - aspect) > 0.01) rt.rect = pictureRect(aspect);
+    if (Math.abs(rt.rect.w / rt.rect.h - aspect) > 0.01) rt.rect = pictureRect(aspect, rt.frame);
   }
   if (rt.textured) {
     rt.deck.sample(now);

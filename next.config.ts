@@ -1,4 +1,16 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { NextConfig } from "next";
+
+/** The hosts the artists' films stream from (archive/site.py: data/site/film-hosts.json); none without it. */
+function filmHosts(): string[] {
+  try {
+    const list = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "site", "film-hosts.json"), "utf8"));
+    return Array.isArray(list) ? list.filter((h): h is string => typeof h === "string" && /^[a-z0-9.-]+$/i.test(h)) : [];
+  } catch {
+    return [];
+  }
+}
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -15,9 +27,13 @@ const isDev = process.env.NODE_ENV === "development";
 //   uploads0..uploads8.wikiart.org (CORS: *).
 const WIKIMEDIA = "https://upload.wikimedia.org https://thumb.wikimedia.org";
 const WIKIART = "https://*.wikiart.org";
-// the cinema (src/components/cinema): films play from where they live. Projected: ERT's archive (HLS, fetched by
-// hls.js), Wikimedia Commons and the Internet Archive; embedded: the video sites' own players.
-const FILM_MEDIA = "https://mediastream.ert.gr https://archive.org https://*.archive.org";
+// the galleries' screening rooms (src/components/cinema): films play from where they live. Projected: ERT's archive
+// (HLS, fetched by hls.js), Wikimedia Commons and the Internet Archive; embedded: the video sites' own players.
+const FILM_MEDIA = [
+  "https://mediastream.ert.gr https://archive.org https://*.archive.org",
+  // and wherever else a film found through the artists' articles plays from (archive/site.py writes the list)
+  ...filmHosts().map((h) => `https://${h}`),
+].join(" ");
 const FILM_FRAMES = "https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://geo.dailymotion.com";
 // the audio guide's natural voice (src/components/museum/voice): the model runs in the visitor's browser, its code
 // from jsdelivr, its weights and voices from Hugging Face (WebAssembly needs 'wasm-unsafe-eval')
@@ -56,11 +72,8 @@ const nextConfig: NextConfig = {
     "/api/guide/*": ["./data/site/guide/*.json"],
     // an artist's phases (archive/phases.py, src/lib/phases.ts) when a gallery regenerates; a work's details
     // for the inspect panel (/api/work/<artist>/<work>, src/lib/rooms.ts workAbout)
-    "/museum/*": ["./data/site/phases.json", "./data/site/films.json"],
+    "/museum/*": ["./data/site/phases.json"],
     "/api/work/*/*": ["./data/site/rooms.json"],
-    // the cinema's programme (archive/films.py), and the galleries' way to it
-    "/cinema": ["./data/site/films.json"],
-    "/cinema/*": ["./data/site/films.json"],
   },
 
   // No images config: painting textures and portraits load straight from

@@ -150,10 +150,47 @@ export interface TimelineData {
   artists: Artist[];
 }
 
+/** A film about an artist (archive/films.py: the videos their Wikipedia articles point to), played from where it
+ *  lives in the gallery's screening room. "file" and "hls" are projected (a video texture that lights the room)
+ *  when their host lets another site read them; "youtube", "vimeo" and "dailymotion" play in their own player. */
+export type FilmKind = "file" | "hls" | "youtube" | "vimeo" | "dailymotion";
+
+export interface Film {
+  id: string;
+  kind: FilmKind;
+  /** English when archive/films_titles.json has one (`original` then keeps the film's own). */
+  title: string;
+  original?: string;
+  /** hls: the playlist; youtube, vimeo, dailymotion: the video id. */
+  src?: string;
+  /** file: its renditions, best first. */
+  sources?: { src: string; type: string }[];
+  channel?: string;
+  summary?: string;
+  year?: number;
+  seconds?: number;
+  /** Picture width / height (4:3 television, 16:9). */
+  aspect?: number;
+  lang?: string;
+  poster?: string;
+  /** The film's own page (its licence, its credits). */
+  page: string;
+  source: string;
+  credit?: string;
+  /** May play in Greece only (ERT's archive): /api/films/where. */
+  geo?: boolean;
+  /** The Wikipedia languages whose article points to it. */
+  from: string[];
+  /** The link in the article, when it is not the film's own page (a page the film was found on). */
+  link?: string;
+}
+
 export interface ArtistWithPaintings extends Artist {
   periodName: string;
   periodColor: string;
   paintings: Painting[];
+  /** Films about the artist, for the gallery's screening room. */
+  films?: Film[];
   /** Present when this "artist" is a custom room (works by several artists). */
   room?: RoomInfo;
   /** The phases of the artist's life, when known (src/lib/phases.ts): the gallery's rooms follow them. */

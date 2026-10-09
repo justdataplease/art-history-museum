@@ -66,7 +66,8 @@ archive/.venv/Scripts/python -m archive.commons fetch   # data/commons: works on
 archive/.venv/Scripts/python -m archive.site   # data/site/museum.json, rooms.json (`archive.site rooms`: rooms.json only)
 archive/.venv/Scripts/python -m archive.guide build   # data/site/guide: audio guide scripts
 archive/.venv/Scripts/python -m archive.phases        # data/site/phases.json: the phases galleries follow
-archive/.venv/Scripts/python -m archive.films fetch   # data/site/films.json: the cinema's films, from the painters' Wikipedia articles (reads data/site; cached in data/films)
+archive/.venv/Scripts/python -m archive.films fetch   # data/films/films.json: films about each artist, from their Wikipedia articles' links (reads data/site; the articles' links and every answer kept in data/films)
+archive/.venv/Scripts/python -m archive.site films    # hangs them on the artists in data/site/museum.json (archive.site does it too)
 npm run load-db                                # reads data/site when present
 ```
 
@@ -83,13 +84,19 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
   link; `/api/room` the picker's live count and preview (`?preview=1`); `/api/room/works?q=` the picker's search for works to add (title and
   artist words, `&a=` one artist's best known); the picker's drag and drop is `src/app/rooms/drag.ts` (a moved
   work is recorded in the link as `artist/painting@floor:place`, only the works moved); `/api/guide/<artist>` the audio guide's scripts (`data/site/guide`); `/api/work/<artist>/<work>` a work's
-  tags, museums and same-year works for the inspect panel; `/cinema` painters on film and `/cinema/<painter>` a
-  painter's cinema (prerendered from `data/site/films.json`, `src/components/cinema`: a projector whose beam and
-  room light follow the film; open streams are a video texture, YouTube, Vimeo and Dailymotion their own player
-  behind a hole in the canvas); `/api/films/where` whether the visitor is in Greece (ERT's films that play there
-  only); `/surprise?from=<artist>` a gallery from another
+  tags, museums and same-year works for the inspect panel; `/api/films/where` whether the visitor is in Greece
+  (ERT's films that play there only); `/surprise?from=<artist>` a gallery from another
   period (the "Surprise me" at a gallery's end); `/furniture` (development only) every
   room style's furniture (the layout picks among it room by room), for modelling it.
+
+- **The screening room** (`src/components/cinema`): an artist with films (`films` in museum.json, from
+  `archive/films.py`) gets a curtained doorway in the entrance room's right wall (`layout.ts` `screening`: the
+  hanging leaves it a gap). The room itself is built 40 m beyond the hall, so neither one's lights reach the
+  other; walking into either curtain fades and moves the visitor through (`ScreeningPassage`, the teleport API).
+  It takes the gallery's wall colour, floor and trim and two rows of the room style's chairs (`furniture.ts`), a
+  plain screen and the projector (`Projector.tsx`). Open streams (ERT's HLS, Commons, the Internet Archive) play
+  as a video texture whose colours light the beam and the room; YouTube, Vimeo and Dailymotion play in their own
+  player behind a hole in the canvas (`film-deck.ts`). Leaving the room pauses the film.
 
 - **Next.js 16** (App Router). The timeline and all 572 galleries are
   prerendered; data comes from the JSON snapshot (`data/site`).

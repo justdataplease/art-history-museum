@@ -9,6 +9,7 @@ import { Pool, type PoolConfig } from "pg";
 import type {
   Artist,
   ArtistWithPaintings,
+  Film,
   ImageCredit,
   Painting,
   Period,
@@ -66,6 +67,7 @@ async function read<T>(fromDb: (db: Pool) => Promise<T>, fromCache: () => T): Pr
 
 interface CacheArtist extends Omit<Artist, "paintingCount"> {
   paintings: Painting[];
+  films?: Film[];
 }
 interface CacheShape {
   periods: Period[];
@@ -299,6 +301,7 @@ export async function getArtist(slug: string): Promise<ArtistWithPaintings | nul
         periodName: period?.name ?? "",
         periodColor: period?.color ?? "#888",
         paintings: [...artist.paintings].sort(byYear).map(toPainting),
+        ...(artist.films?.length ? { films: artist.films } : {}),
       };
     }
   );

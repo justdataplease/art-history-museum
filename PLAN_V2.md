@@ -96,16 +96,17 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
     five natural voices, the browser's voices, a reading speed (0.85× to 1.5×) and "Hear it". Live 2026-10-09.
   - [ ] Recorded narration in place of the browser's voice.
   - [ ] Greek names said the Greek way (the voices are English).
-- [x] **Painters on film** (owner, 2026-10-09). Live.
-  - [x] `/cinema` and `/cinema/<painter>`: a 1950s cinema with a projector whose beam, dust and light on the
-    room follow the film; the house lights dim when it plays. "▶ Films" in a gallery's top bar, "Cinema" on
-    the timeline.
-  - [x] The films are the ones the painters' Wikipedia articles link, in 21 languages (`archive/films.py`):
-    Commons files, ERT's archive (Greek public television), the Internet Archive, YouTube, Vimeo, Dailymotion.
-    364 films about 190 painters (154 with a gallery, 36 Greek painters without one). Video sites play in
-    their own player on the screen; Commons, ERT and the Internet Archive are projected and light the room.
-  - [ ] The other 476 painters: Wikidata's film records add one, Commons categories a few; a YouTube search
-    (an API key) would find the rest.
+- [x] **Films about the artist** (owner, 2026-10-09). Live.
+  - [x] A screening room in each gallery whose artist has films: a curtained doorway in the entrance room's
+    right wall, a small room in the gallery's own style (its wall colour, floor and trim, two rows of the room
+    style's chairs), a plain screen and the projector; its beam carries the film's light, the lights dim while
+    it plays. "▶ Films" in the top bar walks one there. (Replaces the separate /cinema pages, live 2026-10-09.)
+  - [x] The films are kept on each artist in museum.json (`films`: the links and what each host says).
+  - [x] Found by reading every link in the artists' Wikipedia articles (21 languages) with its own words
+    ("video", "documentary", "βίντεο" ...) and following each back to its film (`archive/films.py`): 9,835
+    articles, 10,238 links kept, 3,087 pages followed; 323 films for 158 artists (ZDF's Terra X, RAI Teche,
+    UbuWeb, TV5Monde, Arte among the pages' films).
+  - [ ] The other 472 artists: their articles link no film; a YouTube search (an API key) would find more.
 - [ ] **16. A connected museum you can get lost in** (tamacun3, d--b, AIblemblio).
   - [x] Step 1: doors between artists (item 6).
   - [ ] Rooms that turn corners, period wings, streaming, a minimap.

@@ -33,11 +33,12 @@ you can visit, freely, without an account.
   what others painted the same year, or the original image on its own. Wall
   labels show recorded dimensions when available and whether the display is at
   original scale, reduced or enlarged.
-- **Go to the cinema.** Documentaries, television portraits and archive
-  footage of painters, linked from their Wikipedia articles in every
-  language, play on a projector in a dark auditorium: the beam carries the
-  film's light through the dust, and the room changes with it. From a
-  gallery's top bar (**Films**) or the timeline's **Cinema**.
+- **Watch the films.** A gallery whose artist has films (documentaries,
+  television portraits, archive footage, linked from their Wikipedia articles
+  in every language) has a screening room beside its entrance room, in the
+  gallery's own style: walk through the curtain (or the top bar's **Films**),
+  sit among the chairs, and the projector throws the film on the screen while
+  the lights dim.
 
 On a computer, use **W A S D** to move (at a run; the settings have walking
 speeds) and the mouse to look, **Space** to jump, **C** to sit, **G** for the

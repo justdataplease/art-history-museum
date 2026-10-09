@@ -24,6 +24,8 @@ import { textureStats } from "./exhibit-texture";
 import { FxSlot } from "./fx/Slot";
 import { Elevator, type ElevatorApi, type LiftDirection } from "./Elevator";
 import { ExitDoors, type ExitSide } from "./ExitDoors";
+import { ScreeningDoor, ScreeningPassage, ScreeningRoom, screeningArrival } from "@/components/cinema/ScreeningRoom";
+import type { CinemaRuntime } from "@/components/cinema/cinema-runtime";
 
 export type { LockApi };
 
@@ -34,6 +36,9 @@ const MOUNTS_PER_FRAME = 3;
 export interface TeleportApi {
   /** Put the visitor at the entrance of `room`, facing into it. */
   go(room: number): void;
+  /** Through the screening room's curtain: into the room (just inside, looking toward the screen), or back out
+   *  into the gallery. */
+  screening(into: boolean): void;
   /** Put the visitor in front of the elevator, facing it (a custom room's floors). */
   toElevator(): void;
   /** The room's lights are up and its works hung: the fade may clear. */
@@ -91,6 +96,22 @@ export interface GalleryProps {
     apiRef: RefObject<ElevatorApi | null>;
     onNear: (near: boolean) => void;
     onPress: (dir: LiftDirection) => void;
+  };
+  /** An artist's gallery's screening room (layout.screening): the films about the artist. */
+  screening?: {
+    runtime: RefObject<CinemaRuntime | null>;
+    films: number;
+    origin: string;
+    /** The deck's state changed (an embed mounts or unmounts). */
+    deckKey: string;
+    /** The visitor walked into a curtain (into the room, or out of it). */
+    onPass: (into: boolean) => void;
+    /** The visitor is in the room. */
+    inside: boolean;
+    /** The visitor is in the room, or not (however they came or went). */
+    onInside: (inside: boolean) => void;
+    /** A click on the screen or the projector. */
+    onScreen: () => void;
   };
   /** An artist's gallery: the doors to the artists before and after (layout.exits). */
   exits?: {
@@ -206,6 +227,16 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
         runtime.teleport(to);
         invalidate();
       },
+      screening(into: boolean) {
+        if (!layout.screening) return;
+        const a = screeningArrival(layout, into);
+        camera.position.set(a.x, EYE_HEIGHT, a.z);
+        camera.rotation.set(0, a.yaw, 0, "YXZ");
+        camera.updateMatrixWorld();
+        // its doorway is in the entrance room
+        runtime.teleport(0);
+        invalidate();
+      },
       toElevator() {
         const lift = layout.elevator;
         if (!lift) return this.go(0);
@@ -309,6 +340,22 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
           onThrough={props.exits.onThrough}
           onNear={props.exits.onNear}
         />
+      )}
+      {layout.screening && props.screening && (
+        <>
+          <ScreeningDoor layout={layout} theme={theme} films={props.screening.films} />
+          <ScreeningRoom
+            layout={layout}
+            theme={theme}
+            runtime={props.screening.runtime}
+            origin={props.screening.origin}
+            deckKey={props.screening.deckKey}
+            inside={props.screening.inside}
+            onInside={props.screening.onInside}
+            onScreen={props.screening.onScreen}
+          />
+          <ScreeningPassage layout={layout} enabled={props.walkEnabled} onPass={props.screening.onPass} />
+        </>
       )}
       {/* after the controls: it reads the camera they have just moved */}
       <SuiteDirector

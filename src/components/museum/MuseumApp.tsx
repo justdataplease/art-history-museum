@@ -33,6 +33,7 @@ import { galleryTheme, roomTheme } from "./theme";
 import { createSettleTracker, type SettleTracker } from "./renderer-motion";
 import styles from "./museum.module.css";
 import { SourceLink } from "@/components/timeline/SourceLink";
+import { ScreeningHud, useScreening } from "@/components/cinema/ScreeningHud";
 
 const FOV = 55;
 /** Let the title on the doors register before they part. */
@@ -86,13 +87,10 @@ const placardEl = () => document.querySelector(".mus-placard");
 export function MuseumApp({
   artist,
   neighbours,
-  films = 0,
 }: {
   artist: ArtistWithPaintings;
   /** An artist's gallery: the artists before and after in the timeline's order, behind the doors at its end. */
   neighbours?: { prev: GalleryLink | null; next: GalleryLink | null };
-  /** Films about the artist in the cinema (/cinema/<slug>): a way there from the top bar. */
-  films?: number;
 }) {
   // a custom room may choose its room style, wall colour and hanging order (src/lib/rooms.ts)
   const design = artist.room;
@@ -111,8 +109,12 @@ export function MuseumApp({
       elevator: (design?.floors.length ?? 0) > 1,
       exits: !design && !!neighbours,
       phases: design ? undefined : artist.phases?.map((p) => p.name),
+      // the films about the artist: a screening room beside the entrance room
+      screening: !design && !!artist.films?.length,
     });
   }, [artist, theme, design, neighbours]);
+  const screening = useScreening(useMemo(() => artist.films ?? [], [artist.films]), layout);
+  const films = layout.screening ? screening.films.length : 0;
   // the flagship (a thumbnail, in a suite) and the entrance room's nearest works
   const gate = useMemo(() => entryGate(layout), [layout]);
   const rooms = layout.rooms.length;
@@ -527,6 +529,73 @@ export function MuseumApp({
   }, [ride]);
   const pressLift = useCallback((dir: LiftDirection) => void rideRef.current(dir), []);
   const goToLift = useCallback(() => jump((api) => api?.toElevator()), [jump]);
+  // ---- the screening room: through its curtain (walking into it, or the top bar's Films), the film showing goes
+  // on (else the first); whoever leaves leaves it paused (ScreeningRoom), and the gallery's music comes back
+  const [inFilmRoom, setInFilmRoom] = useState(false);
+  const [programme, setProgramme] = useState(false);
+  const startFilm = screening.start;
+  const passScreening = useCallback(
+    (into: boolean) => {
+      jump((api) => {
+        api?.screening(into);
+        if (into) startFilm();
+      });
+    },
+    [jump, startFilm]
+  );
+  const onInsideFilmRoom = useCallback((inside: boolean) => {
+    setInFilmRoom(inside);
+    duckMusic(inside ? 0 : 1, 1.2);
+    if (!inside) {
+      programmeOpen.current = false;
+      setProgramme(false);
+    }
+  }, []);
+  const screeningProps = useMemo(
+    () =>
+      layout.screening && screening.deck
+        ? {
+            runtime: screening.runtime,
+            films,
+            origin: screening.origin,
+            deckKey: screening.deckKey,
+            onPass: passScreening,
+            inside: inFilmRoom,
+            onInside: onInsideFilmRoom,
+            onScreen: screening.toggle,
+          }
+        : undefined,
+    [layout.screening, screening.deck, screening.runtime, films, screening.origin, screening.deckKey, passScreening, inFilmRoom, onInsideFilmRoom, screening.toggle]
+  );
+  // the films list (F): the cursor is freed to choose, and taken back on closing it
+  const programmeOpen = useRef(false);
+  const toggleProgramme = useCallback(
+    (open?: boolean) => {
+      const next = open ?? !programmeOpen.current;
+      if (next === programmeOpen.current) return;
+      programmeOpen.current = next;
+      if (next) {
+        if (document.pointerLockElement) document.exitPointerLock();
+      } else if (!touch) lockApi.current?.lock();
+      setProgramme(next);
+    },
+    [touch]
+  );
+  useEffect(() => {
+    if (!inFilmRoom) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (e.code === "KeyK") screening.toggle();
+      else if (e.code === "KeyN") screening.next();
+      else if (e.code === "KeyJ") screening.deck?.seek(-10);
+      else if (e.code === "KeyL") screening.deck?.seek(10);
+      else if (e.code === "KeyF") toggleProgramme();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [inFilmRoom, screening, toggleProgramme]);
   // ---- an artist's gallery: the doors at its end to the artists before and after (or the timeline), and a
   // surprise: another period's gallery. Walking up to a door, the HUD's buttons, or E / Q in the last room.
   const exitHref = useCallback(
@@ -647,6 +716,7 @@ export function MuseumApp({
           cameraRef={cameraRef}
           lift={lift}
           exits={exits}
+          screening={screeningProps}
         />
       </Canvas>
 
@@ -662,10 +732,15 @@ export function MuseumApp({
           <Link href="/" className="mus-back">
             ← Timeline
           </Link>
-          {films > 0 && !inspect && (
-            <Link href={`/cinema/${artist.slug}`} className={`mus-back ${styles.filmsLink}`} title={`The cinema: ${films} film${films === 1 ? "" : "s"} about ${artist.name}`}>
-              ▶ Films · {films}
-            </Link>
+          {films > 0 && !inspect && doorsOpen && (
+            <button
+              type="button"
+              className={`mus-back ${styles.filmsLink}`}
+              onClick={() => passScreening(!inFilmRoom)}
+              title={inFilmRoom ? "Back to the gallery" : `The screening room: ${films} film${films === 1 ? "" : "s"} about ${artist.name}`}
+            >
+              {inFilmRoom ? "← Gallery" : `▶ Films · ${films}`}
+            </button>
           )}
         </div>
         <div className={`mus-placard ${styles.placard}${inspect ? ` ${styles.placardHidden}` : ""}`}>
@@ -711,7 +786,64 @@ export function MuseumApp({
 
       <div className={`${styles.teleportFade}${fading ? ` ${styles.teleportFadeOn}` : ""}`} />
 
-      {engaged && walkEnabled && (
+      {inFilmRoom && (
+        <ScreeningHud
+          screening={screening}
+          artistName={artist.name}
+          engaged={engaged}
+          programme={programme}
+          onProgramme={toggleProgramme}
+          onLeave={() => {
+            programmeOpen.current = false;
+            setProgramme(false);
+            passScreening(false);
+          }}
+        />
+      )}
+
+      {engaged && walkEnabled && inFilmRoom && (
+        <div className={`mus-hint ${styles.hint}`}>
+          {touch ? (
+            <>
+              <span>
+                <b>Drag</b> look
+              </span>
+              <span>
+                <b>Tap floor</b> walk
+              </span>
+              <span>
+                <b>Films</b> back to the gallery
+              </span>
+            </>
+          ) : (
+            <>
+              <span>
+                <b>Click screen</b> or <b>K</b> {screening.state.status === "playing" ? "pause" : "play"}
+              </span>
+              <span>
+                <b>N</b> next film
+              </span>
+              <span>
+                <b>J L</b> −10 s +10 s
+              </span>
+              <span>
+                <b>F</b> films
+              </span>
+              <span>
+                <b>C</b> sit
+              </span>
+              <span>
+                <b>Curtain</b> back to the gallery
+              </span>
+              <span>
+                <b>Esc</b> release
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
+      {engaged && walkEnabled && !inFilmRoom && (
         <div className={`mus-hint ${styles.hint}`}>
           {touch ? (
             <>

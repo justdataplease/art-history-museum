@@ -3,16 +3,16 @@
 // Two ways to play (Film.kind):
 // - projected ("file", "hls"): a <video> open to other sites (crossOrigin), read as a texture for the screen, and
 //   every few frames drawn into a tiny canvas whose average colour lights the room and whose pixels colour the
-//   beam and the dust in it. HLS (ERT's archive) through hls.js where the browser has no HLS of its own. A file
+//   beam. HLS (ERT's archive) through hls.js where the browser has no HLS of its own. A file
 //   whose host refuses other sites plays as a DOM <video> behind the screen instead (like an embed);
 // - embedded ("youtube", "vimeo", "dailymotion"): the provider's player (an <iframe>) placed on the screen
-//   (CinemaScene: drei Html behind a hole in the canvas), driven by its postMessage API. Its picture cannot be
+//   (ScreeningRoom: drei Html behind a hole in the canvas), driven by its postMessage API. Its picture cannot be
 //   read, so the room's light flickers in a neutral colour.
 //
-// One deck per cinema; React reads its state through subscribe/getState (useSyncExternalStore).
+// One deck per gallery (its screening room); React reads its state through subscribe/getState (useSyncExternalStore).
 
 import * as THREE from "three";
-import type { Film } from "@/lib/films";
+import type { Film } from "@/lib/types";
 
 export type DeckStatus = "idle" | "loading" | "playing" | "paused" | "ended" | "error";
 export interface DeckState {
@@ -37,7 +37,7 @@ export class FilmDeck {
   readonly video: HTMLVideoElement | null;
   /** The picture, for the screen (projected films). */
   readonly texture: THREE.VideoTexture | null;
-  /** The picture, tiny: the beam's and the dust's colours. */
+  /** The picture, tiny: the beam's colours. */
   readonly small: THREE.CanvasTexture | null;
   private sampleCtx: CanvasRenderingContext2D | null = null;
   private lastSample = 0;
@@ -48,7 +48,7 @@ export class FilmDeck {
   private hls: HlsLike | null = null;
   private sourceIndex = 0;
   private offError: (() => void) | null = null;
-  /** The embedded player's frame (CinemaScene registers it). */
+  /** The embedded player's frame (ScreeningRoom registers it). */
   private frame: HTMLIFrameElement | null = null;
   private frameReady = false;
   private pendingPlay = false;
