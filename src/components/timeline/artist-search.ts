@@ -38,7 +38,7 @@ export function nameEntry(name: string): NameEntry {
   return { key: ` ${spaced(name)} | ${joined(name)} | ${squashed(name)} |`, words: [...all] };
 }
 
-export interface NameQuery {
+interface NameQuery {
   /** Empty: the query has no letters, everything matches. */
   keys: string[];
   /** The query's words read two ways (punctuation as breaks, dropped); empty when no word is long enough to
@@ -47,9 +47,9 @@ export interface NameQuery {
 }
 
 /** Typos a query word may hold: none under 4 letters, one up to 7, two from 8 ("carravagio" → Caravaggio). */
-export const allowance = (letters: number) => (letters < 4 ? 0 : letters < 8 ? 1 : 2);
+const allowance = (letters: number) => (letters < 4 ? 0 : letters < 8 ? 1 : 2);
 
-export function nameQuery(q: string): NameQuery {
+function nameQuery(q: string): NameQuery {
   const keys = new Set<string>();
   for (const k of [spaced(q), joined(q), squashed(q)]) if (k) keys.add(" " + k);
   const forms = new Map<string, string[]>();
@@ -61,7 +61,7 @@ export function nameQuery(q: string): NameQuery {
 }
 
 /** Does a word of the name start with the query? */
-export const holds = (q: NameQuery, e: NameEntry) => !q.keys.length || q.keys.some((k) => e.key.includes(k));
+const holds = (q: NameQuery, e: NameEntry) => !q.keys.length || q.keys.some((k) => e.key.includes(k));
 
 // three rows of the edit-distance table, reused across calls
 let rowA = new Int32Array(32);
@@ -74,7 +74,7 @@ let rowC = new Int32Array(32);
  * typing Caravaggio) counts half a typo more, and only from 5 letters with the first letter right. Infinity
  * when further.
  */
-export function typos(q: string, w: string, k: number): number {
+function typos(q: string, w: string, k: number): number {
   const m = q.length;
   const n = w.length;
   // columns past m + k cannot come back within k: a longer word can only match as a prefix
@@ -121,7 +121,7 @@ export function typos(q: string, w: string, k: number): number {
  * How many typos the name is from the query: each query word takes the closest word of the name (a short query
  * word must begin one exactly), summed; the best reading of the query wins. Infinity when any word is too far.
  */
-export function typoScore(q: NameQuery, e: NameEntry): number {
+function typoScore(q: NameQuery, e: NameEntry): number {
   let best = Infinity;
   for (const words of q.forms) {
     let sum = 0;
@@ -142,7 +142,7 @@ export function typoScore(q: NameQuery, e: NameEntry): number {
 }
 
 /** Close matches listed at most. */
-export const MAX_CLOSE = 8;
+const MAX_CLOSE = 8;
 
 /**
  * The items whose name holds the query, in their order (a name the query only runs together, "vangogh", counts),

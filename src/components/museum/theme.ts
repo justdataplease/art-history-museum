@@ -42,8 +42,9 @@ export type EraKey =
  */
 export type FrameStyle = "tabernacle" | "baroque" | "gilt-simple" | "wood" | "floater" | "mount" | "print" | "miniature";
 
-/** parquet: oak strips laid in herringbone (point de Hongrie), as in the Louvre's galleries. */
-export type FloorKind = "oak-dark" | "oak-light" | "concrete" | "parquet";
+/** parquet: oak strips laid in herringbone (point de Hongrie), as in the Louvre's galleries; marble: polished
+ *  white slabs with grey veins in running bond (the National Gallery in Athens); concrete: stone or concrete slabs. */
+export type FloorKind = "oak-dark" | "oak-light" | "concrete" | "parquet" | "marble";
 
 /**
  * laylight — 19th-century top-lit gallery: coved cornice, flat ceiling band
@@ -614,16 +615,39 @@ const custom = new Map<string, GalleryTheme>();
 
 /** A custom room's theme: its period's, or a chosen room style, with an optional wall colour (#rrggbb). The
  *  works scale (how unknown sizes are hung) stays the period's: it follows what hangs, not the decoration. */
-export function roomTheme(periodSlug: string, style?: string | null, wall?: string | null): GalleryTheme {
-  const key = `${periodSlug}|${style ?? ""}|${wall ?? ""}`;
+export function roomTheme(periodSlug: string, style?: string | null, wall?: string | null, ground?: string | null): GalleryTheme {
+  const key = `${periodSlug}|${style ?? ""}|${wall ?? ""}|${ground ?? ""}`;
   const hit = custom.get(key);
   if (hit) return hit;
   const period = galleryTheme(periodSlug);
   let t = isRoomStyle(style) ? { ...THEMES[style], works: period.works } : period;
   if (wall && /^#[0-9a-f]{6}$/i.test(wall)) t = { ...t, wall: { ...t.wall, color: wall } };
+  // another floor than the style's own, laid as the style that has it lays it
+  if (isGround(ground) && ground !== t.floor.kind) {
+    const g = GROUND_LOOK[ground];
+    t = { ...t, floor: { kind: ground, tint: g.tint }, room: { ...t.room, floorRoughness: g.roughness, plankWidth: g.plank } };
+  }
   custom.set(key, t);
   return t;
 }
+
+/** The floors a room may have instead of its style's own (the room picker's "Floor"). */
+export const GROUNDS: { key: FloorKind; label: string }[] = [
+  { key: "marble", label: "White marble" },
+  { key: "concrete", label: "Stone slabs" },
+  { key: "oak-light", label: "Light oak boards" },
+  { key: "oak-dark", label: "Dark oak boards" },
+  { key: "parquet", label: "Oak parquet, herringbone" },
+];
+export const isGround = (k: string | null | undefined): k is FloorKind => GROUNDS.some((g) => g.key === k);
+/** Each floor's colour, sheen and slab or board width: marble polished; the others as a style has them. */
+const GROUND_LOOK: Record<FloorKind, { tint: string; roughness: number; plank: number }> = {
+  marble: { tint: "#e8e6e1", roughness: 0.1, plank: 1.2 },
+  concrete: { tint: THEMES.museum.floor.tint, roughness: THEMES.museum.room.floorRoughness, plank: THEMES.museum.room.plankWidth },
+  "oak-light": { tint: THEMES.impressionist.floor.tint, roughness: THEMES.impressionist.room.floorRoughness, plank: THEMES.impressionist.room.plankWidth },
+  "oak-dark": { tint: THEMES.nineteenth.floor.tint, roughness: THEMES.nineteenth.room.floorRoughness, plank: THEMES.nineteenth.room.plankWidth },
+  parquet: { tint: THEMES.palace.floor.tint, roughness: THEMES.palace.room.floorRoughness, plank: THEMES.palace.room.plankWidth },
+};
 
 const byPeriod = new Map<string, GalleryTheme>();
 

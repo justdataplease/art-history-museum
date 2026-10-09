@@ -19,7 +19,7 @@ import {
   type Selection,
 } from "@/lib/room-query";
 import { MUSEUM_ROOMS } from "@/lib/museum-rooms";
-import { ROOM_STYLES, styleSwatch } from "@/components/museum/theme";
+import { GROUNDS, ROOM_STYLES, styleSwatch } from "@/components/museum/theme";
 import styles from "./RoomPicker.module.css";
 
 interface Term {
@@ -88,8 +88,8 @@ const PRESETS: { label: string; sel: Partial<Selection> }[] = [
 ];
 
 const NEW_PLAN: FloorSpec[] = [
-  { label: "Before 1800", from: null, to: 1799, style: null, wall: null, works: null, intro: null, who: [] },
-  { label: "From 1800", from: 1800, to: null, style: null, wall: null, works: null, intro: null, who: [] },
+  { label: "Before 1800", from: null, to: 1799, style: null, wall: null, works: null, intro: null, who: [], ground: null, number: null },
+  { label: "From 1800", from: 1800, to: null, style: null, wall: null, works: null, intro: null, who: [], ground: null, number: null },
 ];
 
 function readSaved(): SavedRoom[] {
@@ -469,6 +469,13 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
           </span>
         </label>
         <label>
+          <span>Floor</span>
+          <select value={sel.ground ?? ""} onChange={(e) => update({ ground: e.target.value || null })}>
+            <option value="">The style&apos;s own</option>
+            {GROUNDS.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+          </select>
+        </label>
+        <label>
           <span>Hang the works</span>
           <select value={sel.order} onChange={(e) => update({ order: e.target.value as Selection["order"] })}>
             <option value="year">By year</option>
@@ -511,7 +518,7 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
           <ol>
             {sel.plan.map((f, i) => (
               <li key={i}>
-                <span className={styles.floorNo}>{sel.firstFloor + i}</span>
+                <span className={styles.floorNo}>{f.number ?? sel.firstFloor + i}</span>
                 <input className={styles.floorLabel} value={f.label} placeholder="Floor name" maxLength={60}
                   onChange={(e) => setFloor(i, { label: e.target.value })} aria-label="Floor name" />
                 <input type="number" value={f.from ?? ""} placeholder="from" aria-label="From year"
@@ -528,6 +535,10 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
                   <input type="color" value={f.wall ?? "#4a4f55"} disabled={!f.wall} aria-label="Floor wall colour"
                     onChange={(e) => setFloor(i, { wall: e.target.value })} />
                 </span>
+                <select value={f.ground ?? ""} aria-label="Floor material" onChange={(e) => setFloor(i, { ground: e.target.value || null })}>
+                  <option value="">Room&apos;s floor</option>
+                  {GROUNDS.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+                </select>
                 <input type="number" min={4} max={120} value={f.works ?? ""} placeholder="works" aria-label="Works on this floor"
                   onChange={(e) => setFloor(i, { works: e.target.value === "" ? null : Number(e.target.value) })} />
                 <button type="button" onClick={() => update({ plan: sel.plan.filter((_, j) => j !== i) })}
@@ -548,7 +559,7 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
               const last = sel.plan[sel.plan.length - 1];
               const from = last?.to != null ? last.to + 1 : null;
               update({ plan: [...sel.plan, { label: `Floor ${sel.firstFloor + sel.plan.length}`, from, to: null, style: null,
-                wall: null, works: null, intro: null, who: [] }] });
+                wall: null, works: null, intro: null, who: [], ground: null, number: null }] });
             }}>
               Add a floor
             </button>

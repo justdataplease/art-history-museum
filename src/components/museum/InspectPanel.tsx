@@ -6,7 +6,7 @@ import gsap from "gsap";
 import { INSPECT_SHEET_BREAKPOINT, type Placement } from "./layout";
 import { displayTitle } from "./exhibit-placard";
 import { inspectTexturePx, paintingTextureUrl, wikiFilePage } from "@/lib/img";
-import type { Painting } from "@/lib/types";
+import type { Painting, WorkAbout } from "@/lib/types";
 import styles from "./museum.module.css";
 
 const TEXT_LICENSE_URL = "https://creativecommons.org/licenses/by-sa/4.0/";
@@ -101,13 +101,7 @@ function Credits({ painting: p }: { painting: Painting }) {
   );
 }
 
-/** More about the work (src/lib/rooms.ts workAbout), fetched when it is inspected. */
-interface WorkAbout {
-  movement: string | null;
-  genre: string | null;
-  museums: string[];
-  sameYear: { artistSlug: string; artistName: string; slug: string; title: string }[];
-}
+/** More about the work (src/lib/rooms.ts workAbout), fetched when it is inspected; kept for the visit. */
 const aboutCache = new Map<string, Promise<WorkAbout | null>>();
 function fetchAbout(artist: string, slug: string): Promise<WorkAbout | null> {
   const key = `${artist}/${slug}`;
@@ -115,11 +109,30 @@ function fetchAbout(artist: string, slug: string): Promise<WorkAbout | null> {
   if (!p) {
     p = fetch(`/api/work/${artist}/${encodeURIComponent(slug)}`)
       .then((r) => (r.ok ? (r.json() as Promise<WorkAbout>) : null))
-      .catch(() => null);
+      .catch(() => null)
+      .then((a) => {
+        if (!a) aboutCache.delete(key); // tried again next time
+        return a;
+      });
     aboutCache.set(key, p);
   }
   return p;
 }
+
+/** A tag's kind, as shown on it. */
+const TAG_KIND: Record<string, string> = {
+  era: "Era",
+  tradition: "Tradition",
+  period: "Period",
+  umbrella: "Movement",
+  movement: "Movement",
+  school: "School",
+  group: "Group",
+  academy: "Academy",
+  exhibition: "Exhibition",
+  genre: "Genre",
+  country: "Country",
+};
 
 /** The work in context: its movement, genre and museum; the artist's works hung before and after it (a click
  *  goes to them); what others painted the same year. */
@@ -148,8 +161,7 @@ function About({
     };
   }, [artistSlug, p.slug]);
   const facts: [string, string][] = [];
-  if (about?.movement) facts.push(["Movement", about.movement]);
-  if (about?.genre) facts.push(["Genre", about.genre]);
+  const tags = about?.tags ?? [];
   if (about?.museums.length) facts.push([about.museums.length > 1 ? "Collections" : "Collection", about.museums.join(", ")]);
   const step = (pl: Placement | null, label: string) =>
     pl && (
@@ -159,10 +171,20 @@ function About({
         {pl.painting.year ? `, ${pl.painting.year}` : ""}
       </button>
     );
-  if (!facts.length && !before && !after && !about?.sameYear.length) return null;
+  if (!facts.length && !tags.length && !before && !after && !about?.sameYear.length) return null;
   return (
     <div className={styles.about}>
       <h3>About this work</h3>
+      {tags.length > 0 && (
+        <ul className={styles.tags} aria-label="Era, period, movement, school, genre, country">
+          {tags.map((t) => (
+            <li key={`${t.kind}:${t.name}`} title={TAG_KIND[t.kind] ?? t.kind}>
+              <small>{TAG_KIND[t.kind] ?? t.kind}</small>
+              {t.name}
+            </li>
+          ))}
+        </ul>
+      )}
       {facts.length > 0 && (
         <dl>
           {facts.map(([k, v]) => (
@@ -245,9 +267,9 @@ export function InspectPanel({
   placement: Placement | null;
   onClose: () => void;
   touch?: boolean;
-  /** Used to drop Wikipedia's "(Artist)" disambiguator from titles, as the wall labels do. */
+  /** The gallery's artist (a custom room's works name their own): drops Wikipedia's "(Artist)" disambiguator
+   *  from titles, as the wall labels do, and finds the work's details. */
   artistName?: string;
-  /** The work's artist (the gallery's, or in a custom room the work's own). */
   artistSlug?: string;
   /** The artist's works hung before and after this one, by year. */
   around?: { before: Placement | null; after: Placement | null };
@@ -316,7 +338,10 @@ export function InspectPanel({
   );
 
   const p = (placement ?? shown)?.painting;
-  const title = p ? displayTitle(p.title, artistName) : "";
+  // a custom room's work names its own artist; a gallery's is the gallery's
+  const who = p?.artistName ?? artistName;
+  const whoSlug = p?.artistSlug ?? artistSlug;
+  const title = p ? displayTitle(p.title, who) : "";
 
   return (
     <div
@@ -372,11 +397,11 @@ export function InspectPanel({
                 Source · Wikipedia
               </a>
             )}
-            {artistSlug && onPick && (
+            {whoSlug && onPick && (
               <About
                 painting={p}
-                artistSlug={artistSlug}
-                artistName={artistName}
+                artistSlug={whoSlug}
+                artistName={who}
                 before={placement ? (around?.before ?? null) : null}
                 after={placement ? (around?.after ?? null) : null}
                 onPick={onPick}

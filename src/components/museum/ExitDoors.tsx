@@ -3,20 +3,23 @@
 // An artist's gallery ends at two doors in the far end wall, either side of the flagship (layout.exits, built in
 // room-geometry.ts): to the artist before on the left and the artist after on the right, in the timeline's order,
 // each named on a card over it. Walking up to a door goes through it (MuseumApp fades and loads that gallery);
-// the HUD's buttons and Q / E do the same from anywhere in the last room.
+// near the end wall the HUD's buttons and Q / E do the same.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { GalleryLink } from "@/lib/types";
-import type { ExitDoors as ExitSpot } from "./layout";
+import { WALL_MARGIN, type ExitDoors as ExitSpot } from "./layout";
 import type { SuiteRuntime } from "./suite-runtime";
 import { fontFamilies, placardFontsReady } from "./exhibit-placard";
 
 export type ExitSide = "prev" | "next";
 
-/** A door is gone through when the visitor stands this close to it (the body keeps 0.3 m off the wall). */
-const THROUGH = 0.62;
+/** A door is gone through when the visitor stands this close to it (confine keeps them WALL_MARGIN off it). */
+const THROUGH = WALL_MARGIN + 0.1;
+/** Within this of the end wall the visitor is at the doors: the HUD offers them, Q and E go through. */
+const NEAR_END = 6;
+const SIDES = [["prev", -1], ["next", 1]] as const;
 
 const CARD_W = 1.5;
 /** The light washed over each door: its strength and the pool's size (m). */
@@ -81,6 +84,7 @@ export function ExitDoors({
   next,
   enabled,
   onThrough,
+  onNear,
 }: {
   spot: ExitSpot;
   hallLength: number;
@@ -90,6 +94,7 @@ export function ExitDoors({
   /** Walking (not inspecting, not on the way out): walking up to a door counts. */
   enabled: boolean;
   onThrough: (side: ExitSide) => void;
+  onNear: (near: boolean) => void;
 }) {
   const camera = useThree((s) => s.camera);
   const invalidate = useThree((s) => s.invalidate);
@@ -192,14 +197,19 @@ export function ExitDoors({
     [wash]
   );
 
-  // walking up to a door goes through it, once
+  // near the end wall; walking up to a door goes through it, once
   const gone = useRef(false);
+  const near = useRef(false);
   useFrame(() => {
-    if (!enabled || gone.current) return;
     const p = camera.position;
-    if (p.z > zw + THROUGH) return;
-    for (const [side, x] of [["prev", -spot.x], ["next", spot.x]] as const) {
-      if (Math.abs(p.x - x) < spot.halfWidth + 0.1) {
+    const isNear = enabled && p.z < zw + NEAR_END;
+    if (isNear !== near.current) {
+      near.current = isNear;
+      onNear(isNear);
+    }
+    if (!enabled || gone.current || p.z > zw + THROUGH) return;
+    for (const [side, s] of SIDES) {
+      if (Math.abs(p.x - s * spot.x) < spot.halfWidth + 0.1) {
         gone.current = true;
         onThrough(side);
         return;

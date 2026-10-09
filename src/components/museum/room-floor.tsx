@@ -51,7 +51,8 @@ function createFloorMaterial(
   textureMatrix: THREE.Matrix4
 ) {
   const kind = theme.floor.kind;
-  const wood = kind !== "concrete";
+  const marble = kind === "marble";
+  const wood = kind !== "concrete" && !marble;
   const parquet = kind === "parquet";
   // only a map made here is disposed with the floor
   let ownMap: THREE.Texture | null = null;
@@ -69,11 +70,13 @@ function createFloorMaterial(
     tReflectBlur: { value: tReflectBlur },
     textureMatrix: { value: textureMatrix },
     uReflectMix: { value: 0.92 },
-    // wood: (board width, mean board length); parquet: (strip width, strip length in widths); concrete: (joint
-    // spacing x, z), or stone slabs of plankWidth
+    // wood: (board width, mean board length); parquet: (strip width, strip length in widths); marble: a slab
+    // (plankWidth across the hall, half that along it); concrete: (joint spacing x, z), or stone slabs of plankWidth
     uPlank: {
       value: parquet
         ? new THREE.Vector2(pw, 5)
+        : marble
+        ? new THREE.Vector2(pw, pw / 2)
         : wood
         ? new THREE.Vector2(pw, 2.3)
         : pw < 2
@@ -82,7 +85,7 @@ function createFloorMaterial(
     },
     // grain / aggregate tile size in metres
     uGrain: { value: wood ? new THREE.Vector2(0.62, 1.2) : new THREE.Vector2(1.1, 1.1) },
-    uPlankVar: { value: kind === "oak-dark" ? 0.16 : parquet ? 0.18 : 0.12 },
+    uPlankVar: { value: kind === "oak-dark" ? 0.16 : parquet ? 0.18 : marble ? 0.05 : 0.12 },
     uOrigin: { value: new THREE.Vector2(-W / 2, -L / 2) },
     uRoomHalf: { value: new THREE.Vector3(W / 2, H, L / 2) },
     uRoomAO: { value: new THREE.Vector3(0.55, 0.32, 0.25) },
@@ -177,6 +180,42 @@ float floorJoint = 1.0;
   floorRough = (1.0 + (h2 - 0.5) * 0.2 + (wear - 0.5) * 0.14) * mix(1.6, 1.0, floorJoint);
 }
 `
+          : marble
+          ? `
+float floorRough = 1.0;
+float floorJoint = 1.0;
+{
+  // polished white slabs in running bond, each with its own drift of grey veins: a stripe field warped by noise,
+  // turned per slab, fading to the slab's mean tone where a pixel spans more than a vein
+  vec2 fp = vRoomPos.xz - uOrigin;
+  float row = floor(fp.y / uPlank.y);
+  float shift = mod(row, 2.0) * 0.5;
+  float col = floor(fp.x / uPlank.x + shift);
+  vec2 f = vec2(fract(fp.x / uPlank.x + shift), fract(fp.y / uPlank.y));
+  vec2 id = vec2(col, row);
+  float h = roomHash2(id);
+  float h2 = roomHash2(id * 1.91 + 3.3);
+  float a = h * 6.2831853;
+  vec2 dir = vec2(cos(a), sin(a));
+  vec2 p = fp * 1.6 + id * 13.1;
+  float warp = roomNoise(vec3(p * 0.5, h * 9.0)) * 1.6 + roomNoise(vec3(p * 1.7, h2 * 5.0)) * 0.5;
+  float s = dot(p, dir) + warp * 1.3;
+  float px = fwidth(s);
+  // broad soft drifts of grey, and here and there a thin vein
+  float soft = (1.0 - smoothstep(0.0, 0.6 + px, abs(sin(s * 0.9)))) * (0.4 + 0.6 * h2);
+  float thin = (1.0 - smoothstep(0.0, 0.02 + px, abs(sin(s * 1.9 + warp * 1.5))))
+    * smoothstep(0.42, 0.75, roomNoise(vec3(p * 0.35, h2 * 3.0 + 1.0)));
+  float veins = clamp(soft * 0.6 + thin * 0.7, 0.0, 1.0) * (1.0 - smoothstep(0.6, 1.8, px));
+  float cloud = roomNoise(vec3(fp * 0.55 + id * 7.0, 2.0));
+  float tone = 1.0 + (h - 0.5) * uPlankVar + (cloud - 0.5) * 0.06;
+  vec3 stone = mix(vec3(1.0), vec3(0.6, 0.62, 0.65), veins);
+  float ex = min(f.x, 1.0 - f.x) * uPlank.x;
+  float ez = min(f.y, 1.0 - f.y) * uPlank.y;
+  floorJoint = jointMask(ex, 0.0012, fwidth(fp.x), uPlank.x) * jointMask(ez, 0.0012, fwidth(fp.y), uPlank.y);
+  diffuseColor.rgb *= stone * tone * mix(0.62, 1.0, floorJoint);
+  floorRough = (1.0 + (cloud - 0.5) * 0.4 + veins * 0.3) * mix(2.2, 1.0, floorJoint);
+}
+`
           : wood
           ? `
 float floorRough = 1.0;
@@ -248,7 +287,7 @@ float floorJoint = 1.0;
       )
       .replace("#include <aomap_fragment>", `#include <aomap_fragment>\n${ROOM_AO_APPLY}`);
   };
-  mat.customProgramCacheKey = () => `room-floor:${parquet ? "parquet" : wood ? "wood" : "concrete"}`;
+  mat.customProgramCacheKey = () => `room-floor:${parquet ? "parquet" : marble ? "marble" : wood ? "wood" : "concrete"}`;
   return { mat, ownMap, uniforms };
 }
 

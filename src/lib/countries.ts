@@ -11,7 +11,7 @@ export type Continent = "Europe" | "Asia" | "Africa" | "North America" | "South 
 export const CONTINENTS: readonly Continent[] = ["Europe", "Asia", "Africa", "North America", "South America", "Oceania"];
 
 /** Present-day country → continent (UN geoscheme; Russia counts as Europe, Turkey and the Caucasus as Asia). */
-export const CONTINENT_OF: Readonly<Record<string, Continent>> = {
+const CONTINENT_OF: Readonly<Record<string, Continent>> = {
   Albania: "Europe", Austria: "Europe", Belarus: "Europe", Belgium: "Europe", Bulgaria: "Europe",
   Croatia: "Europe", "Czech Republic": "Europe", Denmark: "Europe", Estonia: "Europe", Finland: "Europe",
   France: "Europe", Germany: "Europe", Greece: "Europe", Hungary: "Europe", Iceland: "Europe", Ireland: "Europe",
@@ -194,7 +194,7 @@ const ORIGIN_OVERRIDES: Readonly<Record<string, string>> = {
   "natalia-goncharova": "Russia",
 };
 
-export interface ArtistOrigin {
+interface ArtistOrigin {
   country: string | null;
   continent: Continent | null;
 }

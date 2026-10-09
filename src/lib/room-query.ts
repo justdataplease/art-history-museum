@@ -16,14 +16,17 @@
 // and the room's design:
 //   style  a room style (theme.ts ROOM_STYLES: old-master, postwar ...; default: each floor its era's)
 //   wall   a wall colour (rrggbb)      order  year (default) | artist | fame
+//   ground a floor instead of the style's own (theme.ts GROUNDS: marble, concrete, oak-light, oak-dark, parquet)
 //   floors era (default: a floor per era) | one        intro  a wall text shown at the doors (up to 400)
 //   x      works left out (artist/painting, comma-separated)
-//   fl     a floor plan of one's own, floors separated by "|", each "label~from~to~style~wall~works~intro~who"
-//          (empty fields allowed, trailing ones dropped; who: nationalities, comma-separated): a work hangs on the
-//          first floor whose years (and, when given, whose artists' nationalities) hold it
+//   fl     a floor plan of one's own, floors separated by "|", each
+//          "label~from~to~style~wall~works~intro~who~ground~number" (empty fields allowed, trailing ones dropped;
+//          who: nationalities, comma-separated; number: the floor's own number, when the museum's floors are not
+//          consecutive): a work hangs on the first floor whose years (and, when given, whose artists'
+//          nationalities) hold it
 //   fs     the number of the first floor (0 for a museum that counts from the ground floor; default 1)
 
-import { isRoomStyle } from "@/components/museum/theme";
+import { isGround, isRoomStyle } from "@/components/museum/theme";
 
 export interface FloorSpec {
   label: string;
@@ -37,6 +40,10 @@ export interface FloorSpec {
   intro: string | null;
   /** Only artists of these nationalities (a museum's schools: Italian painting on one floor, French on another). */
   who: string[];
+  /** A floor (marble, oak ...) instead of the style's own. */
+  ground: string | null;
+  /** The number the elevator shows (default: the first floor's number counted on). */
+  number: number | null;
 }
 
 export interface Selection {
@@ -53,6 +60,7 @@ export interface Selection {
   floor: number;
   style: string | null;
   wall: string | null;
+  ground: string | null;
   order: "year" | "artist" | "fame";
   floors: "era" | "one" | "plan";
   plan: FloorSpec[];
@@ -66,7 +74,7 @@ export const MAX_WORKS = 240;
 
 export const EMPTY_SELECTION: Selection = {
   terms: [], artists: [], nationalities: [], museums: [], from: null, to: null, words: [], include: [],
-  max: MAX_DEFAULT, title: null, floor: 1, style: null, wall: null, order: "year", floors: "era", plan: [],
+  max: MAX_DEFAULT, title: null, floor: 1, style: null, wall: null, ground: null, order: "year", floors: "era", plan: [],
   firstFloor: 1, intro: null, exclude: [],
 };
 
@@ -91,8 +99,10 @@ const clean = (v: string, n: number) => v.replace(/[~|]/g, " ").trim().slice(0, 
 function parsePlan(v: string): FloorSpec[] {
   if (!v.trim()) return [];
   return v.split("|").slice(0, 8).map((f) => {
-    const [label = "", from = "", to = "", style = "", wall = "", works = "", intro = "", who = ""] = f.split("~");
+    const [label = "", from = "", to = "", style = "", wall = "", works = "", intro = "", who = "", ground = "", no = ""] =
+      f.split("~");
     const n = parseInt(works, 10);
+    const number = parseInt(no, 10);
     return {
       label: clean(label, 60),
       from: yearOf(from),
@@ -102,6 +112,8 @@ function parsePlan(v: string): FloorSpec[] {
       works: Number.isFinite(n) ? Math.min(120, Math.max(4, n)) : null,
       intro: clean(intro, 300) || null,
       who: who.split(",").map((x) => clean(x, 40)).filter(Boolean).slice(0, 8),
+      ground: isGround(ground) ? ground : null,
+      number: Number.isFinite(number) ? Math.min(99, Math.max(-9, number)) : null,
     };
   });
 }
@@ -110,7 +122,7 @@ function planQuery(plan: FloorSpec[]): string {
   return plan
     .map((f) =>
       [clean(f.label, 60), f.from ?? "", f.to ?? "", f.style ?? "", f.wall?.replace("#", "") ?? "", f.works ?? "",
-        clean(f.intro ?? "", 300), f.who.map((x) => clean(x, 40)).join(",")]
+        clean(f.intro ?? "", 300), f.who.map((x) => clean(x, 40)).join(","), f.ground ?? "", f.number ?? ""]
         .join("~")
         .replace(/~+$/, "")
     )
@@ -136,6 +148,7 @@ export function parseSelection(p: Params): Selection {
     floor: Number.isFinite(floor) && floor > 0 ? floor : 1,
     style: isRoomStyle(one(p.style)) ? one(p.style) : null,
     wall: hex(one(p.wall)),
+    ground: isGround(one(p.ground)) ? one(p.ground) : null,
     order: one(p.order) === "artist" || one(p.order) === "fame" ? (one(p.order) as "artist" | "fame") : "year",
     floors: plan.length ? "plan" : one(p.floors) === "one" ? "one" : "era",
     plan,
@@ -160,6 +173,7 @@ export function selectionQuery(s: Selection, floor?: number): string {
   if (s.max !== MAX_DEFAULT) q.set("max", String(s.max));
   if (s.style) q.set("style", s.style);
   if (s.wall) q.set("wall", s.wall.replace("#", ""));
+  if (s.ground) q.set("ground", s.ground);
   if (s.order !== "year") q.set("order", s.order);
   if (s.floors === "plan" && s.plan.length) q.set("fl", planQuery(s.plan));
   else if (s.floors === "one") q.set("floors", "one");

@@ -697,6 +697,46 @@ function steelBench(k: Kit, w: number, d: number): void {
   }
 }
 
+/** A low bench curved in plan, leather all over on a recessed plinth (the National Gallery in Athens): its length
+ *  along z, bowed toward −x by the piece's width less the seat's depth. */
+const CURVE_SEAT = 0.46;
+function curveOf(w: number, d: number): { R: number; half: number; x0: number } {
+  const sag = Math.max(0.05, w - CURVE_SEAT);
+  const chord = d - 0.06;
+  const R = (chord * chord) / (8 * sag) + sag / 2;
+  // the seat's centre line: x = x0 + R (1 − cos a), z = R sin a
+  return { R, half: Math.asin(Math.min(1, chord / 2 / R)), x0: -w / 2 + CURVE_SEAT / 2 };
+}
+const curvedBench = Object.assign(
+  (k: Kit, w: number, d: number): void => {
+    const { R, half, x0 } = curveOf(w, d);
+    const n = 12;
+    const step = (2 * half) / n;
+    const len = 2 * R * Math.sin(step / 2) + 0.04;
+    for (let i = 0; i < n; i++) {
+      const a = -half + step * (i + 0.5);
+      const x = x0 + R * (1 - Math.cos(a));
+      const z = R * Math.sin(a);
+      k.box("up", CURVE_SEAT, 0.12, len, x, 0.38, z, 0.025, 0, a);
+      k.box("up", CURVE_SEAT - 0.14, 0.32, len, x, 0.16, z, 0, 0, a);
+    }
+  },
+  {
+    // three places on each side of the curve, facing out from it
+    spots: (w: number, d: number): [number, number, number][] => {
+      const { R, half, x0 } = curveOf(w, d);
+      const out: [number, number, number][] = [];
+      for (const s of [-1, 1]) {
+        for (const t of [-0.62, 0, 0.62]) {
+          const a = t * half;
+          out.push([x0 + R * (1 - Math.cos(a)) + s * 0.1 * Math.cos(a), R * Math.sin(a) - s * 0.1 * Math.sin(a), (s * PI) / 2 + a]);
+        }
+      }
+      return out;
+    },
+  }
+);
+
 /** A wall piece made of a bench turned to run along the wall. */
 const alongWall = (bench: (k: Kit, w: number, d: number) => void, deep: number) => (k: Kit, width: number, depth: number) =>
   bench(k.at(0, -depth / 2 + deep / 2 + 0.01, PI / 2), deep, width);
@@ -1012,11 +1052,11 @@ const COURT_MINIATURE: FurnitureSet = {
 };
 
 const MUSEUM: FurnitureSet = {
-  name: "A museum of today: leather benches on steel, upholstered armchairs",
+  name: "A museum of today: leather benches on steel, curved leather benches, upholstered armchairs",
   up: { colors: ["#2b2826", "#4a3a30", "#3a4048", "#5a4a38"], roughness: 0.5, sheen: 0.15, weave: "plain" },
   wood: { colors: ["#b9bcbf"], finish: "steel" },
   metal: { color: "#c8cbcd", metalness: 1, roughness: 0.25 },
-  centre: [piece("steel bench", [0.62, 2.1], steelBench)],
+  centre: [piece("steel bench", [0.62, 2.1], steelBench), piece("curved bench", [0.78, 2.2], curvedBench)],
   wall: [piece("steel bench", [1.8, 0.6], alongWall(steelBench, 0.55))],
   chairs: [chair("club chair", [0.84, 0.86], clubChair)],
 };
@@ -1094,7 +1134,7 @@ const SIT: Record<string, number> = {
   "Barcelona daybed": 0.465, "two Wassily chairs": 0.4, "Barcelona chair": 0.47, "Wassily chair": 0.4,
   "low sofa": 0.47, "teak armchair": 0.44, "huanghuali bench": 0.48, "official's hat chair": 0.53,
   "horseshoe armchair": 0.53, "shōgi": 0.45, divan: 0.36, "divan with cushions": 0.37, mora: 0.49,
-  "steel bench": 0.43,
+  "steel bench": 0.43, "curved bench": 0.44,
 };
 /** How far in from the wall a wall piece's sitter sits (its seat's middle). */
 const WALL_SEAT: Record<string, number> = {

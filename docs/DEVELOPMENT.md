@@ -63,6 +63,7 @@ archive/.venv/Scripts/python -m archive.fingerprints
 archive/.venv/Scripts/python -m archive.warehouse build
 archive/.venv/Scripts/python -m archive.site   # data/site/museum.json, rooms.json (`archive.site rooms`: rooms.json only)
 archive/.venv/Scripts/python -m archive.guide build   # data/site/guide: audio guide scripts
+archive/.venv/Scripts/python -m archive.phases        # data/site/phases.json: the phases galleries follow
 npm run load-db                                # reads data/site when present
 ```
 
@@ -77,11 +78,13 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
   `src/lib/room-query.ts`, chosen and hung by `src/lib/rooms.ts`; a room with floors has `&f=2` ..., joined by an
   elevator by the entrance); `/museums/<slug>` a recreated museum (`src/lib/museum-rooms.ts`), an ordinary room
   link; `/api/room` the picker's live count and preview (`?preview=1`); `/api/room/works?q=` the works to pick by
-  hand; `/api/guide/<artist>` the audio guide's scripts (`data/site/guide`); `/furniture` (development only) every
+  hand; `/api/guide/<artist>` the audio guide's scripts (`data/site/guide`); `/api/work/<artist>/<work>` a work's
+  tags, museums and same-year works for the inspect panel; `/surprise?from=<artist>` a gallery from another
+  period (the "Surprise me" at a gallery's end); `/furniture` (development only) every
   room style's furniture (the layout picks among it room by room), for modelling it.
 
-- **Next.js 16** (App Router). The timeline and all 526 galleries are
-  prerendered; data comes from the JSON snapshot or Postgres.
+- **Next.js 16** (App Router). The timeline and all 572 galleries are
+  prerendered; data comes from the JSON snapshot (`data/site`).
 - **React Three Fiber / three.js** galleries that only render when something
   changes (`frameloop="demand"`), so standing still costs no frames.
 - **Suites** draw only what you can see: the neighbouring rooms, the works near

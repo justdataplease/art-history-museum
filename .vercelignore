@@ -24,3 +24,4 @@ data/wikimedia
 data/guide
 data/*.tmp
 data/site/*.tmp
+.claude

@@ -34,7 +34,7 @@ export default async function RoomPage({ searchParams }: Props) {
   if (!room || room.paintings.length === 0) notFound();
 
   // the textures the entry doors wait for, as on an artist's gallery (src/app/museum/[slug]/page.tsx)
-  const theme = roomTheme(room.periodSlug, room.room?.style, room.room?.wall);
+  const theme = roomTheme(room.periodSlug, room.room?.style, room.room?.wall, room.room?.ground);
   const layout = buildLayout(room.paintings, { works: theme.works, keepOrder: room.room?.order !== "year" });
   const bySlug = new Map(room.paintings.map((p) => [p.slug, p]));
   entryPreloads(layout, 2).forEach(({ slug: s, thumb }, i) => {

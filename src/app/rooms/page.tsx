@@ -13,7 +13,7 @@ type Props = { searchParams: Promise<Record<string, string | string[] | undefine
 
 export default async function RoomsPage({ searchParams }: Props) {
   const [{ artists }, options, initial] = await Promise.all([
-    getTimeline(),
+    getTimeline({ origins: true }),
     Promise.resolve(roomOptions()),
     searchParams.then(parseSelection),
   ]);

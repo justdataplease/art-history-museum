@@ -489,7 +489,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
     // grain texture (one canvas, one upload).
     const furniture = furnitureOf(theme);
     const grainy = furniture.wood.finish === "grain";
-    const woodFloor = theme.floor.kind !== "concrete";
+    const woodFloor = theme.floor.kind !== "concrete" && theme.floor.kind !== "marble";
     const grain =
       woodFloor || grainy
         ? woodGrainTexture(theme.floor.kind === "oak-dark" ? "oak-dark" : "oak-light")

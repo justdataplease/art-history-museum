@@ -16,45 +16,60 @@ export interface MuseumRoom {
 }
 
 const floor = (f: Partial<FloorSpec> & { label: string }): FloorSpec => ({
-  from: null, to: null, style: null, wall: null, works: null, intro: null, who: [], ...f,
+  from: null, to: null, style: null, wall: null, works: null, intro: null, who: [], ground: null, number: null, ...f,
 });
 
-// The National Gallery – Alexandros Soutsos Museum, Athens, as rehung in its new wing (2021): floor 1 the
-// post-Byzantine and 19th-century collection, floor 2 the 20th century; grey-blue walls, marble floors, light
-// from the ceiling. nationalgallery.gr (floor plan, permanent exhibition), lifo.gr (interiors).
+// The National Gallery – Alexandros Soutsos Museum, Athens, as reopened in 2021 (its own floor numbers): −2 the
+// Western European room (2022, 14th to 20th century, by school) beside the temporary hall; 1 the post-Byzantine
+// icons, El Greco, the Ionian School and the 19th century; 2 the 20th century (Omada Techni, the Generation of
+// the '30s, abstraction); 3 the post-war wing, closed since September 2025 (and nearly all of it still in
+// copyright here). Floors 1 and 2: long halls of pale blue-grey walls broken by free-standing partitions, polished
+// white marble with grey veins underfoot, a flat white ceiling with recessed light strips, a band of high windows,
+// gilt frames in a single row, low black curved benches. nationalgallery.gr (permanent exhibition, the building),
+// the lobby's floor directory and gallery photos on Wikimedia Commons (Category:National Gallery of Greece -
+// Interior), lifo.gr, iefimerida.gr and travel.gr on the 2021 rehang.
 const ATHENS: Partial<Selection> = {
   title: "National Gallery of Greece",
   museums: ["national-gallery-of-greece"],
   style: "museum",
-  wall: "#8e9ba5",
+  wall: "#d2d6d5",
+  ground: "marble",
   max: 96,
-  firstFloor: 1,
   floors: "plan",
   intro:
-    "The National Gallery – Alexandros Soutsos Museum in Athens, as rehung in 2021 in its new wing: grey-blue " +
-    "walls, marble floors, daylight from the ceiling. Its works in this collection, floor by floor.",
+    "The National Gallery – Alexandros Soutsos Museum in Athens, as reopened in 2021: long pale halls with " +
+    "free-standing walls, white marble underfoot. Its works in this collection, on its own floors.",
   plan: [
     floor({
+      label: "European painting",
+      number: -2,
+      who: ["Flemish", "French", "Dutch", "Russians", "Italians", "Germans", "British", "Austrians"],
+      works: 10,
+      intro: "The Western European room, opened in 2022: Flemish, French and Dutch painting beside the Greek collection.",
+    }),
+    floor({
       label: "From El Greco to 1900",
+      number: 1,
       to: 1909,
-      works: 66,
+      works: 72,
       intro:
-        "Post-Byzantine art and the Cretan School, Domenicos Theotokopoulos, the Ionian School, the painting of the " +
-        "free Greek state under King Othon, the bourgeois class and its painters, and the years around 1900.",
+        "Post-Byzantine icons and the Cretan School, Domenicos Theotokopoulos, the Ionian School, painting under " +
+        "King Othon, the bourgeoisie and its painters, and the years around 1900.",
     }),
     floor({
       label: "The 20th century",
+      number: 2,
       from: 1910,
-      to: 1960,
-      works: 30,
-      intro: "From the Omada Techni of 1917 to the Generation of the Thirties.",
+      wall: "#d9dbd9",
+      works: 16,
+      intro: "From the Omada Techni of 1917 to the Generation of the Thirties and the first abstraction.",
     }),
   ],
   include: [
     "el-greco/concert-of-angels",
     "el-greco/the-entombment-of-christ-el-greco",
     "stephanos-tzangarolas/adoration-of-the-shepherds-tzangarolas",
-    "nikolaos-doxaras/kimisis-tis-theotokou-doxaras-q135687053@1",
+    "nikolaos-doxaras/kimisis-tis-theotokou-doxaras-q135687053@2",
     "theodoros-vryzakis/the-reception-of-lord-byron-at-missolonghi",
     "theodoros-vryzakis/wikiart-the-old-patras-germanos-blesses-the-flag-of-the-revolution-1865",
     "theodoros-vryzakis/grateful-hellas-q19597999",
@@ -63,7 +78,7 @@ const ATHENS: Partial<Selection> = {
     "nikolaos-gyzis/wikiart-carnival-in-athens-1892",
     "nikolaos-gyzis/wikiart-the-slave-market-1875",
     "nikolaos-gyzis/behold-the-bridegroom-arriving",
-    "nikolaos-gyzis/after-the-destruction-of-psara-q112669163@1",
+    "nikolaos-gyzis/after-the-destruction-of-psara-q112669163@2",
     "nikolaos-gyzis/the-spider-q24259028",
     "nikolaos-gyzis/spring-symphony-q24083094",
     "georgios-jakobides/children-s-concert-q56706738",
@@ -72,7 +87,7 @@ const ATHENS: Partial<Selection> = {
     "konstantinos-volanakis/wikiart-1883-1885",
     "pericles-pantazis/wikiart-lady-in-the-mirror-with-a-fan-1882",
     "ioannis-altamouras/caique-at-spetses-q22671102",
-    "theodore-ralli/vespers-ralli-q136341765@1",
+    "theodore-ralli/vespers-ralli-q136341765@2",
     "konstantinos-maleas/wikiart-santorini-1928",
   ],
 };
@@ -241,15 +256,16 @@ const LOUVRE: Partial<Selection> = {
   ],
 };
 
-const room = (sel: Partial<Selection>) => selectionQuery({ ...EMPTY_SELECTION, ...sel });
+/** A museum's link; `floor`: the plan floor it opens on (the museum's entrance floor). */
+const room = (sel: Partial<Selection>, floor?: number) => selectionQuery({ ...EMPTY_SELECTION, ...sel }, floor);
 
 export const MUSEUM_ROOMS: MuseumRoom[] = [
   {
     slug: "national-gallery-of-greece",
     name: "National Gallery of Greece",
     city: "Athens",
-    note: "El Greco, the Ionian School, Gyzis, Lytras and Iakovidis on floor 1, the 20th century on floor 2, in the new wing's grey-blue and marble.",
-    query: room(ATHENS),
+    note: "El Greco, the Ionian School, Gyzis, Lytras and Iakovidis on floor 1, the 20th century on floor 2, European painting on −2, in pale grey halls on white marble.",
+    query: room(ATHENS, 2),
   },
   {
     slug: "rijksmuseum",

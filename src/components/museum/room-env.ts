@@ -100,7 +100,7 @@ export function initialEnvironment(
   };
   const wallK = 0.32;
   const wall = lin(theme.wall.color, wallK);
-  const floor = lin(theme.floor.tint, theme.floor.kind === "concrete" ? 0.6 : 0.5);
+  const floor = lin(theme.floor.tint, theme.floor.kind === "concrete" || theme.floor.kind === "marble" ? 0.6 : 0.5);
   const ceil = lin(theme.ceiling, 0.45);
   // walls
   add(new THREE.PlaneGeometry(L, H), wall, [-W / 2, H / 2, zc], 0, Math.PI / 2);

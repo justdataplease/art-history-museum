@@ -227,14 +227,17 @@ ORDER BY a.slug`;
 
 // ---------- public API ----------
 
-export async function getTimeline(): Promise<TimelineData> {
+/** The timeline: every period and artist. `origins`: each artist's country and continent too (the Explore
+ *  filters), read from rooms.json; the pages that only need the order leave it out. */
+export async function getTimeline({ origins = false }: { origins?: boolean } = {}): Promise<TimelineData> {
+  const place = origins ? withOrigin : (a: Artist) => a;
   return read(
     async (db) => {
       const r = await db.query<{ data: TimelineData }>(TIMELINE_SQL);
       const d = r.rows[0].data;
       return {
         periods: d.periods.map(toPeriod),
-        artists: d.artists.map((a) => withOrigin(toArtist(a, a.paintingCount))),
+        artists: d.artists.map((a) => place(toArtist(a, a.paintingCount))),
       };
     },
     () => {
@@ -242,7 +245,7 @@ export async function getTimeline(): Promise<TimelineData> {
       if (!c) return { periods: [], artists: [] };
       return {
         periods: c.periods.map(toPeriod),
-        artists: c.artists.map((a) => withOrigin(toArtist(a, a.paintings.length))),
+        artists: c.artists.map((a) => place(toArtist(a, a.paintings.length))),
       };
     }
   );

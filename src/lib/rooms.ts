@@ -11,8 +11,9 @@
 import "server-only";
 import fs from "node:fs";
 import path from "node:path";
-import type { ArtistWithPaintings, GuideArtist, Painting, RoomFloor } from "./types";
+import type { ArtistWithPaintings, GuideArtist, Painting, RoomFloor, WorkAbout } from "./types";
 import { getArtist } from "./data";
+import { artistOrigin } from "./countries";
 import { FEATURED_ARTIST_SLUGS } from "@/components/timeline/featured-artists";
 import { paintingTextureUrl } from "./img";
 import { hasFilters, selectionQuery, workFloor, workKey, type FloorSpec, type Selection } from "./room-query";
@@ -100,10 +101,22 @@ function ofNation(a: IndexArtist | undefined, nations: string[]): boolean {
   });
 }
 
-/** The floor of a plan a work belongs on: the first whose years (and nationalities, when it names any) hold it;
- *  undated works go to the first floor without years. */
+/** Each artist's middle year: the median of their dated works (built on first use). */
+let artistYears: Map<string, number> | null = null;
+function artistYear(artist: string): number | null {
+  if (!artistYears) {
+    const by = new Map<string, number[]>();
+    for (const x of readIndex()?.works ?? []) if (x[6] != null) (by.get(x[0]) ?? by.set(x[0], []).get(x[0])!).push(x[6]);
+    artistYears = new Map([...by].map(([k, ys]) => [k, ys.sort((p, q) => p - q)[ys.length >> 1]]));
+  }
+  return artistYears.get(artist) ?? null;
+}
+
+/** The floor of a plan a work belongs on: the first whose years (and nationalities, when it names any) hold it.
+ *  An undated work goes to the first such floor without years, else where its artist's middle year falls. */
 function planFloor(plan: FloorSpec[], w: IndexWork, a: IndexArtist | undefined): number {
-  const y = w[6];
+  const open = (f: FloorSpec) => f.from == null && f.to == null && (!f.who.length || ofNation(a, f.who));
+  const y = w[6] ?? (plan.some(open) ? null : artistYear(w[0]));
   for (let i = 0; i < plan.length; i++) {
     const f = plan[i];
     if (f.who.length && !ofNation(a, f.who)) continue;
@@ -257,7 +270,8 @@ function floorLabels(s: Selection, floors: Floor[], single: string): string[] {
     if (floors.length < 2) return f.spec?.label || single;
     const name = floorName(f);
     // a floor the visitor named "Floor 2" or "Level 0" keeps its own name
-    return /^(floor|level|storey)\s*-?\d/i.test(name) ? name : `Floor ${s.firstFloor + i} · ${name}`;
+    const no = f.spec?.number ?? s.firstFloor + i;
+    return /^(floor|level|storey)\s*-?\d/i.test(name) ? name : `Floor ${no < 0 ? `−${-no}` : no} · ${name}`;
   });
 }
 
@@ -324,7 +338,7 @@ export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | nul
     label: labels[i],
     href: `/room?${selectionQuery(s, i + 1)}`,
     works: f.works.length,
-    number: s.firstFloor + i,
+    number: f.spec?.number ?? s.firstFloor + i,
   }));
   const years = paintings.map((p) => p.year).filter((y): y is number => y != null);
   const spec = floor.spec;
@@ -346,9 +360,10 @@ export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | nul
     paintings,
     room: {
       subtitle, href: roomFloors[floorNo - 1].href, floors: roomFloors, floor: floorNo, artists: guide,
-      // a floor of the visitor's plan may have its own style, wall and wall text
+      // a floor of the visitor's plan may have its own style, wall, floor and wall text
       style: spec?.style ?? s.style,
       wall: spec?.wall ?? s.wall,
+      ground: spec?.ground ?? s.ground,
       order: s.order,
       intro: spec?.intro ?? s.intro,
     },
@@ -430,18 +445,11 @@ export async function searchWorks(q: string, artist?: string | null, limit = 12)
   return previewWorks(hits.slice(0, limit));
 }
 
-/** What the inspect panel adds about a work (item 9): its movement and genre, the museums that hold it, and the
- *  best known works other artists painted the same year. */
-export interface WorkAbout {
-  movement: string | null;
-  genre: string | null;
-  museums: string[];
-  sameYear: { artistSlug: string; artistName: string; slug: string; title: string }[];
-}
-
 /** Every dated work by year, best known first (built on first use). */
 let worksOfYear: Map<number, IndexWork[]> | null = null;
 
+/** What the inspect panel adds about a work: its tags, the museums that hold it, and the best known works other
+ *  artists painted the same year. */
 export async function workAbout(artist: string, slug: string): Promise<WorkAbout | null> {
   const ix = readIndex();
   const w = ix && workByKey!.get(`${artist}/${slug}`);
@@ -474,5 +482,22 @@ export async function workAbout(artist: string, slug: string): Promise<WorkAbout
     );
     sameYear = found.filter((x): x is NonNullable<typeof x> => !!x);
   }
-  return { movement: term(w[4]), genre: term(w[5]), museums, sameYear };
+  // the tags: the work's own era, period, movement and genre; the artist's schools and groups (and movements, when
+  // the work has none of its own); the artist's country
+  const ia = ix.artists[artist];
+  const tags: WorkAbout["tags"] = [];
+  const add = (kind: string, name: string | null | undefined) => {
+    if (name && !tags.some((t) => t.name === name)) tags.push({ kind, name });
+  };
+  for (const id of [w[2], w[3], w[4]]) {
+    const t = id ? termById!.get(id) : null;
+    if (t) add(t.kind === "historical-period" ? "period" : t.kind, t.name);
+  }
+  const own = (ia?.terms ?? []).map((id) => termById!.get(id)).filter((t): t is RoomTerm => !!t);
+  if (!w[4]) for (const t of own.filter((t) => t.kind === "movement").slice(0, 2)) add("movement", t.name);
+  for (const t of own.filter((t) => SCHOOL_KINDS.has(t.kind)).slice(0, 3)) add(t.kind, t.name);
+  add("genre", term(w[5]));
+  const a = await getArtist(artist);
+  add("country", artistOrigin(artist, ia, a?.tagline).country);
+  return { tags, museums, sameYear };
 }

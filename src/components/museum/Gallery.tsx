@@ -97,6 +97,7 @@ export interface GalleryProps {
     prev: GalleryLink | null;
     next: GalleryLink | null;
     onThrough: (side: ExitSide) => void;
+    onNear: (near: boolean) => void;
   };
 }
 
@@ -306,6 +307,7 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
           next={props.exits.next}
           enabled={props.walkEnabled}
           onThrough={props.exits.onThrough}
+          onNear={props.exits.onNear}
         />
       )}
       {/* after the controls: it reads the camera they have just moved */}

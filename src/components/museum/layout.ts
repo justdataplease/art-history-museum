@@ -762,9 +762,9 @@ function elevatorSpot(W: number): ElevatorSpot {
     halfWidth,
     height: 2.5,
     panelX: -(inner + clear + gap / 2 + 0.02),
-    directoryX: clear >= 0.8 ? -(inner + clear / 2) : beyond >= 0.8 ? -(x + halfWidth + frame + beyond / 2) : null,
+    directoryX: clear >= 0.66 ? -(inner + clear / 2) : beyond >= 0.66 ? -(x + halfWidth + frame + beyond / 2) : null,
     // as wide as reads from a step away (the full floor names), with a margin of wall either side
-    directoryWidth: Math.max(0.56, Math.min(0.84, (clear >= 0.8 ? clear : beyond) - 0.24)),
+    directoryWidth: Math.max(0.5, Math.min(0.84, (clear >= 0.66 ? clear : beyond) - 0.2)),
   };
 }
 
@@ -1014,7 +1014,7 @@ export function roomAt(layout: GalleryLayout, z: number): number {
 }
 
 /** Margin kept between the camera and a wall face. */
-const WALL_MARGIN = 0.55;
+export const WALL_MARGIN = 0.55;
 
 /** Push p (a disc of radius r) out of the box [x0, x1] × [z0, z1]. */
 function pushOut(
@@ -1090,7 +1090,10 @@ export function confine(p: { x: number; z: number }, layout: GalleryLayout, feet
 
 /** Everything in the way on the floor, as footprints: the furniture (its turned footprint's box) and a
  *  palace gallery's columns. */
+const seatBoxes = new WeakMap<GalleryLayout, Bench[]>();
 function seatsOf(layout: GalleryLayout): Bench[] {
+  const kept = seatBoxes.get(layout);
+  if (kept) return kept;
   const out: Bench[] = layout.furniture.map((f) => {
     const [hx, hz] = turnedHalf(f.size, f.rotation);
     return { position: f.position, size: [2 * hx, 2 * hz], ...(f.top ? { top: f.top } : {}) };
@@ -1099,6 +1102,7 @@ function seatsOf(layout: GalleryLayout): Bench[] {
   for (const { box: [x0, x1, z0, z1] } of layout.barriers) {
     out.push({ position: [(x0 + x1) / 2, (z0 + z1) / 2], size: [x1 - x0 + 0.1, z1 - z0 + 0.1] });
   }
+  seatBoxes.set(layout, out);
   return out;
 }
 

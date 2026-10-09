@@ -28,7 +28,7 @@ import { duckMusic, MuseumAudio, musicMuted } from "./MuseumAudio";
 import { AudioGuide } from "./AudioGuide";
 import { FxGate } from "./fx/Gate";
 import { SettingsPanel } from "./SettingsPanel";
-import { setSettings, useSettings } from "./settings";
+import { setSettings, useSetting } from "./settings";
 import { galleryTheme, roomTheme } from "./theme";
 import { createSettleTracker, type SettleTracker } from "./renderer-motion";
 import styles from "./museum.module.css";
@@ -94,7 +94,7 @@ export function MuseumApp({
   // a custom room may choose its room style, wall colour and hanging order (src/lib/rooms.ts)
   const design = artist.room;
   const theme = useMemo(
-    () => (design ? roomTheme(artist.periodSlug, design.style, design.wall) : galleryTheme(artist.periodSlug)),
+    () => (design ? roomTheme(artist.periodSlug, design.style, design.wall, design.ground) : galleryTheme(artist.periodSlug)),
     [artist.periodSlug, design]
   );
   const layout = useMemo(() => {
@@ -128,7 +128,7 @@ export function MuseumApp({
   const [touchActive, setTouchActive] = useState(false);
   // the settings card (O), and whether the on-screen controls show (H)
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const hud = useSettings().hud;
+  const hud = useSetting("hud");
   const [inspect, setInspect] = useState<Placement | null>(null);
   const [returning, setReturning] = useState(false);
   const [allSettled, setAllSettled] = useState(false);
@@ -389,18 +389,26 @@ export function MuseumApp({
     };
   }, [gate, tracker]);
 
-  // Esc inside inspect returns to the walking position.
+  // Esc inside inspect returns to the walking position; so does a click on the room beside the panel (a
+  // gesture, so the cursor is taken back at once and the visitor walks on)
   useEffect(() => {
     if (!inspect) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeInspect();
     };
+    const onClick = (e: MouseEvent) => {
+      if (e.button === 0 && (e.target as Element | null)?.tagName === "CANVAS") closeInspect(true);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [inspect, closeInspect]);
+    if (!touch) window.addEventListener("click", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("click", onClick);
+    };
+  }, [inspect, closeInspect, touch]);
 
   const walkEnabled = doorsOpen && arrived && !inspect && !returning && !riding && !settingsOpen;
-  const navEnabled = rooms > 1 && doorsOpen && arrived && !inspect && !returning && !riding;
+  const navEnabled = rooms > 1 && doorsOpen && arrived && !inspect && !returning && !riding && !settingsOpen;
 
   // ---- settings: O opens the card (freeing the cursor to click it), H shows or hides the on-screen controls
   const canSettle = doorsOpen && arrived && !inspect && !returning && !riding;
@@ -519,12 +527,11 @@ export function MuseumApp({
   // ---- an artist's gallery: the doors at its end to the artists before and after (or the timeline), and a
   // surprise: another period's gallery. Walking up to a door, the HUD's buttons, or E / Q in the last room.
   const exitHref = useCallback(
-    (side: ExitSide | "surprise") =>
-      side === "surprise"
-        ? `/surprise?from=${encodeURIComponent(artist.slug)}`
-        : (side === "prev" ? neighbours?.prev : neighbours?.next)
-          ? `/museum/${(side === "prev" ? neighbours!.prev : neighbours!.next)!.slug}`
-          : "/",
+    (side: ExitSide | "surprise") => {
+      if (side === "surprise") return `/surprise?from=${encodeURIComponent(artist.slug)}`;
+      const to = side === "prev" ? neighbours?.prev : neighbours?.next;
+      return to ? `/museum/${to.slug}` : "/";
+    },
     [artist.slug, neighbours]
   );
   const [leaving, setLeaving] = useState(false);
@@ -532,6 +539,9 @@ export function MuseumApp({
     (side: ExitSide | "surprise") => {
       if (leaving) return;
       setLeaving(true);
+      // a room jump under way must not lift the fade
+      clearTimeout(jumpTimer.current);
+      jumping.current = true;
       duckMusic(0.25, 0.8);
       setFading(true);
       if (document.pointerLockElement) document.exitPointerLock();
@@ -540,15 +550,21 @@ export function MuseumApp({
     },
     [leaving, exitHref, router]
   );
-  const atEnd = !!layout.exits && !!neighbours && room === rooms - 1;
-  // the galleries behind the doors load while the visitor walks the last room
+  // in the last room (the galleries behind the doors load meanwhile); at the end wall (the doors report it), or
+  // anywhere in the last room of a hall too narrow for doors, the HUD offers them and Q / E go through
+  const inLast = !design && !!neighbours && room === rooms - 1;
+  const [nearEnd, setNearEnd] = useState(false);
+  const atEnd = inLast && (layout.exits ? nearEnd : true);
   useEffect(() => {
-    if (!atEnd) return;
+    if (!inLast) return;
     router.prefetch(exitHref("prev"));
     router.prefetch(exitHref("next"));
-  }, [atEnd, exitHref, router]);
+  }, [inLast, exitHref, router]);
   const exits = useMemo(
-    () => (layout.exits && neighbours ? { prev: neighbours.prev, next: neighbours.next, onThrough: leave } : undefined),
+    () =>
+      layout.exits && neighbours
+        ? { prev: neighbours.prev, next: neighbours.next, onThrough: leave, onNear: setNearEnd }
+        : undefined,
     [layout.exits, neighbours, leave]
   );
   useEffect(() => {
@@ -810,8 +826,8 @@ export function MuseumApp({
         placement={inspect}
         onClose={() => closeInspect(true)}
         touch={touch}
-        artistName={inspect?.painting.artistName ?? artist.name}
-        artistSlug={inspect ? (inspect.painting.artistSlug ?? artist.slug) : ""}
+        artistName={artist.name}
+        artistSlug={artist.slug}
         around={around}
         onPick={selectPainting}
       />

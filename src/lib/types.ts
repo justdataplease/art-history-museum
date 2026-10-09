@@ -95,6 +95,17 @@ export interface GuideArtist {
   bio: string;
 }
 
+/** More about a work for the inspect panel (src/lib/rooms.ts workAbout, /api/work/<artist>/<work>). */
+export interface WorkAbout {
+  /** Where it sits in our taxonomy, broadest first: era (or tradition), period, movement, the artist's schools and
+   *  groups, genre, the artist's country. */
+  tags: { kind: string; name: string }[];
+  /** The museums that hold it. */
+  museums: string[];
+  /** The best known works other artists painted the same year. */
+  sameYear: { artistSlug: string; artistName: string; slug: string; title: string }[];
+}
+
 /** The artist before or after in the timeline's order: an artist's gallery ends at doors to both. */
 export interface GalleryLink {
   slug: string;
@@ -127,6 +138,8 @@ export interface RoomInfo {
    *  (#rrggbb), the hanging order, and an introduction shown at the doors. */
   style: string | null;
   wall: string | null;
+  /** A floor (marble, oak ...) instead of the style's own (theme.ts GROUNDS). */
+  ground: string | null;
   order: "year" | "artist" | "fame";
   intro: string | null;
 }

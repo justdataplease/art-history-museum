@@ -15,20 +15,29 @@ you can visit, freely, without an account.
 - **Explore more than a thousand years of painting.** Browse 35 periods and
   traditions, including Chinese, Japanese, Indian, Persian and European art.
 - **Find your own starting point.** Begin with Featured painters or choose
-  All artists for the full collection of **526 artists and 82,139 works**.
-  Switch between the Gallery Wall and Star Map, zoom into a period, or search
-  for a name in Explore.
+  All artists for the full collection of **572 artists and about 100,000
+  works**. Switch between the Gallery Wall and Star Map, zoom into a period, or
+  search for a name in Explore (it forgives typos), by continent or country.
 - **Walk through an artist's work.** Galleries bring together the works
-  available from the sources, with no limit to famous paintings. Explore
-  rooms arranged by date, with room styles and music chosen for each period.
+  available from the sources, with no limit to famous paintings. Rooms follow
+  the years, or the phases of the artist's life where they are known
+  (Picasso's Blue and Rose periods ...), with room styles and music chosen for
+  each period. At the end, doors lead to the artist before and the artist after.
+- **Make a room.** Hang works by many artists side by side, by era, movement,
+  school, genre, country or museum, and share the link; or walk the Louvre,
+  the Rijksmuseum and the National Gallery of Greece as recreated rooms.
 - **Look closer.** Approach a painting, click it to inspect it, and read about
-  the work or follow its source. Wall labels show recorded dimensions when
-  available and whether the display is at original scale, reduced or enlarged.
+  the work: its era, movement, school and genre, the works before and after it,
+  what others painted the same year, or the original image on its own. Wall
+  labels show recorded dimensions when available and whether the display is at
+  original scale, reduced or enlarged.
 
-On a computer, use **W A S D** to walk and the mouse to look; hold **W** for
-three seconds to run. On a phone, drag to look and tap the floor to walk.
-Click or tap a painting to inspect it. **Explore → How to explore** brings
-back the short guide on the timeline.
+On a computer, use **W A S D** to walk and the mouse to look (hold **W** to
+run), **Space** to jump, **C** to sit, **G** for the audio guide and **O** for
+the settings: walking speed, the canvas texture, and hiding the controls (**H**).
+On a phone, drag to look and tap the floor to walk. Click or tap a painting to
+inspect it. **Explore → How to explore** brings back the short guide on the
+timeline.
 
 The collection is a starting point, and coverage is uneven. Featured is an
 editorial introduction to influential painters, with its

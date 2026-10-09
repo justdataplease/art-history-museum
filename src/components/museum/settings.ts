@@ -1,5 +1,6 @@
 // The visitor's gallery settings, kept in this browser: walking pace, the canvas surface (weave and varnish) and
-// whether the on-screen controls show. Read every frame by Controls (pace) and by every painting (surface).
+// whether the on-screen controls show. Controls reads the pace each frame (getSettings); every painting renders
+// with the surface, the HUD with `hud` (useSetting).
 
 import { useSyncExternalStore } from "react";
 
@@ -63,4 +64,9 @@ const serverSnapshot = () => DEFAULTS;
 
 export function useSettings(): MuseumSettings {
   return useSyncExternalStore(subscribe, getSettings, serverSnapshot);
+}
+
+/** One setting: a component re-renders only when it changes. */
+export function useSetting<K extends keyof MuseumSettings>(key: K): MuseumSettings[K] {
+  return useSyncExternalStore(subscribe, () => getSettings()[key], () => DEFAULTS[key]);
 }

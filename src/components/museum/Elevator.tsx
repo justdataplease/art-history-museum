@@ -167,7 +167,7 @@ export function Elevator({
         g.fillStyle = here ? AMBER : "#e9e1d0";
         g.font = "600 44px Georgia, serif";
         g.fillText(String(floors[i].number ?? i + 1), 44, y);
-        const label = floors[i].label.replace(/^Floor -?\d+ · /, "");
+        const label = floors[i].label.replace(/^Floor [−-]?\d+ · /, "");
         // the whole name: a size smaller where it is long, cut with an ellipsis only past that
         const room = c.width - 104 - 36;
         let size = 30;

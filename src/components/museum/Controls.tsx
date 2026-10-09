@@ -349,8 +349,8 @@ export function Player({
   // hidden: the matching keyup goes to another app and would never arrive.
   // Space jumps (or stands up from a crouch); C, or Ctrl pressed and
   // released on its own (Ctrl+anything stays the browser's), toggles the
-  // crouch. Only while walking with the pointer locked, never from a field
-  // or a focused control.
+  // crouch. Only while walking with the pointer locked (a walk key pressed
+  // without it asks for it), never from a field or a focused control.
   useEffect(() => {
     let bareCtrl = false;
     const active = (e: KeyboardEvent) => walkRef.current && isLocked() && !isFieldOrControl(e.target);
