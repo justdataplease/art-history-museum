@@ -34,7 +34,7 @@ const ATHENS: Partial<Selection> = {
   style: "museum",
   wall: "#d2d6d5",
   ground: "marble",
-  max: 96,
+  max: 160,
   floors: "plan",
   intro:
     "The National Gallery – Alexandros Soutsos Museum in Athens, as reopened in 2021: long pale halls with " +
@@ -44,14 +44,14 @@ const ATHENS: Partial<Selection> = {
       label: "European painting",
       number: -2,
       who: ["Flemish", "French", "Dutch", "Russians", "Italians", "Germans", "British", "Austrians"],
-      works: 10,
+      works: 16,
       intro: "The Western European room, opened in 2022: Flemish, French and Dutch painting beside the Greek collection.",
     }),
     floor({
       label: "From El Greco to 1900",
       number: 1,
       to: 1909,
-      works: 72,
+      works: 120,
       intro:
         "Post-Byzantine icons and the Cretan School, Domenicos Theotokopoulos, the Ionian School, painting under " +
         "King Othon, the bourgeoisie and its painters, and the years around 1900.",
@@ -61,7 +61,7 @@ const ATHENS: Partial<Selection> = {
       number: 2,
       from: 1910,
       wall: "#d9dbd9",
-      works: 16,
+      works: 36,
       intro: "From the Omada Techni of 1917 to the Generation of the Thirties and the first abstraction.",
     }),
   ],

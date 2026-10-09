@@ -4,6 +4,7 @@
 //
 //   npm run ingest                # artists with a cache file are served from it
 //   npm run ingest -- --refresh   # re-fetch every artist (ignore the per-artist caches)
+//   npm run ingest -- --new       # the checks below only for artists new since the last museum.json (minutes, not hours)
 //
 // An artist whose fetch fails keeps its previous cache entry (or its entry in
 // the previous museum.json), so one failed request never drops a gallery.
@@ -46,6 +47,9 @@ const CACHE = path.join(ROOT, "data", "wikipedia");
 const ARTIST_CACHE = path.join(CACHE, "artists");
 fs.mkdirSync(ARTIST_CACHE, { recursive: true });
 const REFRESH = process.argv.includes("--refresh");
+// Licences, vetting and enrichment only for the artists the last museum.json does not have; the others stay as
+// that run left them.
+const NEW_ONLY = process.argv.includes("--new");
 // Older caches contain only article works and a small Commons top-up.
 const INGEST_VERSION = 5;
 
@@ -279,11 +283,24 @@ function articleOf(seedTitle: string): [string, string] {
   return m ? [m[1], m[2]] : ["en", seedTitle];
 }
 
-/** The English Wikidata description ("Greek painter (1923–1984)"), for an artist without an English article. */
-async function englishDescription(qid: string): Promise<string> {
+const GREEK: Record<string, string> = {
+  α: "a", β: "v", γ: "g", δ: "d", ε: "e", ζ: "z", η: "i", θ: "th", ι: "i", κ: "k", λ: "l", μ: "m", ν: "n", ξ: "x",
+  ο: "o", π: "p", ρ: "r", σ: "s", ς: "s", τ: "t", υ: "y", φ: "f", χ: "ch", ψ: "ps", ω: "o",
+};
+
+/** An artist's slug from the seed title, a Greek one in Latin letters ("el:Σωτήρης Χρηστίδης" -> "sotiris-christidis"). */
+function artistSlug(seedTitle: string): string {
+  const title = articleOf(seedTitle)[1].normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .replace(/ου/g, "ou").replace(/[α-ω]/g, (c) => GREEK[c] ?? c);
+  return slugify(title);
+}
+
+/** The English Wikidata label and description ("Greek painter (1923–1984)"), for an artist without an English article. */
+async function englishTerms(qid: string): Promise<{ label: string; description: string }> {
   const data = await wikiLimit(() => fetchJson<any>(
-    `https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=descriptions&languages=en&ids=${qid}`));
-  return data?.entities?.[qid]?.descriptions?.en?.value ?? "";
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=labels|descriptions&languages=en&ids=${qid}`));
+  const e = data?.entities?.[qid];
+  return { label: e?.labels?.en?.value ?? "", description: e?.descriptions?.en?.value ?? "" };
 }
 
 function usableCatalogueImage(cand: SparqlPainting, ci: CommonsFileInfo, periodSlug: string): boolean {
@@ -393,7 +410,7 @@ export async function ingestArtist(
   periodSlug: string
 ): Promise<ArtistOut | null> {
   const [lang, articleTitle] = articleOf(wikiTitle);
-  const slug = slugify(articleTitle);
+  const slug = artistSlug(wikiTitle);
   const cacheFile = path.join(ARTIST_CACHE, `${slug}.json`);
   if (!REFRESH && fs.existsSync(cacheFile)) {
     const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as ArtistOut;
@@ -621,19 +638,21 @@ export async function ingestArtist(
     if (ci) portrait = { url: ci.url.split("?")[0], width: ci.width, height: ci.height };
   }
 
+  // no English article: the English Wikidata name and description, and the article in its own language is linked
+  const english = lang !== "en" && qid ? await englishTerms(qid) : null;
+  const name = english?.label || cleanArtistName(stripHtml(summary.displaytitle ?? summary.title));
   const artist: ArtistOut = {
     slug,
     periodSlug,
     // display name without a "(artist)" disambiguator; wikiTitle keeps the article title
-    name: cleanArtistName(stripHtml(summary.displaytitle ?? summary.title)),
+    name,
     wikiTitle: lang === "en" ? summary.title : wikiTitle,
     qid,
     birthYear: dates.birthYear ?? null,
     deathYear: dates.deathYear ?? null,
-    tagline: lang === "en" ? summary.description ?? "" : (qid ? await englishDescription(qid) : ""),
-    // no English article: the English description, and the article in its own language is linked
+    tagline: lang === "en" ? summary.description ?? "" : english?.description ?? "",
     bio: lang === "en" ? summary.extract
-      : `${cleanArtistName(stripHtml(summary.displaytitle ?? summary.title))}: ${qid ? await englishDescription(qid) : ""}. `
+      : `${name}: ${english?.description ?? ""}. `
         + `There is no English Wikipedia article yet; the biography is on the ${LANGUAGE_NAMES[lang] ?? lang} Wikipedia.`,
     portraitUrl: portrait?.url ?? null,
     portraitWidth: portrait?.width ?? null,
@@ -695,7 +714,7 @@ export async function classifyLicences(artists: ArtistOut[]): Promise<{ painting
 
 /** The previous run's entry for an artist: its cache file, else its entry in museum.json. */
 function previousArtist(wikiTitle: string, previous: Map<string, ArtistOut>): ArtistOut | null {
-  const file = path.join(ARTIST_CACHE, `${slugify(wikiTitle)}.json`);
+  const file = path.join(ARTIST_CACHE, `${artistSlug(wikiTitle)}.json`);
   if (fs.existsSync(file)) {
     try {
       return JSON.parse(fs.readFileSync(file, "utf8")) as ArtistOut;
@@ -765,16 +784,19 @@ async function main() {
 
   // Canonical image URLs; a non-free (fair-use) image of a work stays, labelled ©.
   console.log("\n== Licences (non-free images -> labelled © In copyright) ==");
-  const lic = await classifyLicences(artistsOut);
+  const prevSlugs = new Set(prev.artists.map((a) => a.slug));
+  const checked = NEW_ONLY ? artistsOut.filter((a) => !prevSlugs.has(a.slug)) : artistsOut;
+  if (NEW_ONLY) console.log(`   checking the ${checked.length} new artists only`);
+  const lic = await classifyLicences(checked);
   problems.push(`licences: ${lic.paintings} works still in copyright (labelled ©), ${lic.portraits} non-free portraits dropped`);
 
   console.log("\n== Vetting (images vs works, © labels, Commons stories) ==");
-  const fileMeta = await vetCollection(artistsOut, problems);
+  const fileMeta = await vetCollection(checked, problems);
 
   // Physical size (Wikidata P2049/P2048), 12-month pageviews, Wikidata item,
   // year sanity, image credit lines — same pass as `npm run enrich`.
   console.log("\n== Enrich (Wikidata dimensions + pageviews + credits) ==");
-  const enrich = await enrichArtists(artistsOut, { fileMeta });
+  const enrich = await enrichArtists(checked, { fileMeta });
   for (const r of enrich.failures) problems.push(`enrich: ${r}`);
   for (const r of enrich.removed) problems.push(`removed (by another artist): ${r}`);
   for (const r of enrich.removedSeries) problems.push(`removed (series represented by individual works): ${r}`);

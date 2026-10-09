@@ -19,6 +19,7 @@ The app reads the bundled snapshot, so that's all you need. Optional extras:
 # data/wikipedia/artists, and --refresh re-fetches them all.
 npm run ingest
 npm run ingest -- --refresh
+npm run ingest -- --new      # artists just added to scripts/seed.ts: only they are re-checked (minutes)
 
 # Re-check the snapshot in place (non-artworks, images, dates, sizes,
 # copyright, credits) and write a report. --dry-run writes nothing.
@@ -61,6 +62,7 @@ archive/.venv/Scripts/python -m archive.wikidata artists
 archive/.venv/Scripts/python -m archive.warehouse build
 archive/.venv/Scripts/python -m archive.fingerprints
 archive/.venv/Scripts/python -m archive.warehouse build
+archive/.venv/Scripts/python -m archive.commons fetch   # data/commons: works only Commons has (thin galleries, museums' categories); it reads data/site, so new artists need an archive.site first
 archive/.venv/Scripts/python -m archive.site   # data/site/museum.json, rooms.json (`archive.site rooms`: rooms.json only)
 archive/.venv/Scripts/python -m archive.guide build   # data/site/guide: audio guide scripts
 archive/.venv/Scripts/python -m archive.phases        # data/site/phases.json: the phases galleries follow

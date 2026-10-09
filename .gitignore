@@ -66,3 +66,4 @@ __pycache__/
 # the site snapshot (archive/site.py), rebuilt from the ingest and the warehouse; deployed, not tracked (size)
 /data/site/
 /data/fingerprints/
+/data/commons/

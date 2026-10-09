@@ -201,10 +201,13 @@ export function selectWorks(s: Selection): { works: IndexWork[]; floors: Floor[]
     }
   }
   picked.sort((x, y) => y.score - x.score);
-  // a fair share per artist, unless the visitor chose only one or two artists
+  // a fair share per artist when there is more than room for, unless the visitor chose only one or two artists
+  // (a museum's whole holdings hang: its Gyzis and Ralli rooms are not cut to four works each)
   const nArtists = new Set(picked.map((p) => p.work[0])).size;
-  const shareOf = (max: number) =>
-    artists.size && artists.size <= 2 ? Infinity : Math.max(3, Math.ceil((max * 2) / Math.max(1, nArtists)));
+  const shareOf = (max: number, pool: Picked[]) =>
+    pool.length <= max || (artists.size && artists.size <= 2)
+      ? Infinity
+      : Math.max(3, Math.ceil((max * 2) / Math.max(1, nArtists)));
 
   // the visitor's own floors: each takes its own works (its size, or an even share of max)
   if (plan.length) {
@@ -217,14 +220,14 @@ export function selectWorks(s: Selection): { works: IndexWork[]; floors: Floor[]
     const even = Math.max(4, Math.round(s.max / plan.length));
     pools.forEach((pool, i) => {
       const max = plan[i].works ?? even;
-      floors[i].works = take(pool, max, shareOf(max)).sort(byYear);
+      floors[i].works = take(pool, max, shareOf(max, pool)).sort(byYear);
       floors[i].eras = [...new Set(floors[i].works.map((w) => w[2]))];
     });
     const kept = floors.filter((f) => f.works.length);
     return { works: kept.flatMap((f) => f.works), floors: kept };
   }
 
-  const chosen = take(picked, Math.max(s.max, pinned.size), shareOf(s.max)).sort(byYear);
+  const chosen = take(picked, Math.max(s.max, pinned.size), shareOf(s.max, picked)).sort(byYear);
 
   // floors: one per era when the room spans eras. An era with too few works for a room of its own shares the
   // floor of the era before it (or after it, for the first): "Medieval & Renaissance".

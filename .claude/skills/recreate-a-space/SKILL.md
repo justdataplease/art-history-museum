@@ -65,16 +65,25 @@ writing the room:
 - per painter, our gallery (`data/site/museum.json`: works with an image) against their Commons category
   (`Category:Paintings by <name>`).
 
-Then, per painter, the existing process does the rest (metadata only; the images stay on Commons):
+Then the existing process does the rest (metadata only; the images stay on Commons):
 
-- not in the seed: add their English Wikipedia title to the right period's `artists` in `scripts/seed.ts` (they
-  get a gallery on the timeline too);
-- in the seed but thin: add their Commons category to `COMMONS_CATALOGUES` in `scripts/seed.ts` (the ingest takes
-  its freely licensed files as works) and delete their cache file `data/wikipedia/artists/<slug>.json`;
-- died after 1955: leave them out, their works are still in copyright here.
+- add the museum's Commons category to `MUSEUMS` in `archive/commons.py`: `python -m archive.commons fetch` reads
+  each photograph's painter from its categories or its name, keeps whole paintings by public-domain painters
+  (no details, exhibition views or close-ups; several photographs of one painting hang once, told by image), and
+  `archive.site` hangs those none of the painter's works already, marking the ones it already has as held by the
+  museum (rooms.json `museums`). The same fetch tops up every thin gallery (under 25 works) from the painter's
+  own Commons category;
+- give titles in another language an English one in `archive/commons_titles.json` (Commons file -> title);
+- painters it names as "not ours", and the museum's Wikidata creators we lack (the SPARQL above), are not on the
+  site: add their English Wikipedia title (or "el:<title>" for a Greek article only; check the article is the
+  painter, not a namesake) to the right period's `artists` in `scripts/seed.ts`, then `npm run ingest -- --new`,
+  `archive.wikidata artists`, `archive.wikidata works` and `archive.warehouse build` (nationalities for the
+  floors' `who`, collections for the museum). They get a gallery on the timeline too, and the Commons fetch
+  fills it;
+- died after 1955: they stay out, their works are still in copyright here.
 
-Rebuild: `npm run ingest`, `npm run repair-data`, then the archive steps in `docs/DEVELOPMENT.md`
-(`archive.warehouse build`, `archive.site`, `archive.guide build`, `archive.phases`), and count again.
+Rebuild: `archive.site` (so the new painters are on it), `archive.commons fetch`, `archive.site` again,
+`archive.guide build`, `archive.phases`, and count again.
 
 A work hangs on the first floor of the plan whose years and nationalities (`who`) hold it, so a floor kept for
 foreign schools (`who: ["Flemish", "French", ...]`) can come first; leave out a nationality that also matches a
