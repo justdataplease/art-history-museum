@@ -35,7 +35,7 @@ export default async function RoomPage({ searchParams }: Props) {
 
   // the textures the entry doors wait for, as on an artist's gallery (src/app/museum/[slug]/page.tsx)
   const theme = roomTheme(room.periodSlug, room.room?.style, room.room?.wall, room.room?.ground);
-  const layout = buildLayout(room.paintings, { works: theme.works, keepOrder: room.room?.order !== "year" });
+  const layout = buildLayout(room.paintings, { works: theme.works, keepOrder: room.room?.keepOrder });
   const bySlug = new Map(room.paintings.map((p) => [p.slug, p]));
   entryPreloads(layout, 2).forEach(({ slug: s, thumb }, i) => {
     const p = bySlug.get(s);

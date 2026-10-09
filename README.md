@@ -24,8 +24,10 @@ you can visit, freely, without an account.
   (Picasso's Blue and Rose periods ...), with room styles and music chosen for
   each period. At the end, doors lead to the artist before and the artist after.
 - **Make a room.** Hang works by many artists side by side, by era, movement,
-  school, genre, country or museum, and share the link; or walk the Louvre,
-  the Rijksmuseum and the National Gallery of Greece as recreated rooms.
+  school, genre, country or museum; search for artists and paintings to add,
+  drag works into your order and onto other floors, drag the floors up and
+  down, and share the link. Or walk the Louvre, the Rijksmuseum and the
+  National Gallery of Greece as recreated rooms.
 - **Look closer.** Approach a painting, click it to inspect it, and read about
   the work: its era, movement, school and genre, the works before and after it,
   what others painted the same year, or the original image on its own. Wall

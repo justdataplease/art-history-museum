@@ -11,7 +11,9 @@
 //   m      museums holding the work (OR; rooms.json `museums`, e.g. national-gallery-of-greece)
 //   from   to    the work's year      q     words that must all be in the title
 //   w      works hung whatever else is chosen (artist/painting, comma-separated; "artist/painting@2" hangs it on the
-//          floor plan's second floor): with nothing else chosen, the room hangs exactly these
+//          floor plan's second floor, "artist/painting:5" fifth on its floor, "@2:5" both): with nothing else
+//          chosen, the room hangs exactly these. Only the works the visitor moved carry a place; the rest hang in
+//          the room's order around them
 //   max    works (12 to 240; 60)      title the room's name      f    floor (1-based)
 // and the room's design:
 //   style  a room style (theme.ts ROOM_STYLES: old-master, postwar ...; default: each floor its era's)
@@ -87,12 +89,39 @@ const yearOf = (v: string) => {
   return Number.isFinite(n) && Math.abs(n) < 5000 ? n : null;
 };
 const hex = (v: string) => (/^#?[0-9a-f]{6}$/i.test(v) ? `#${v.replace("#", "").toLowerCase()}` : null);
-const WORK_KEY = /^[a-z0-9-]+\/[^,@]+(@\d)?$/;
+const WORK_KEY = /^[a-z0-9-]+\/[^,@:]+(@\d)?(:\d{1,3})?$/;
+const PIN = /^(.*?)(?:@(\d))?(?::(\d{1,3}))?$/;
 
-/** A kept work's key without its floor ("rembrandt/the-night-watch@3" -> "rembrandt/the-night-watch"). */
-export const workKey = (k: string) => k.replace(/@\d$/, "");
+/** A kept work: its key, the plan floor it asks for (1-based) and its place on its floor (1-based). */
+export interface Pin {
+  key: string;
+  floor: number | null;
+  place: number | null;
+}
+export function parsePin(k: string): Pin {
+  const [, key, floor, place] = PIN.exec(k)!;
+  return { key, floor: floor ? Number(floor) : null, place: place ? Number(place) : null };
+}
+export const pinText = (p: Pin) => `${p.key}${p.floor ? `@${p.floor}` : ""}${p.place ? `:${p.place}` : ""}`;
+/** A kept work's key without its floor or place ("rembrandt/the-night-watch@3:2" -> "rembrandt/the-night-watch"). */
+export const workKey = (k: string) => parsePin(k).key;
 /** The plan floor (1-based) a kept work asks for, if any. */
-export const workFloor = (k: string) => (/@(\d)$/.exec(k) ? Number(/@(\d)$/.exec(k)![1]) : null);
+export const workFloor = (k: string) => parsePin(k).floor;
+
+/** The plan's floors in a new order (`order[i]`: the old index of the floor now i-th; a floor left out is removed),
+ *  the kept works' floors following them. Moved, a floor's number stays with its place in the building (the
+ *  works go to another level, the levels stay where they are); removed, the others keep theirs. */
+export function reorderPlan(s: Selection, order: number[]): Pick<Selection, "plan" | "include"> {
+  const moved = order.length === s.plan.length;
+  const plan = order.map((from, i) => ({ ...s.plan[from], number: (moved ? s.plan[i] : s.plan[from]).number }));
+  const include = s.include.map((k) => {
+    const p = parsePin(k);
+    if (!p.floor) return k;
+    const at = order.indexOf(p.floor - 1);
+    return pinText({ ...p, floor: at < 0 ? null : at + 1 });
+  });
+  return { plan, include };
+}
 /** Characters a floor's label or text cannot hold (they separate the fields and the floors). */
 const clean = (v: string, n: number) => v.replace(/[~|]/g, " ").trim().slice(0, n);
 

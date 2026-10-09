@@ -16,7 +16,7 @@ import { getArtist } from "./data";
 import { artistOrigin } from "./countries";
 import { FEATURED_ARTIST_SLUGS } from "@/components/timeline/featured-artists";
 import { paintingTextureUrl } from "./img";
-import { hasFilters, selectionQuery, workFloor, workKey, type FloorSpec, type Selection } from "./room-query";
+import { hasFilters, parsePin, selectionQuery, workFloor, workKey, type FloorSpec, type Selection } from "./room-query";
 
 export { parseSelection, selectionQuery, MAX_DEFAULT, type Selection, type FloorSpec } from "./room-query";
 
@@ -85,8 +85,9 @@ interface Picked {
 interface Floor {
   eras: (string | null)[];
   works: IndexWork[];
-  /** The visitor's own floor (a floor plan). */
+  /** The visitor's own floor (a floor plan), and its place in the plan. */
   spec?: FloorSpec;
+  index?: number;
 }
 
 const byYear = (x: IndexWork, y: IndexWork) => (x[6] ?? 9999) - (y[6] ?? 9999);
@@ -207,7 +208,7 @@ export function selectWorks(s: Selection): { works: IndexWork[]; floors: Floor[]
 
   // the visitor's own floors: each takes its own works (its size, or an even share of max)
   if (plan.length) {
-    const floors: Floor[] = plan.map((spec) => ({ eras: [], works: [], spec }));
+    const floors: Floor[] = plan.map((spec, index) => ({ eras: [], works: [], spec, index }));
     const pools = plan.map(() => [] as Picked[]);
     for (const p of picked) {
       const asked = p.pinned ? pinnedFloor.get(`${p.work[0]}/${p.work[1]}`) : undefined;
@@ -270,7 +271,7 @@ function floorLabels(s: Selection, floors: Floor[], single: string): string[] {
     if (floors.length < 2) return f.spec?.label || single;
     const name = floorName(f);
     // a floor the visitor named "Floor 2" or "Level 0" keeps its own name
-    const no = f.spec?.number ?? s.firstFloor + i;
+    const no = f.spec?.number ?? s.firstFloor + (f.index ?? i);
     return /^(floor|level|storey)\s*-?\d/i.test(name) ? name : `Floor ${no < 0 ? `−${-no}` : no} · ${name}`;
   });
 }
@@ -309,6 +310,23 @@ function orderWorks(works: IndexWork[], order: Selection["order"]): IndexWork[] 
   return [...works].sort(byYear);
 }
 
+/** A floor's works as they hang: in the room's order, with the works the visitor placed by hand at their places. */
+function hangOrder(works: IndexWork[], s: Selection): IndexWork[] {
+  const place = new Map(s.include.map(parsePin).flatMap((p) => (p.place ? [[p.key, p.place] as const] : [])));
+  if (!place.size) return orderWorks(works, s.order);
+  const at = (w: IndexWork) => place.get(`${w[0]}/${w[1]}`);
+  const hung = orderWorks(works.filter((w) => !at(w)), s.order);
+  for (const w of works.filter(at).sort((x, y) => at(x)! - at(y)!)) hung.splice(Math.min(at(w)! - 1, hung.length), 0, w);
+  return hung;
+}
+
+/** Does a floor hang in an order of the visitor's own (not by year, so the 3D room keeps it)? */
+const ownOrder = (works: IndexWork[], s: Selection) =>
+  s.order !== "year" || s.include.some((k) => {
+    const p = parsePin(k);
+    return p.place != null && works.some((w) => `${w[0]}/${w[1]}` === p.key);
+  });
+
 /** The custom room (one floor of it) as a gallery: works by several artists, each carrying its artist. */
 export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | null> {
   const { floors } = selectWorks(s);
@@ -318,7 +336,7 @@ export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | nul
   const slugs = [...new Set(floor.works.map((w) => w[0]))];
   const loaded = new Map((await Promise.all(slugs.map((a) => getArtist(a)))).filter(Boolean).map((a) => [a!.slug, a!]));
   const paintings: Painting[] = [];
-  for (const [artistSlug, paintingSlug] of orderWorks(floor.works, s.order)) {
+  for (const [artistSlug, paintingSlug] of hangOrder(floor.works, s)) {
     const a = loaded.get(artistSlug);
     const p = a?.paintings.find((x) => x.slug === paintingSlug);
     // slugs are unique per artist only: two artists' "self-portrait" must not collide in one room
@@ -338,7 +356,7 @@ export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | nul
     label: labels[i],
     href: `/room?${selectionQuery(s, i + 1)}`,
     works: f.works.length,
-    number: f.spec?.number ?? s.firstFloor + i,
+    number: f.spec?.number ?? s.firstFloor + (f.index ?? i),
   }));
   const years = paintings.map((p) => p.year).filter((y): y is number => y != null);
   const spec = floor.spec;
@@ -364,7 +382,7 @@ export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | nul
       style: spec?.style ?? s.style,
       wall: spec?.wall ?? s.wall,
       ground: spec?.ground ?? s.ground,
-      order: s.order,
+      keepOrder: ownOrder(floor.works, s),
       intro: spec?.intro ?? s.intro,
     },
   };
@@ -422,15 +440,28 @@ async function previewWorks(works: IndexWork[]): Promise<PreviewWork[]> {
   });
 }
 
-/** What each floor of a selection hangs, with small images: the picker's preview, where works can be left out. */
-export async function roomPreview(s: Selection): Promise<{ label: string; works: PreviewWork[] }[]> {
-  const { floors } = selectWorks(s);
-  const labels = floorLabels(s, floors, "The room");
-  return Promise.all(floors.map(async (f, i) => ({ label: labels[i], works: await previewWorks(orderWorks(f.works, s.order)) })));
+export interface PreviewFloor {
+  label: string;
+  works: PreviewWork[];
+  /** The floor's place in the visitor's plan (0-based), so works can be moved to it; null for an era's floor. */
+  plan: number | null;
 }
 
-/** Works whose titles hold every word (at word starts), optionally by one artist, best known first: the
- *  picker's "add a work by hand". */
+/** What each floor of a selection hangs, as it hangs, with small images: the picker's preview, where works are
+ *  left out, kept and moved. Every floor of a plan is there, an empty one too (works can be moved to it). */
+export async function roomPreview(s: Selection): Promise<PreviewFloor[]> {
+  const { floors: kept } = selectWorks(s);
+  const floors = s.floors === "plan" && s.plan.length
+    ? s.plan.map((spec, index) => kept.find((f) => f.index === index) ?? { eras: [], works: [], spec, index })
+    : kept;
+  const labels = floorLabels(s, floors, "The room");
+  return Promise.all(floors.map(async (f, i) => ({
+    label: labels[i], works: await previewWorks(hangOrder(f.works, s)), plan: f.index ?? null,
+  })));
+}
+
+/** Works whose title and artist hold every word (at word starts: "vermeer pearl", "starry night"), optionally
+ *  by one artist, best known first: the picker's search for works to add. */
 export async function searchWorks(q: string, artist?: string | null, limit = 12): Promise<PreviewWork[]> {
   const idx = readIndex();
   const words = q.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter((w) => w.length > 1);
@@ -438,7 +469,7 @@ export async function searchWorks(q: string, artist?: string | null, limit = 12)
   const hits: IndexWork[] = [];
   for (const w of idx.works) {
     if (artist && w[0] !== artist) continue;
-    const title = ` ${w[1].replace(/-/g, " ")}`;
+    const title = ` ${w[1].replace(/-/g, " ")} ${w[0].replace(/-/g, " ")}`;
     if (words.every((word) => title.includes(` ${word}`))) hits.push(w);
   }
   hits.sort((x, y) => y[7] - x[7]);

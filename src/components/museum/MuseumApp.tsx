@@ -102,7 +102,7 @@ export function MuseumApp({
     // elevator by the doors
     return buildLayout(artist.paintings, {
       works: theme.works,
-      keepOrder: !!design && design.order !== "year",
+      keepOrder: !!design?.keepOrder,
       furnish: furnishSizes(furnitureOf(theme)),
       arches: theme.room.arches,
       elevator: (design?.floors.length ?? 0) > 1,

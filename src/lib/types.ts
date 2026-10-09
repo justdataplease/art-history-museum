@@ -135,12 +135,13 @@ export interface RoomInfo {
   /** Every artist hung on this floor, for the audio guide. */
   artists: GuideArtist[];
   /** The visitor's design: a room style (theme.ts ROOM_STYLES key; null: each floor its era's), a wall colour
-   *  (#rrggbb), the hanging order, and an introduction shown at the doors. */
+   *  (#rrggbb), and an introduction shown at the doors. */
   style: string | null;
   wall: string | null;
   /** A floor (marble, oak ...) instead of the style's own (theme.ts GROUNDS). */
   ground: string | null;
-  order: "year" | "artist" | "fame";
+  /** The works hang in the order given (by artist, best known first, or placed by hand), not re-sorted by year. */
+  keepOrder: boolean;
   intro: string | null;
 }
 

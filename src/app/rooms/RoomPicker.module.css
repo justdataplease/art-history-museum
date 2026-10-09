@@ -491,12 +491,14 @@
   list-style: none;
 }
 .plan li {
+  position: relative;
   display: grid;
-  grid-template-columns: 34px minmax(140px, 2fr) 80px 80px minmax(140px, 1.4fr) auto 70px 34px;
+  grid-template-columns: 50px minmax(140px, 2fr) 76px 76px minmax(120px, 1.2fr) minmax(110px, 1fr) auto 72px 34px;
   gap: 8px;
   align-items: center;
   padding: 10px 0;
   border-bottom: 1px solid var(--line);
+  background: #fff;
 }
 .plan li input,
 .plan li select,
@@ -526,50 +528,51 @@
   background: none;
   cursor: pointer;
 }
+/* a floor's number, and the grip it is dragged by */
 .floorNo {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+.floorNo i {
+  font-style: normal;
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+.floorNo b {
   display: grid;
   place-items: center;
-  width: 30px;
+  min-width: 30px;
   height: 30px;
   font-family: var(--serif);
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: 400;
   color: #fff;
-  border-radius: 50%;
+  border-radius: 999px;
   background: var(--gold-deep);
 }
+.floorNo:hover i {
+  color: var(--gold-ink);
+}
+/* on a phone: the number and × on the left; name, years, style, floor, wall and works, wall text on the right */
 @media (max-width: 760px) {
   .plan li {
-    grid-template-columns: 34px 1fr 1fr;
+    grid-template-columns: 50px 1fr 1fr;
   }
-  .plan li .floorLabel,
-  .plan li select,
+  .plan li .floorWide,
   .plan li textarea {
     grid-column: 2 / -1;
   }
+  .plan li .floorRemove {
+    grid-column: 1;
+    grid-row: 2;
+  }
 }
 
-/* Works picked by hand */
-.workHits li button {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.workHits img,
-.workHits .noImage {
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  object-fit: cover;
-  border-radius: 4px;
-}
-.workHits b {
-  display: block;
-  font-weight: 500;
-}
-.workHits small {
-  font-size: 12px;
-  color: var(--ink-soft);
-}
 .chips .pinChip {
   background: #f3e6c8;
 }
@@ -586,4 +589,268 @@
 .preview li button.keep[aria-pressed="true"] {
   color: #ffd27a;
   background: var(--gold-deep);
+}
+
+/* Dragging works to their places and floors, and floors up and down (drag.ts). A moved work or floor is no
+   anchor for the page's scroll, or the page would follow it to its new place. */
+.preview li {
+  cursor: grab;
+  user-select: none;
+  -webkit-touch-callout: none;
+  overflow-anchor: none;
+}
+.plan li {
+  overflow-anchor: none;
+}
+.dragSource {
+  opacity: 0.3;
+}
+.dragGhost {
+  cursor: grabbing;
+  opacity: 0.94;
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.22));
+}
+.dragGhost li {
+  cursor: grabbing;
+}
+/* where it lands: a gold bar beside a work, above or below a floor */
+.dropBefore::before,
+.dropAfter::after,
+.rowBefore::before,
+.rowAfter::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  border-radius: 2px;
+  background: var(--gold-deep);
+  pointer-events: none;
+}
+.dropBefore::before,
+.dropAfter::after {
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+.dropBefore::before {
+  left: -8px;
+}
+.dropAfter::after {
+  right: -8px;
+}
+.rowBefore::before,
+.rowAfter::after {
+  left: 0;
+  right: 0;
+  height: 3px;
+}
+.rowBefore::before {
+  top: -2px;
+}
+.rowAfter::after {
+  bottom: -2px;
+}
+.preview.dropInto .emptyFloor {
+  border-color: var(--gold-deep);
+  color: var(--gold-ink);
+  background: #f3e6c8;
+}
+.emptyFloor {
+  margin: 10px 0 0;
+  padding: 26px 16px;
+  font-size: 14px;
+  text-align: center;
+  color: var(--ink-soft);
+  border: 2px dashed var(--line);
+  border-radius: 8px;
+}
+
+/* Adding artists and paintings (AddWorks.tsx) */
+.add {
+  max-width: 1100px;
+  margin-top: 16px;
+}
+.addBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.addBar input {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+.addBar input:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+.addArtist {
+  padding: 9px 14px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  border: 0;
+  border-radius: 999px;
+  background: #f3e6c8;
+  cursor: pointer;
+}
+.addTo {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.addTo select,
+.waiting select {
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.addArtists {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.addArtists button {
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+.addArtists button:hover {
+  border-color: var(--gold);
+}
+.addArtists small {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.addArtists span {
+  margin-left: 4px;
+  color: var(--gold-ink);
+}
+.add > .restore {
+  margin-top: 12px;
+}
+.addWorks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.addWorks button {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10px 6px 6px;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.addWorks button:hover:not(:disabled) {
+  border-color: var(--gold);
+}
+.addWorks button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.addWorks img,
+.addWorks .noImage {
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.addWorks button > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.addWorks b {
+  display: block;
+  overflow: hidden;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.addWorks small {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.addWorks i {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-size: 20px;
+  color: var(--gold-ink);
+}
+
+/* Kept works no floor holds */
+.waiting {
+  max-width: 1100px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid #e3c98f;
+  border-radius: 10px;
+  background: #fbf5e8;
+}
+.waiting .note {
+  margin: 0;
+}
+.waiting ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.waiting li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+}
+.waiting li span {
+  flex: 1 1 200px;
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+}
+.waiting li button {
+  width: 30px;
+  height: 30px;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
 }

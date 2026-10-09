@@ -1,25 +1,33 @@
 "use client";
 
-// Make a room: pick what hangs in it (eras, schools, genres, countries, museums, artists, years, title words, works
-// picked by hand), design it (style, wall, order, floors: one per era, all on one, or a floor plan of one's own),
-// see what will hang (leave works out, keep others), walk it, save it, share the link. Everything is in the room's
-// URL (/room?..., src/lib/room-query.ts), so the link is the room. Saved rooms are kept in this browser ("My
-// rooms"); the recreated museums (src/lib/museum-rooms.ts) are rooms made the same way.
+// Make a room: pick what hangs in it (eras, schools, genres, countries, museums, artists, years, title words),
+// design it (style, wall, order, floors: one per era, all on one, or a floor plan of one's own), see what will
+// hang and change it (add artists and paintings, leave works out, keep others, drag works to their places and
+// floors, drag the floors), walk it, save it, share the link. Everything is in the room's URL (/room?...,
+// src/lib/room-query.ts), so the link is the room; it records only what the visitor changed. Saved rooms are kept
+// in this browser ("My rooms"); the recreated museums (src/lib/museum-rooms.ts) are rooms made the same way.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   EMPTY_SELECTION,
   MAX_WORKS,
+  parsePin,
   parseSelection,
+  pinText,
+  reorderPlan,
   selectionQuery,
   workFloor,
   workKey,
   type FloorSpec,
+  type Pin,
   type Selection,
 } from "@/lib/room-query";
 import { MUSEUM_ROOMS } from "@/lib/museum-rooms";
 import { GROUNDS, ROOM_STYLES, styleSwatch } from "@/components/museum/theme";
+import { findNames, nameEntry } from "@/components/timeline/artist-search";
+import { AddWorks, type ArtistOption, type FoundWork } from "./AddWorks";
+import { useDragSort, type DragPlace } from "./drag";
 import styles from "./RoomPicker.module.css";
 
 interface Term {
@@ -32,28 +40,19 @@ interface Term {
   works: number;
   ancestors: string[];
 }
-interface ArtistOption {
-  slug: string;
-  name: string;
-  birthYear: number | null;
-  deathYear: number | null;
-}
 interface MuseumOption {
   id: string;
   name: string;
   works: number;
 }
-interface PreviewWork {
-  key: string;
-  title: string;
-  year: number | null;
-  artist: string;
-  thumb: string | null;
-}
+type PreviewWork = FoundWork;
 interface Preview {
+  /** The room it shows (its query): until the next one arrives, the last stays. */
+  query?: string;
   works: number;
   artists: number;
-  floors: { label: string; works: PreviewWork[] }[];
+  /** As they hang; `plan`: the floor's place in the visitor's plan (0-based), null for an era's floor. */
+  floors: { label: string; works: PreviewWork[]; plan: number | null }[];
 }
 interface SavedRoom {
   title: string;
@@ -131,8 +130,6 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
   const [savedNote, setSavedNote] = useState(false);
   const [artistQuery, setArtistQuery] = useState("");
   const [museumQuery, setMuseumQuery] = useState("");
-  const [workQuery, setWorkQuery] = useState("");
-  const [workHits, setWorkHits] = useState<PreviewWork[]>([]);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<SavedRoom[]>([]);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -149,7 +146,7 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
       fetch(`/api/room?preview=1&${query}`, { signal: ctl.signal })
         .then((r) => r.json())
         .then((p: Preview) => {
-          setPreview(p);
+          setPreview({ ...p, query });
           setTitles((had) => {
             const next = { ...had };
             for (const f of p.floors) for (const w of f.works) next[w.key] = w.title;
@@ -164,39 +161,74 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
     };
   }, [query]);
 
-  // works to pick by hand: by title words, within the chosen artist when there is exactly one
-  useEffect(() => {
-    const q = workQuery.trim();
-    if (q.length < 3) {
-      setWorkHits([]);
-      return;
-    }
-    const ctl = new AbortController();
-    const t = setTimeout(() => {
-      const a = sel.artists.length === 1 ? `&a=${sel.artists[0]}` : "";
-      fetch(`/api/room/works?q=${encodeURIComponent(q)}${a}`, { signal: ctl.signal })
-        .then((r) => r.json())
-        .then((r: { works: PreviewWork[] }) => setWorkHits(r.works))
-        .catch(() => {});
-    }, 300);
-    return () => {
-      clearTimeout(t);
-      ctl.abort();
-    };
-  }, [workQuery, sel.artists]);
-
   const update = (patch: Partial<Selection>) => setSel((s) => ({ ...s, ...patch }));
   const addTerm = (id: string) => id && !sel.terms.includes(id) && update({ terms: [...sel.terms, id] });
-  const pin = (w: PreviewWork) => {
-    setTitles((t) => ({ ...t, [w.key]: w.title }));
-    if (!sel.include.some((x) => workKey(x) === w.key))
-      update({ include: [...sel.include, w.key], exclude: sel.exclude.filter((x) => x !== w.key) });
+  /** Keep works (add them to the room): on a plan floor (1-based) when given, a kept work moving there. */
+  const keep = (ws: PreviewWork[], floor: number | null = null) => {
+    setTitles((t) => ({ ...t, ...Object.fromEntries(ws.map((w) => [w.key, w.title])) }));
+    const pins = new Map(sel.include.map((k) => [workKey(k), parsePin(k)]));
+    for (const w of ws) {
+      const had = pins.get(w.key);
+      // a work moved to another floor gives up its place on the last
+      if (!had) pins.set(w.key, { key: w.key, floor, place: null });
+      else if (floor && floor !== had.floor) pins.set(w.key, { ...had, floor, place: null });
+    }
+    update({ include: [...pins.values()].map(pinText), exclude: sel.exclude.filter((x) => !ws.some((w) => w.key === x)) });
   };
+  const pin = (w: PreviewWork) => keep([w]);
   const unpin = (key: string) => update({ include: sel.include.filter((x) => workKey(x) !== key) });
   const leaveOut = (key: string) =>
     update({ exclude: [...sel.exclude, key], include: sel.include.filter((x) => workKey(x) !== key) });
   const setFloor = (i: number, patch: Partial<FloorSpec>) =>
     update({ plan: sel.plan.map((f, j) => (j === i ? { ...f, ...patch } : f)) });
+  const floorNo = (i: number) => {
+    const n = sel.plan[i]?.number ?? sel.firstFloor + i;
+    return n < 0 ? `−${-n}` : String(n);
+  };
+  const plan = sel.floors === "plan";
+
+  // a work dragged to a new place, or to another floor of the plan: it is kept there, and every work placed by
+  // hand on the floors it touched takes its new place (the rest hang in the room's order around them)
+  const moveWork = (from: DragPlace, to: DragPlace) => {
+    if (!preview) return;
+    const floors = preview.floors.map((f) => ({ ...f, works: [...f.works] }));
+    const [w] = floors[from.list].works.splice(from.index, 1);
+    if (!w) return;
+    floors[to.list].works.splice(to.index, 0, w);
+    const pins = new Map(sel.include.map((k) => [workKey(k), parsePin(k)]));
+    const moved: Pin = { ...(pins.get(w.key) ?? { key: w.key, floor: null, place: null }) };
+    if (from.list !== to.list) moved.floor = (floors[to.list].plan ?? 0) + 1;
+    pins.set(w.key, moved);
+    for (const l of new Set([from.list, to.list]))
+      floors[l].works.forEach((x, i) => {
+        const p = pins.get(x.key);
+        if (p && (x.key === w.key || p.place != null)) pins.set(x.key, { ...p, place: i + 1 });
+      });
+    setPreview({ ...preview, floors });
+    setTitles((t) => ({ ...t, [w.key]: w.title }));
+    update({ include: [...pins.values()].map(pinText), exclude: sel.exclude.filter((x) => x !== w.key) });
+  };
+  const dragWork = useDragSort({
+    scope: "works",
+    axis: "x",
+    // between floors only on floors of one's own (an era's floor holds its era's works)
+    accepts: () => plan,
+    onDrop: moveWork,
+    classes: { source: styles.dragSource, ghost: styles.dragGhost, before: styles.dropBefore, after: styles.dropAfter,
+      into: styles.dropInto },
+  });
+  const dragFloor = useDragSort({
+    scope: "floors",
+    axis: "y",
+    handle: true,
+    onDrop: (from, to) => {
+      const order = sel.plan.map((_, i) => i);
+      order.splice(to.index, 0, ...order.splice(from.index, 1));
+      update(reorderPlan(sel, order));
+    },
+    classes: { source: styles.dragSource, ghost: styles.dragGhost, before: styles.rowBefore, after: styles.rowAfter,
+      into: styles.dropInto },
+  });
   const chosenTime = sel.terms.filter((id) => ["era", "tradition", "period"].includes(byId.get(id)?.kind ?? ""));
   const optionsFor = (kinds: string[], key: string) =>
     terms
@@ -206,9 +238,12 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
       .sort((a, b) =>
         key === "genre" || key === "school" ? a.name.localeCompare(b.name) : (a.start ?? 9999) - (b.start ?? 9999)
       );
-  const artistMatches = artistQuery.trim().length >= 2
-    ? artists.filter((a) => a.name.toLowerCase().includes(artistQuery.toLowerCase()) && !sel.artists.includes(a.slug)).slice(0, 8)
-    : [];
+  const artistEntries = useMemo(() => artists.map((a) => nameEntry(a.name)), [artists]);
+  const artistMatches = useMemo(() => {
+    if (artistQuery.trim().length < 2) return [];
+    const { exact, close } = findNames(artists, artistEntries, artistQuery, (a, b) => a.name.localeCompare(b.name));
+    return [...exact, ...close].filter((a) => !sel.artists.includes(a.slug)).slice(0, 8);
+  }, [artistQuery, artists, artistEntries, sel.artists]);
   const museumMatches = museumQuery.trim().length >= 2
     ? museums.filter((m) => m.name.toLowerCase().includes(museumQuery.toLowerCase()) && !sel.museums.includes(m.id)).slice(0, 8)
     : [];
@@ -256,6 +291,10 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
   const years = (t: Term) => (t.start != null ? ` (${t.start}–${t.end ?? ""})` : "");
   const count = preview;
   const pinned = new Set(sel.include.map(workKey));
+  const hanging = new Set(preview?.floors.flatMap((f) => f.works.map((w) => w.key)) ?? []);
+  // kept works no floor of the plan holds (nor one asked for): they wait here for a floor
+  const waiting = plan && preview?.query === query ? sel.include.filter((k) => !hanging.has(workKey(k))) : [];
+  const fullFloors = preview?.floors.filter((f) => f.works.length).length ?? 0;
   const anything =
     sel.terms.length || sel.nationalities.length || sel.artists.length || sel.museums.length || sel.from != null ||
     sel.to != null || sel.words.length || sel.include.length;
@@ -385,26 +424,6 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
           <input type="range" min={12} max={MAX_WORKS} step={6} value={sel.max}
             onChange={(e) => update({ max: Number(e.target.value) })} />
         </label>
-        <label className={`${styles.artistPick} ${styles.wide}`}>
-          <span>Add a work by hand{sel.artists.length === 1 ? ` (by ${artistBySlug.get(sel.artists[0])?.name})` : ""}</span>
-          <input value={workQuery} placeholder="A title: Starry Night, The Night Watch, Behold the Celestial Bridegroom …"
-            onChange={(e) => setWorkQuery(e.target.value)} />
-          {workHits.length > 0 && (
-            <ul className={styles.workHits}>
-              {workHits.map((w) => (
-                <li key={w.key}>
-                  <button type="button" onClick={() => { pin(w); setWorkQuery(""); }}>
-                    {w.thumb ? <img src={w.thumb} alt="" /> : <span className={styles.noImage} />}
-                    <span>
-                      <b>{w.title}</b>
-                      <small>{w.artist}{w.year != null ? `, ${w.year}` : ""}</small>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </label>
       </section>
 
       <section className={styles.chips} aria-label="Your selection">
@@ -431,7 +450,7 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
         {sel.include.map((k) => (
           <button key={k} type="button" className={styles.pinChip} onClick={() => unpin(workKey(k))}>
             ★ {titles[workKey(k)] ?? keyTitle(workKey(k))}
-            {workFloor(k) && sel.floors === "plan" ? ` · floor ${sel.firstFloor + workFloor(k)! - 1}` : ""} ×
+            {workFloor(k) && plan ? ` · floor ${floorNo(workFloor(k)! - 1)}` : ""} ×
           </button>
         ))}
         {anything ? (
@@ -501,8 +520,8 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
         </label>
       </section>
 
-      {sel.floors === "plan" && (
-        <section className={styles.plan} aria-label="Floor plan">
+      {plan && (
+        <section className={styles.plan} aria-label="Floor plan" data-drag-root>
           <h3>
             Floor plan
             <label className={styles.firstFloor}>
@@ -514,20 +533,30 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
           <p className={styles.note}>
             A work hangs on the first floor whose years (and, if you name any, whose artists&apos; nationalities) hold
             it. Each floor can have its own style, wall colour, size and wall text; empty fields follow the room&apos;s.
+            Drag a floor by its number to move it up or down.
           </p>
-          <ol>
+          <ol data-drag-list="floors" data-list={0} {...dragFloor}>
             {sel.plan.map((f, i) => (
-              <li key={i}>
-                <span className={styles.floorNo}>{f.number ?? sel.firstFloor + i}</span>
-                <input className={styles.floorLabel} value={f.label} placeholder="Floor name" maxLength={60}
+              <li key={i} data-drag-item="floors" data-index={i}>
+                <span className={styles.floorNo} data-drag-handle title="Drag to move this floor">
+                  <i aria-hidden>⠿</i>
+                  <b>{floorNo(i)}</b>
+                </span>
+                <input className={styles.floorWide} value={f.label} placeholder="Floor name" maxLength={60}
                   onChange={(e) => setFloor(i, { label: e.target.value })} aria-label="Floor name" />
                 <input type="number" value={f.from ?? ""} placeholder="from" aria-label="From year"
                   onChange={(e) => setFloor(i, { from: e.target.value === "" ? null : Number(e.target.value) })} />
                 <input type="number" value={f.to ?? ""} placeholder="to" aria-label="To year"
                   onChange={(e) => setFloor(i, { to: e.target.value === "" ? null : Number(e.target.value) })} />
-                <select value={f.style ?? ""} aria-label="Floor style" onChange={(e) => setFloor(i, { style: e.target.value || null })}>
+                <select className={styles.floorWide} value={f.style ?? ""} aria-label="Floor style"
+                  onChange={(e) => setFloor(i, { style: e.target.value || null })}>
                   <option value="">Room&apos;s style</option>
                   {ROOM_STYLES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                </select>
+                <select className={styles.floorWide} value={f.ground ?? ""} aria-label="Floor material"
+                  onChange={(e) => setFloor(i, { ground: e.target.value || null })}>
+                  <option value="">Room&apos;s floor</option>
+                  {GROUNDS.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
                 </select>
                 <span className={styles.wallRow}>
                   <input type="checkbox" checked={!!f.wall} aria-label="Own wall colour for this floor"
@@ -535,15 +564,12 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
                   <input type="color" value={f.wall ?? "#4a4f55"} disabled={!f.wall} aria-label="Floor wall colour"
                     onChange={(e) => setFloor(i, { wall: e.target.value })} />
                 </span>
-                <select value={f.ground ?? ""} aria-label="Floor material" onChange={(e) => setFloor(i, { ground: e.target.value || null })}>
-                  <option value="">Room&apos;s floor</option>
-                  {GROUNDS.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
-                </select>
                 <input type="number" min={4} max={120} value={f.works ?? ""} placeholder="works" aria-label="Works on this floor"
                   onChange={(e) => setFloor(i, { works: e.target.value === "" ? null : Number(e.target.value) })} />
-                <button type="button" onClick={() => update({ plan: sel.plan.filter((_, j) => j !== i) })}
-                  aria-label={`Remove floor ${sel.firstFloor + i}`}>×</button>
-                <input className={styles.floorWho} value={f.who.join(", ")} list="nationality-names"
+                <button type="button" className={styles.floorRemove}
+                  onClick={() => update(reorderPlan(sel, sel.plan.map((_, j) => j).filter((j) => j !== i)))}
+                  aria-label={`Remove floor ${floorNo(i)}`}>×</button>
+                <input className={`${styles.floorWho} ${styles.floorWide}`} value={f.who.join(", ")} list="nationality-names"
                   placeholder="Only artists from … (optional: Italians, French …)" aria-label="Only artists of these nationalities"
                   onChange={(e) => setFloor(i, { who: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
                 <textarea rows={1} maxLength={300} value={f.intro ?? ""} placeholder="Wall text at this floor's doors (optional)"
@@ -576,15 +602,44 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
         )}
       </h2>
       <p className={styles.note}>
-        Leave a work out with ×: the next best takes its place. Keep one with ★: it hangs whatever else you change.
+        Add an artist or a painting, then drag a work to its place{plan ? " or to another floor" : ""}. Leave a work
+        out with ×: the next best takes its place. Keep one with ★: it hangs whatever else you change.
+        {!plan && (preview?.floors.length ?? 0) > 1 && " To move works between floors, choose My own floors."}
       </p>
-      {preview?.floors.map((f) => (
-        <section key={f.label} className={styles.preview}>
-          {preview.floors.length > 1 && <h3>{f.label} · {f.works.length} works</h3>}
+      <AddWorks
+        artists={artists}
+        floors={plan ? sel.plan.map((f, i) => `Floor ${floorNo(i)} · ${f.label || "unnamed"}`) : null}
+        inRoom={(key) => pinned.has(key) || hanging.has(key)}
+        onAdd={keep}
+      />
+      {waiting.length > 0 && (
+        <section className={styles.waiting} aria-label="Kept works not hanging">
+          <p className={styles.note}>Kept, but no floor holds them: choose one, or change the floors&apos; years.</p>
           <ul>
-            {f.works.map((w) => (
-              <li key={w.key} className={pinned.has(w.key) ? styles.kept : undefined}>
-                {w.thumb ? <img src={w.thumb} alt="" loading="lazy" /> : <span className={styles.noImage} />}
+            {waiting.map((k) => (
+              <li key={k}>
+                <span>{titles[workKey(k)] ?? keyTitle(workKey(k))}</span>
+                <select value="" aria-label="Hang it on" onChange={(e) => e.target.value &&
+                  keep([{ key: workKey(k), title: titles[workKey(k)] ?? keyTitle(workKey(k)), year: null, artist: "", thumb: null }],
+                    Number(e.target.value))}>
+                  <option value="">Hang it on …</option>
+                  {sel.plan.map((f, i) => <option key={i} value={i + 1}>Floor {floorNo(i)} · {f.label}</option>)}
+                </select>
+                <button type="button" onClick={() => unpin(workKey(k))} aria-label="Remove it">×</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {preview?.floors.map((f, fi) => (
+        <section key={`${fi}:${f.label}`} className={styles.preview} data-drag-root data-drag-list="works" data-list={fi}
+          {...dragWork}>
+          {preview.floors.length > 1 && <h3>{f.label} · {f.works.length} works</h3>}
+          {!f.works.length && <p className={styles.emptyFloor}>Nothing hangs here yet: drag works here, or add them above.</p>}
+          <ul>
+            {f.works.map((w, i) => (
+              <li key={w.key} className={pinned.has(w.key) ? styles.kept : undefined} data-drag-item="works" data-index={i}>
+                {w.thumb ? <img src={w.thumb} alt="" loading="lazy" draggable={false} /> : <span className={styles.noImage} />}
                 <span className={styles.caption}>
                   <b>{w.title}</b>
                   <small>{w.artist}{w.year != null ? `, ${w.year}` : ""}</small>
@@ -627,7 +682,7 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
             : count.works === 0
               ? "No works match: remove something"
               : `${count.works} works by ${count.artists} artist${count.artists === 1 ? "" : "s"}${
-                  count.floors.length > 1 ? ` · ${count.floors.length} floors` : ""}`}
+                  fullFloors > 1 ? ` · ${fullFloors} floors` : ""}`}
         </p>
         {count && count.works > 0 ? (
           <Link href={enterHref} className={styles.enter} onClick={remember}>Enter the room</Link>

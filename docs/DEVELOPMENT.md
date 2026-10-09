@@ -77,8 +77,9 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
   `/room?...` walk it (rendered on request: the selection, the room's design and its floor plan are the URL,
   `src/lib/room-query.ts`, chosen and hung by `src/lib/rooms.ts`; a room with floors has `&f=2` ..., joined by an
   elevator by the entrance); `/museums/<slug>` a recreated museum (`src/lib/museum-rooms.ts`), an ordinary room
-  link; `/api/room` the picker's live count and preview (`?preview=1`); `/api/room/works?q=` the works to pick by
-  hand; `/api/guide/<artist>` the audio guide's scripts (`data/site/guide`); `/api/work/<artist>/<work>` a work's
+  link; `/api/room` the picker's live count and preview (`?preview=1`); `/api/room/works?q=` the picker's search for works to add (title and
+  artist words, `&a=` one artist's best known); the picker's drag and drop is `src/app/rooms/drag.ts` (a moved
+  work is recorded in the link as `artist/painting@floor:place`, only the works moved); `/api/guide/<artist>` the audio guide's scripts (`data/site/guide`); `/api/work/<artist>/<work>` a work's
   tags, museums and same-year works for the inspect panel; `/surprise?from=<artist>` a gallery from another
   period (the "Surprise me" at a gallery's end); `/furniture` (development only) every
   room style's furniture (the layout picks among it room by room), for modelling it.
