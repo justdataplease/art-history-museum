@@ -104,9 +104,6 @@ const TimelineHeader = memo(function TimelineHeader({
           <Link href="/rooms" className="tl-room-link" title="Hang your own room: an era, a movement, a genre, a country, artists">
             Make a room
           </Link>
-          <Link href="/rooms#museums" className="tl-room-link" title="Walk real museums, recreated: the Louvre, the Rijksmuseum, the National Gallery of Greece">
-            Museums
-          </Link>
         </nav>
       </div>
       <FilterDropdown periods={periods} artists={artists} filter={filter} onChange={onFilter} hidden={inert} showAll={showAll} onCollection={onCollection} />

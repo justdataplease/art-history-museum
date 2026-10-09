@@ -31,6 +31,9 @@ import { AddWorks, type ArtistOption, type FoundWork } from "./AddWorks";
 import { useDragSort, type DragPlace } from "./drag";
 import styles from "./RoomPicker.module.css";
 
+/** The recreated museums (src/lib/museum-rooms.ts): hidden for now; their links (/museums/<slug>) still work. */
+const SHOW_MUSEUMS = false;
+
 interface Term {
   id: string;
   kind: string;
@@ -318,7 +321,7 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
         </p>
       </header>
 
-      {MUSEUM_ROOMS.length > 0 && (
+      {SHOW_MUSEUMS && MUSEUM_ROOMS.length > 0 && (
         <>
           <h2 className={styles.section} id="museums">Recreate a museum</h2>
           <p className={styles.note}>
