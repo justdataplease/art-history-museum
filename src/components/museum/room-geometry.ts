@@ -452,7 +452,7 @@ function roomCeilingSpec(
 /** One ceiling (laylight well or lightbox) per room of the suite, entrance first. */
 export function ceilingSpecs(layout: GalleryLayout, theme: GalleryTheme): CeilingSpec[] {
   return layout.rooms.map((r) =>
-    roomCeilingSpec(layout.hallWidth, layout.wallHeight, r.z0, r.z1, theme, layout.trackInset),
+    roomCeilingSpec(2 * r.halfWidth, layout.wallHeight, r.z0, r.z1, theme, layout.trackInset),
   );
 }
 
@@ -531,25 +531,25 @@ const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
  * z): architrave jambs with plinth blocks, a swept head and a small cornice
  * (classical), or a slim flat surround (modern).
  */
-function doorCase(trim: GeoBatch, z: number, facing: 1 | -1, dw: number, dh: number, classical: boolean) {
+function doorCase(trim: GeoBatch, z: number, facing: 1 | -1, dw: number, dh: number, classical: boolean, cx = 0) {
   if (classical) {
     const inward = V(0, 0, facing);
     for (const s of [-1, 1]) {
-      const x = s * (dw + 0.065);
+      const x = cx + s * (dw + 0.065);
       trim.roundedBox(0.13, dh + 0.065, 0.03, x, (dh + 0.065) / 2, z + facing * 0.015, 0.008, 2);
-      trim.roundedBox(0.04, dh + 0.06, 0.018, s * (dw + 0.11), (dh + 0.06) / 2, z + facing * 0.035, 0.008, 2);
+      trim.roundedBox(0.04, dh + 0.06, 0.018, cx + s * (dw + 0.11), (dh + 0.06) / 2, z + facing * 0.035, 0.008, 2);
       trim.roundedBox(0.16, 0.26, 0.045, x, 0.13, z + facing * 0.0225, 0.006, 1); // plinth block
     }
-    trim.sweep(ARCHITRAVE, V(-dw - 0.135, dh, z), V(dw + 0.135, dh, z), inward);
+    trim.sweep(ARCHITRAVE, V(cx - dw - 0.135, dh, z), V(cx + dw + 0.135, dh, z), inward);
     // cornice over the door
-    trim.roundedBox(2 * dw + 0.5, 0.07, 0.09, 0, dh + 0.17, z + facing * 0.045, 0.012, 2);
-    trim.roundedBox(2 * dw + 0.36, 0.035, 0.06, 0, dh + 0.12, z + facing * 0.03, 0.008, 1);
+    trim.roundedBox(2 * dw + 0.5, 0.07, 0.09, cx, dh + 0.17, z + facing * 0.045, 0.012, 2);
+    trim.roundedBox(2 * dw + 0.36, 0.035, 0.06, cx, dh + 0.12, z + facing * 0.03, 0.008, 1);
   } else {
     // flush steel-framed opening: a slim frame
     for (const s of [-1, 1]) {
-      trim.box(0.04, dh, 0.012, s * (dw + 0.02), dh / 2, z + facing * 0.006);
+      trim.box(0.04, dh, 0.012, cx + s * (dw + 0.02), dh / 2, z + facing * 0.006);
     }
-    trim.box(2 * dw + 0.08, 0.04, 0.012, 0, dh + 0.02, z + facing * 0.006);
+    trim.box(2 * dw + 0.08, 0.04, 0.012, cx, dh + 0.02, z + facing * 0.006);
   }
 }
 
@@ -656,7 +656,9 @@ export function setRoomWindow(
 }
 
 export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeometry {
-  const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
+  const { hallLength: L, wallHeight: H } = layout;
+  // each room its own width; the entrance wall is the first room's, the far end wall the last's
+  const half = (ri: number) => layout.rooms[ri]?.halfWidth ?? layout.hallWidth / 2;
   const specs = ceilingSpecs(layout, theme);
   const spec = specs[0];
   const classical = theme.room.classical;
@@ -682,15 +684,17 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
   // between them.
   layout.rooms.forEach((room, ri) => {
     const { walls } = rooms[ri];
-    // left wall (x = -W/2), faces +x: edgeU along -z?  need U×V = +x → U = +z? (+z × +y = -x) so U = -z
-    walls.quad(V(-W / 2, 0, room.z1), V(0, 0, -(room.z1 - room.z0)), V(0, H, 0), [L / 2 - room.z1, 0]);
+    const hw = room.halfWidth;
+    // left wall (x = -hw), faces +x: edgeU along -z?  need U×V = +x → U = +z? (+z × +y = -x) so U = -z
+    walls.quad(V(-hw, 0, room.z1), V(0, 0, -(room.z1 - room.z0)), V(0, H, 0), [L / 2 - room.z1, 0]);
     // right wall faces -x: U = +z  (+z × +y = -x ✓)
-    walls.quad(V(W / 2, 0, room.z0), V(0, 0, room.z1 - room.z0), V(0, H, 0), [room.z0 + L / 2, 0]);
+    walls.quad(V(hw, 0, room.z0), V(0, 0, room.z1 - room.z0), V(0, H, 0), [room.z0 + L / 2, 0]);
     // far wall (z = -L/2) faces +z: U = +x (+x × +y = +z ✓)
-    if (ri === last) walls.quad(V(-W / 2, 0, -L / 2), V(W, 0, 0), V(0, H, 0));
+    if (ri === last) walls.quad(V(-hw, 0, -L / 2), V(2 * hw, 0, 0), V(0, H, 0));
   });
   // near wall (z = +L/2) faces -z: U = -x, with the door opening
   {
+    const W = 2 * half(0);
     const { walls } = rooms[0];
     const dw = DOOR.width / 2;
     const dh = DOOR.height;
@@ -753,38 +757,41 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     const after = at(i + 1);
     const hw = d.halfWidth;
     const dh = d.height;
+    // the opening's centre: on the axis, or to one side (an arch keeps to the axis)
+    const cx = d.arch > 0 ? 0 : d.x;
+    const hb = half(i); // the room before's half width: the +z face's reach
+    const ha = half(i + 1); // and the room after's: the -z face's
     const zf = d.z + d.thickness / 2; // face toward the entrance (faces +z)
     const zb = d.z - d.thickness / 2; // face toward the far end (faces -z)
-    const side = W / 2 - hw;
     // the jambs rise to the springing of an arch, or to a square head
     const js = dh - d.arch;
-    // +z face: U = +x
-    before.walls.quad(V(-W / 2, 0, zf), V(side, 0, 0), V(0, H, 0));
-    before.walls.quad(V(hw, 0, zf), V(side, 0, 0), V(0, H, 0), [W / 2 + hw, 0]);
-    if (d.arch > 0) before.walls.add(archSpandrel(hw, js, d.arch, H), new THREE.Matrix4().makeTranslation(0, 0, zf));
-    else before.walls.quad(V(-hw, dh, zf), V(2 * hw, 0, 0), V(0, H - dh, 0), [W / 2 - hw, dh]);
-    // -z face: U = -x
-    after.walls.quad(V(W / 2, 0, zb), V(-side, 0, 0), V(0, H, 0));
-    after.walls.quad(V(-hw, 0, zb), V(-side, 0, 0), V(0, H, 0), [W / 2 + hw, 0]);
-    if (d.arch > 0) after.walls.add(archSpandrel(hw, js, d.arch, H), new THREE.Matrix4().makeRotationY(Math.PI).setPosition(0, 0, zb));
-    else after.walls.quad(V(hw, dh, zb), V(-2 * hw, 0, 0), V(0, H - dh, 0), [W / 2 - hw, dh]);
+    // +z face: U = +x (u measured from the room before's left wall)
+    before.walls.quad(V(-hb, 0, zf), V(cx - hw + hb, 0, 0), V(0, H, 0));
+    before.walls.quad(V(cx + hw, 0, zf), V(hb - cx - hw, 0, 0), V(0, H, 0), [hb + cx + hw, 0]);
+    if (d.arch > 0) before.walls.add(archSpandrel(hw, js, d.arch, H), new THREE.Matrix4().makeTranslation(cx, 0, zf));
+    else before.walls.quad(V(cx - hw, dh, zf), V(2 * hw, 0, 0), V(0, H - dh, 0), [hb + cx - hw, dh]);
+    // -z face: U = -x (u measured from the room after's right wall)
+    after.walls.quad(V(ha, 0, zb), V(-(ha - cx - hw), 0, 0), V(0, H, 0));
+    after.walls.quad(V(cx - hw, 0, zb), V(-(cx - hw + ha), 0, 0), V(0, H, 0), [ha - cx + hw, 0]);
+    if (d.arch > 0) after.walls.add(archSpandrel(hw, js, d.arch, H), new THREE.Matrix4().makeRotationY(Math.PI).setPosition(cx, 0, zb));
+    else after.walls.quad(V(cx + hw, dh, zb), V(-2 * hw, 0, 0), V(0, H - dh, 0), [ha - cx - hw, dh]);
     // reveals through the thickness
     const reveals = classical ? before.trim : before.walls;
     const T = d.thickness;
-    reveals.quad(V(-hw, 0, zf), V(0, 0, -T), V(0, js, 0)); // left jamb faces +x
-    reveals.quad(V(hw, 0, zb), V(0, 0, T), V(0, js, 0)); // right jamb faces -x
+    reveals.quad(V(cx - hw, 0, zf), V(0, 0, -T), V(0, js, 0)); // left jamb faces +x
+    reveals.quad(V(cx + hw, 0, zb), V(0, 0, T), V(0, js, 0)); // right jamb faces -x
     if (d.arch > 0) reveals.add(archSoffit(hw, js, d.arch, zb, zf));
-    else reveals.quad(V(-hw, dh, zb), V(2 * hw, 0, 0), V(0, 0, T)); // soffit faces -y
+    else reveals.quad(V(cx - hw, dh, zb), V(2 * hw, 0, 0), V(0, 0, T)); // soffit faces -y
     if (classical) {
       // a stone / oak threshold flush with the floor boards
-      before.trim.box(2 * hw, 0.008, T + 0.06, 0, 0.004, d.z);
+      before.trim.box(2 * hw, 0.008, T + 0.06, cx, 0.004, d.z);
     }
     if (d.arch > 0) {
       archivolt(before.trim, before.gilt, d, zf, 1);
       archivolt(after.trim, after.gilt, d, zb, -1);
     } else {
-      doorCase(before.trim, zf, 1, hw, dh, classical);
-      doorCase(after.trim, zb, -1, hw, dh, classical);
+      doorCase(before.trim, zf, 1, hw, dh, classical, cx);
+      doorCase(after.trim, zb, -1, hw, dh, classical, cx);
     }
   });
   // ---- a palace gallery's columns, either side of each arch on both faces
@@ -822,19 +829,39 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     }
   }
 
+  // ---- the films' free-standing wall: its face toward the room (the works hang there), its back toward the
+  // films' corner, its open end and its top; a capping moulding, and a skirting round it (classical)
+  const nook = layout.nook;
+  if (nook) {
+    const { walls, trim } = at(nook.room);
+    const { face: xf, thickness: t, z0, z1, height: h } = nook.wall;
+    const xb = xf - t;
+    walls.quad(V(xf, 0, z1), V(0, 0, -(z1 - z0)), V(0, h, 0), [L / 2 - z1, 0]); // face: +x
+    walls.quad(V(xb, 0, z0), V(0, 0, z1 - z0), V(0, h, 0), [z0 + L / 2, 0]); // back: -x
+    walls.quad(V(xf, 0, z0), V(-t, 0, 0), V(0, h, 0)); // open end: -z
+    walls.quad(V(xb, h, z0), V(0, 0, z1 - z0), V(t, 0, 0)); // top: +y
+    trim.roundedBox(t + 0.05, 0.045, z1 - z0 + 0.025, xf - t / 2, h + 0.0225, (z0 + z1) / 2 - 0.0125, 0.01, 2);
+    if (classical) {
+      trim.sweep(SKIRTING, V(xf, 0, z0), V(xf, 0, z1), V(1, 0, 0));
+      trim.sweep(SKIRTING, V(xb, 0, z0), V(xb, 0, z1), V(-1, 0, 0));
+      trim.sweep(SKIRTING, V(xb, 0, z0), V(xf, 0, z0), V(0, 0, -1));
+    }
+  }
+
   // ---- skirting / picture rail, room by room
   type Run = { a: THREE.Vector3; b: THREE.Vector3; n: THREE.Vector3 };
   // side walls (and the far end wall) of each room
   const runsOf = (ri: number): Run[] => {
-    const { z0, z1 } = layout.rooms[ri];
+    const { z0, z1, halfWidth: hw } = layout.rooms[ri];
     const out: Run[] = [
-      { a: V(-W / 2, 0, z0), b: V(-W / 2, 0, z1), n: V(1, 0, 0) },
-      { a: V(W / 2, 0, z0), b: V(W / 2, 0, z1), n: V(-1, 0, 0) },
+      { a: V(-hw, 0, z0), b: V(-hw, 0, z1), n: V(1, 0, 0) },
+      { a: V(hw, 0, z0), b: V(hw, 0, z1), n: V(-1, 0, 0) },
     ];
-    if (ri === last) out.push({ a: V(-W / 2, 0, -L / 2), b: V(W / 2, 0, -L / 2), n: V(0, 0, 1) });
+    if (ri === last) out.push({ a: V(-hw, 0, -L / 2), b: V(hw, 0, -L / 2), n: V(0, 0, 1) });
     return out;
   };
   const lift = layout.elevator;
+  const W = 2 * half(0); // the entrance wall's
   const nearRuns: Run[] = [
     ...(lift
       ? [
@@ -853,11 +880,12 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     const edge = ex.halfWidth + 0.15;
     const z = -L / 2;
     const n = V(0, 0, 1);
+    const hl = half(last);
     return [
       ...runs.slice(0, -1),
-      { a: V(-W / 2, 0, z), b: V(-ex.x - edge, 0, z), n },
+      { a: V(-hl, 0, z), b: V(-ex.x - edge, 0, z), n },
       { a: V(-ex.x + edge, 0, z), b: V(ex.x - edge, 0, z), n },
-      { a: V(ex.x + edge, 0, z), b: V(W / 2, 0, z), n },
+      { a: V(ex.x + edge, 0, z), b: V(hl, 0, z), n },
     ];
   };
   // the cross-wall faces each room has: full width (cornice, picture rail)
@@ -868,13 +896,15 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     const faces: [number, number, 1 | -1][] = [];
     if (ri < last) faces.push([ri, layout.doorways[ri].z + layout.doorways[ri].thickness / 2, 1]);
     if (ri > 0) faces.push([ri - 1, layout.doorways[ri - 1].z - layout.doorways[ri - 1].thickness / 2, -1]);
+    const hw = half(ri);
     for (const [di, z, n] of faces) {
       const d = layout.doorways[di];
-      full.push({ a: V(-W / 2, 0, z), b: V(W / 2, 0, z), n: V(0, 0, n) });
+      const cx = d.arch > 0 ? 0 : d.x;
+      full.push({ a: V(-hw, 0, z), b: V(hw, 0, z), n: V(0, 0, n) });
       const edge = d.halfWidth + (classical ? 0.2 : 0.06);
       split.push(
-        { a: V(-W / 2, 0, z), b: V(-edge, 0, z), n: V(0, 0, n) },
-        { a: V(edge, 0, z), b: V(W / 2, 0, z), n: V(0, 0, n) }
+        { a: V(-hw, 0, z), b: V(cx - edge, 0, z), n: V(0, 0, n) },
+        { a: V(cx + edge, 0, z), b: V(hw, 0, z), n: V(0, 0, n) }
       );
     }
     return { full, split };
@@ -921,15 +951,15 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
         if (theme.room.gilt) gilt.sweep(GILT_BEAD.map(([dd, hh]) => [dd, b - 0.2 + hh] as [number, number]), q.a, q.b, q.n);
       } else ceiling.sweep(bed, q.a, q.b, q.n);
     }
-    if (sp.kind === "vault" && theme.room.gilt) vaultRibs(gilt, sp, W);
+    if (sp.kind === "vault" && theme.room.gilt) vaultRibs(gilt, sp, 2 * half(ri));
   });
   specs.forEach((sp, ri) => {
     const { ceiling, trim, gilt } = at(ri);
     const r = sp.coveR;
     const yC = sp.yCeil;
     // flat band around the opening (faces down)
-    const x0 = -W / 2 + r;
-    const x1 = W / 2 - r;
+    const x0 = -half(ri) + r;
+    const x1 = half(ri) - r;
     const z0 = sp.z0 + r;
     const z1 = sp.z1 - r;
     const wx = sp.wellX;
@@ -978,15 +1008,12 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
   specs.forEach((sp, ri) => {
     const { track } = at(ri);
     const yR = H - TRACK_DROP;
+    const W = 2 * half(ri);
     const railX = W / 2 - layout.trackInset;
     const zCross = sp.z0 + layout.trackInset;
     const zEnd = sp.z1 - 0.9;
     const RW = 0.034; // rail width
     const RH = 0.026; // rail height
-    for (const s of [-1, 1]) {
-      track.roundedBox(RW, RH, zEnd - zCross + RW, s * railX, yR, (zCross + zEnd) / 2, 0.004, 1);
-    }
-    track.roundedBox(2 * railX + RW, RH, RW, 0, yR, zCross, 0.004, 1);
     const rod = (x: number, z: number) => {
       const top = ceilingAt(sp, W, x, z); // the rods land on the ceiling band, or on a vault's cove
       const h = top - (yR + RH / 2);
@@ -994,14 +1021,22 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
       track.cylinder(0.032, 0.032, 0.014, x, top - 0.014, z, 16); // canopy
       track.cylinder(0.009, 0.012, 0.03, x, yR + RH / 2, z, 8); // clamp
     };
-    const sideLen = zEnd - zCross;
-    const nSide = Math.max(2, Math.ceil(sideLen / 2.4));
-    for (const s of [-1, 1]) {
-      for (let i = 0; i <= nSide; i++) {
-        const z = zCross + 0.25 + ((sideLen - 0.5) * i) / nSide;
-        rod(s * railX, z);
-      }
-    }
+    // a side rail from z0 to z1, its rods spaced along it
+    const sideRail = (x: number, z0: number, z1: number) => {
+      if (z1 - z0 < 1) return;
+      track.roundedBox(RW, RH, z1 - z0 + RW, x, yR, (z0 + z1) / 2, 0.004, 1);
+      const len = z1 - z0;
+      const n = Math.max(2, Math.ceil(len / 2.4));
+      for (let i = 0; i <= n; i++) rod(x, z0 + 0.25 + ((len - 0.5) * i) / n);
+    };
+    const films = layout.nook?.room === ri ? layout.nook : null;
+    sideRail(railX, zCross, zEnd);
+    if (films) {
+      // the left rail stops short of the films' corner; another lights the free-standing wall's works
+      sideRail(-railX, zCross, Math.min(zEnd, films.wall.z0 - 0.4));
+      sideRail(films.wall.face + layout.trackInset, Math.max(zCross, films.wall.z0 - 0.2), zEnd);
+    } else sideRail(-railX, zCross, zEnd);
+    track.roundedBox(2 * railX + RW, RH, RW, 0, yR, zCross, 0.004, 1);
     const nCross = Math.max(1, Math.ceil((2 * railX) / 2.4));
     for (let i = 1; i < nCross; i++) rod(-railX + (2 * railX * i) / nCross, zCross);
     if (ri === 0 && screen) {

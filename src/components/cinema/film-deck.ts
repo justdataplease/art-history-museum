@@ -6,10 +6,10 @@
 //   beam. HLS (ERT's archive) through hls.js where the browser has no HLS of its own. A file
 //   whose host refuses other sites plays as a DOM <video> behind the screen instead (like an embed);
 // - embedded ("youtube", "vimeo", "dailymotion"): the provider's player (an <iframe>) placed on the screen
-//   (ScreeningRoom: drei Html behind a hole in the canvas), driven by its postMessage API. Its picture cannot be
+//   (FilmNook: drei Html behind a hole in the canvas), driven by its postMessage API. Its picture cannot be
 //   read, so the room's light flickers in a neutral colour.
 //
-// One deck per gallery (its screening room); React reads its state through subscribe/getState (useSyncExternalStore).
+// One deck per gallery (its films' corner); React reads its state through subscribe/getState (useSyncExternalStore).
 
 import * as THREE from "three";
 import type { Film } from "@/lib/types";
@@ -48,7 +48,7 @@ export class FilmDeck {
   private hls: HlsLike | null = null;
   private sourceIndex = 0;
   private offError: (() => void) | null = null;
-  /** The embedded player's frame (ScreeningRoom registers it). */
+  /** The embedded player's frame (FilmNook registers it). */
   private frame: HTMLIFrameElement | null = null;
   private frameReady = false;
   private pendingPlay = false;

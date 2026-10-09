@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { BlurPass } from "@react-three/drei/materials/BlurPass";
-import { crossWalls, ROOM_AO_APPLY, ROOM_AO_PARS, ROOM_NOISE_GLSL, type CrossWalls } from "./room-shading";
+import { crossUniforms, crossWalls, ROOM_AO_APPLY, ROOM_AO_PARS, ROOM_NOISE_GLSL, type CrossWalls } from "./room-shading";
 import { concreteTexture, woodGrainTexture } from "./textures";
 import type { GalleryTheme } from "./theme";
 
@@ -90,8 +90,7 @@ function createFloorMaterial(
     uRoomHalf: { value: new THREE.Vector3(W / 2, H, L / 2) },
     uRoomAO: { value: new THREE.Vector3(0.55, 0.32, 0.25) },
     // shared with the room materials (Room moves the window of cross walls)
-    uCross: { value: (cross ?? crossWalls({ doorways: [] })).cross },
-    uDoor: { value: (cross ?? crossWalls({ doorways: [] })).door },
+    ...crossUniforms(cross ?? crossWalls({ doorways: [], rooms: [], hallWidth: W, nook: null })),
   };
 
   mat.onBeforeCompile = (shader) => {

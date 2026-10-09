@@ -98,18 +98,29 @@ async function hold(page, key, ms) {
   await page.keyboard.up(key);
   await page.waitForTimeout(250);
 }
-/** Inside a cross wall's solid part (grown by `r`)? */
+/** Inside a cross wall's solid part (grown by `r`)? (A doorway may stand to one side of the axis: d.x.) */
 const inWall = (layout, p, r = 0) =>
   layout.doorways.some(
-    (d) => Math.abs(p.z - d.z) < d.thickness / 2 + r && Math.abs(p.x) > d.halfWidth - r
+    (d) => Math.abs(p.z - d.z) < d.thickness / 2 + r && Math.abs(p.x - d.x) > d.halfWidth - r
   );
+/** A point on the floor in front of a cross wall's solid part: on the side of the doorway with more wall. */
+const besideDoor = (d) => d.x + (d.x > 0 ? -1 : 1) * (d.halfWidth + 1.2);
+/** Clear of the furniture (its turned footprint, with a body's room round it)? */
+const clearOfFurniture = (layout, x, z) =>
+  layout.furniture.every((f) => {
+    const c = Math.abs(Math.cos(f.rotation));
+    const s = Math.abs(Math.sin(f.rotation));
+    const hx = (f.size[0] * c + f.size[1] * s) / 2 + 0.6;
+    const hz = (f.size[0] * s + f.size[1] * c) / 2 + 0.6;
+    return Math.abs(x - f.position[0]) > hx || Math.abs(z - f.position[1]) > hz;
+  });
 
 // ------------------------------------------------------------- desktop
 const desk = await browser.newContext({ viewport: { width: 1600, height: 900 } });
 const page = await open(desk);
 const layout = await page.evaluate(() => {
   const l = window.__museum.layout;
-  return { W: l.hallWidth, L: l.hallLength, rooms: l.rooms, doorways: l.doorways, screen: l.screen };
+  return { W: l.hallWidth, L: l.hallLength, rooms: l.rooms, doorways: l.doorways, screen: l.screen, furniture: l.furniture };
 });
 check("suite has several rooms", layout.rooms.length > 1, { rooms: layout.rooms.length });
 
@@ -117,22 +128,22 @@ await section("cross walls", async () => {
 for (const [i, d] of layout.doorways.entries()) {
   const face = d.z + d.thickness / 2;
   // 1a. straight into the solid wall beside the doorway
-  await place(page, 2.6, face + 2.0);
+  await place(page, besideDoor(d), face + 2.0);
   await hold(page, "KeyW", 1800);
   let p = await cam(page);
   check(`doorway ${i + 1}: cross wall blocks`, p.z >= face + 0.5 && p.z < face + 2.0, { z: +p.z.toFixed(2), face: +face.toFixed(2) });
   // 1b. through the opening
-  await place(page, 0.6, face + 2.0);
+  await place(page, d.x + 0.6, face + 2.0);
   await hold(page, "KeyW", 2200);
   p = await cam(page);
   check(`doorway ${i + 1}: walk through the opening`, p.z < d.z - d.thickness / 2 && p.room === i + 1, { z: +p.z.toFixed(2), room: p.room });
   // 1c. aimed at the jamb: slides round it into the opening
-  await place(page, d.halfWidth - 0.15, face + 1.5);
+  await place(page, d.x + d.halfWidth - 0.15, face + 1.5);
   await hold(page, "KeyW", 2200);
   p = await cam(page);
-  check(`doorway ${i + 1}: slide past the jamb`, p.z < d.z - d.thickness / 2 && Math.abs(p.x) < d.halfWidth - 0.29, { x: +p.x.toFixed(2), z: +p.z.toFixed(2) });
+  check(`doorway ${i + 1}: slide past the jamb`, p.z < d.z - d.thickness / 2 && Math.abs(p.x - d.x) < d.halfWidth - 0.29, { x: +p.x.toFixed(2), z: +p.z.toFixed(2) });
   // 1d. back the other way, into the wall's far face
-  await place(page, -2.6, d.z - d.thickness / 2 - 2.0, Math.PI);
+  await place(page, besideDoor(d), d.z - d.thickness / 2 - 2.0, Math.PI);
   await hold(page, "KeyW", 1800);
   p = await cam(page);
   check(`doorway ${i + 1}: far face blocks`, p.z <= d.z - d.thickness / 2 - 0.5, { z: +p.z.toFixed(2) });
@@ -148,10 +159,21 @@ const rooms = new Set();
 let clipped = 0;
 await page.keyboard.down("KeyW");
 let p = await cam(page);
-// (up to ~3 min: a 17-room suite is ~400 m at walking pace)
+// (up to ~3 min: a 17-room suite is ~400 m at walking pace), steering for the next doorway (they may stand to
+// one side of the axis), as a visitor does
+let stuck = 0;
 for (let t = 0; t < 360 && p.z > -layout.L / 2 + 2; t++) {
+  const next = layout.doorways.find((d) => d.z < p.z - 0.2);
+  // held up (a bench in the way): a step to the side, then on
+  const side = stuck > 1 ? (t % 4 < 2 ? 1 : -1) * (Math.PI / 2) : 0;
+  await page.evaluate(([tx, tz, side]) => {
+    const c = window.__museum.camera;
+    c.rotation.set(0, Math.atan2(-(tx - c.position.x), -(tz - c.position.z)) + side, 0, "YXZ");
+  }, next ? [next.x, next.z - 1.5, side] : [0, -layout.L / 2, side]);
   await page.waitForTimeout(500);
-  p = await cam(page);
+  const q = await cam(page);
+  stuck = Math.hypot(q.x - p.x, q.z - p.z) < 0.15 ? stuck + 1 : side ? 0 : stuck;
+  p = q;
   rooms.add(p.room);
   if (inWall(layout, p, 0.25)) clipped++;
 }
@@ -234,7 +256,8 @@ await section("inspect through a doorway", async () => {
   // range (9 m) from just in front of the doorway: the last doorway that has
   // one (a suite whose last room hangs only big canvases far down the walls
   // may have none in range there; Titian's)
-  const sx = 0;
+  // (standing on the doorway's centre line)
+  let sx = 0;
   const pick = (d, sz) => page.evaluate(
     ({ d, sz }) => {
       const zb = d.z - d.thickness / 2;
@@ -243,10 +266,10 @@ await section("inspect through a doorway", async () => {
         .map((q) => {
           const depth = sz - q.position[2];
           // where the line of sight crosses the far face of the doorway
-          const xAt = (q.position[0] * (sz - zb)) / depth;
-          return { q, dist: Math.hypot(q.position[0], depth), xAt };
+          const xAt = d.x + ((q.position[0] - d.x) * (sz - zb)) / depth;
+          return { q, dist: Math.hypot(q.position[0] - d.x, depth), xAt };
         })
-        .filter((c) => c.dist < 8.6 && Math.abs(c.xAt) < d.halfWidth - 0.15)
+        .filter((c) => c.dist < 8.6 && Math.abs(c.xAt - d.x) < d.halfWidth - 0.15)
         .sort((a, b) => b.dist - a.dist);
       const q = ps[0]?.q;
       return q ? { slug: q.painting.slug, x: q.position[0], y: q.position[1], z: q.position[2] } : null;
@@ -260,6 +283,7 @@ await section("inspect through a doorway", async () => {
     for (const off of [0.6, 0.3, 1.0]) {
       d = layout.doorways[i];
       sz = d.z + d.thickness / 2 + off;
+      sx = d.x;
       target = await pick(d, sz);
       if (target) break;
     }
@@ -408,12 +432,22 @@ async function tapAndTrack(page, x, z, ms = 9000) {
 
 await section("touch: tap-to-walk", async () => {
 for (const [i, d] of layout.doorways.entries()) {
-  // stand off to the side of the doorway, tap the next room's floor beyond it
+  // stand off to the side of the doorway (clear of the furniture), tap the next room's floor beyond it (clear
+  // of the furniture too)
+  // (to the left of it, or to the right where furniture stands on the left: the far point then lies across the
+  // doorway's centre line from it, in sight through the opening)
   const sz = d.z + d.thickness / 2 + 3.2;
-  await place(tp, -2.2, sz, -0.15, -0.32);
+  const m = clearOfFurniture(layout, d.x - 2.2, sz) ? -1 : 1;
+  await place(tp, d.x + m * 2.2, sz, m * 0.15, -0.32);
   await tp.waitForTimeout(500);
-  const tx = 0.6;
-  const tz = d.z - d.thickness / 2 - 3.5;
+  let tz = d.z - d.thickness / 2 - 3.5;
+  let tx = d.x - m * 0.6;
+  for (const [ox, oz] of [[0.6, 0], [0.9, 0], [0.3, 0], [0.6, 1.4], [0.6, -1.4], [0.9, 1.4]]) {
+    if (!clearOfFurniture(layout, d.x - m * ox, tz + oz)) continue;
+    tx = d.x - m * ox;
+    tz += oz;
+    break;
+  }
   const r = await tapAndTrack(tp, tx, tz);
   const bad = r.path.filter((q) => inWall(layout, q, 0.05)).length;
   const crossing = r.path.filter((q) => Math.abs(q.z - d.z) < d.thickness / 2);
@@ -422,6 +456,7 @@ for (const [i, d] of layout.doorways.entries()) {
     target: { x: tx, z: +tz.toFixed(2) },
     crossingX: crossing.length ? [+Math.min(...crossing.map((q) => q.x)).toFixed(2), +Math.max(...crossing.map((q) => q.x)).toFixed(2)] : null,
     insideWall: bad,
+    tap: r.screen,
   });
 }
 });
@@ -431,16 +466,16 @@ await section("touch: tap a cross wall", async () => {
   const d = layout.doorways[layout.doorways.length - 1];
   const before = layout.doorways.length - 1;
   const sz = d.z + d.thickness / 2 + 6;
-  await place(tp, 0, sz, 0, -0.05);
+  await place(tp, d.x, sz, 0, -0.05);
   await tp.waitForTimeout(400);
   const wall = await tp.evaluate(
-    ({ z }) => {
+    ({ x, z }) => {
       const m = window.__museum;
-      const v = m.camera.position.clone().set(-1.9, 1.0, z).project(m.camera);
+      const v = m.camera.position.clone().set(x, 1.0, z).project(m.camera);
       const r = document.querySelector("canvas").getBoundingClientRect();
       return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
     },
-    { z: d.z + d.thickness / 2 }
+    { x: d.x - d.halfWidth - 0.5, z: d.z + d.thickness / 2 }
   );
   await tp.touchscreen.tap(wall.x, wall.y);
   await tp.waitForTimeout(6000);

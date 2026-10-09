@@ -1,4 +1,4 @@
-// The screening room's glow of the lens, drawn once on a canvas (no image files).
+// The films' corner's glow of the lens, drawn once on a canvas (no image files).
 
 import * as THREE from "three";
 

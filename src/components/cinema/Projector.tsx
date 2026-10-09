@@ -1,6 +1,6 @@
 "use client";
 
-// The projector: a 1950s cinema projector on a cast-iron stand behind the chairs of a gallery's screening room.
+// The projector: a 1950s cinema projector on a cast-iron stand behind the chairs of a gallery's films' corner.
 // Enamelled body, the lamp house behind it with its cooling fins and chimney (its slits glow while the lamp is
 // on), the lens in front, two reels on their arms turning while the film runs, the film running down from the
 // feed reel and up to the take-up reel, knobs, a pilot light, and its cable to the floor. Built from primitives

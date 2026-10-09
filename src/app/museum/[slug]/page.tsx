@@ -89,7 +89,7 @@ export default async function MuseumPage({ params }: Props) {
     works: galleryTheme(artist.periodSlug).works,
     exits: true,
     phases: artist.phases?.map((p) => p.name),
-    screening: !!artist.films?.length,
+    films: !!artist.films?.length,
   });
   const bySlug = new Map(artist.paintings.map((p) => [p.slug, p]));
   entryPreloads(layout, 2).forEach(({ slug: s, thumb }, i) => {

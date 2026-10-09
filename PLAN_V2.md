@@ -97,10 +97,13 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
   - [ ] Recorded narration in place of the browser's voice.
   - [ ] Greek names said the Greek way (the voices are English).
 - [x] **Films about the artist** (owner, 2026-10-09). Live.
-  - [x] A screening room in each gallery whose artist has films: a curtained doorway in the entrance room's
-    right wall, a small room in the gallery's own style (its wall colour, floor and trim, two rows of the room
-    style's chairs), a plain screen and the projector; its beam carries the film's light, the lights dim while
-    it plays. "▶ Films" in the top bar walks one there. (Replaces the separate /cinema pages, live 2026-10-09.)
+  - [x] The films in a corner of the gallery itself (owner, 2026-10-10: "not a room that I go to"): the
+    second room is wider and nearly square, a free-standing wall of its works on its left, and behind it two
+    rows of the room style's chairs, a plain screen and the projector; its beam carries the film's light, the
+    corner darkens while it plays. "▶ Films" in the top bar takes one there. (Replaces the screening room
+    through a curtain, live 2026-10-09, and before it the separate /cinema pages.)
+  - [x] Rooms that differ (owner, 2026-10-10: "no museum is like a long alley"): rooms of their own widths,
+    doorways stepped to either side so the walk turns. Floors (stairs between levels) not yet.
   - [x] The films are kept on each artist in museum.json (`films`: the links and what each host says).
   - [x] Found by reading every link in the artists' Wikipedia articles (21 languages) with its own words
     ("video", "documentary", "βίντεο" ...) and following each back to its film (`archive/films.py`): 9,835

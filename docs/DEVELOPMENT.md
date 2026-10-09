@@ -89,14 +89,25 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
   period (the "Surprise me" at a gallery's end); `/furniture` (development only) every
   room style's furniture (the layout picks among it room by room), for modelling it.
 
-- **The screening room** (`src/components/cinema`): an artist with films (`films` in museum.json, from
-  `archive/films.py`) gets a curtained doorway in the entrance room's right wall (`layout.ts` `screening`: the
-  hanging leaves it a gap). The room itself is built 40 m beyond the hall, so neither one's lights reach the
-  other; walking into either curtain fades and moves the visitor through (`ScreeningPassage`, the teleport API).
-  It takes the gallery's wall colour, floor and trim and two rows of the room style's chairs (`furniture.ts`), a
-  plain screen and the projector (`Projector.tsx`). Open streams (ERT's HLS, Commons, the Internet Archive) play
-  as a video texture whose colours light the beam and the room; YouTube, Vimeo and Dailymotion play in their own
-  player behind a hole in the canvas (`film-deck.ts`). Leaving the room pauses the film.
+- **Rooms that differ** (`layout.ts`): each room has its own width (`SuiteRoom.halfWidth`: the suite's
+  `hallWidth` or, now and then, wider) and each doorway its own centre (`Doorway.x`: on the axis or stepped
+  to one side, zigzagging), seeded by the works so a gallery is the same on every visit. A palace's arches and
+  the doorway a short suite's flagship closes keep to the axis. The walls, coves, rails and floor follow
+  (`room-geometry.ts`); the room AO knows each room's width and each doorway's centre (`room-shading.ts`
+  `setCrossWindow`); collision, routes and sight lines go through the doorways where they are (`confine`,
+  `planRoute`, `firstWallHit`).
+
+- **The films' corner** (`src/components/cinema`): an artist with films (`films` in museum.json, from
+  `archive/films.py`) gets them in a corner of the second room (a single room's own): the room holds half a
+  room's works, is as wide as the corner needs and nearly square, and its near doorway steps to the right. A
+  free-standing wall of its works stands on its left, joined to the near wall (`layout.ts` `FilmNook`; its works
+  carry `partition`, lit from a rail of their own); behind it two rows of the room style's chairs (the hall's
+  furniture) face a plain screen on the near wall, the projector on its stand behind them (`FilmNook.tsx`,
+  `Projector.tsx`). It adds no lights: the room materials darken behind the wall and take the picture's colour
+  (`roomNook` in `room-shading.ts`, set each frame from the film). Open streams (ERT's HLS, Commons, the
+  Internet Archive) play as a video texture whose colours light the beam and the corner; YouTube, Vimeo and
+  Dailymotion play in their own player behind a hole in the canvas (`film-deck.ts`). Walking in starts the
+  film, walking out pauses it; the top bar's Films takes one there (the teleport API's `films`).
 
 - **Next.js 16** (App Router). The timeline and all 572 galleries are
   prerendered; data comes from the JSON snapshot (`data/site`).

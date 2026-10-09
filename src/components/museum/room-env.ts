@@ -84,7 +84,8 @@ export function initialEnvironment(
 ): THREE.WebGLRenderTarget {
   // the entrance room (the probe's), as a closed box
   const room = layout.rooms[0];
-  const { hallWidth: W, wallHeight: H } = layout;
+  const H = layout.wallHeight;
+  const W = 2 * (room?.halfWidth ?? layout.hallWidth / 2);
   const L = room ? room.z1 - room.z0 : layout.hallLength;
   const zc = probeZ(layout);
   const spec = ceilingSpec(layout, theme);

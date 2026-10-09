@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { RectAreaLightUniformsLib } from "three/examples/jsm/lights/RectAreaLightUniformsLib.js";
-import type { GalleryLayout } from "./layout";
+import { outerHalf, type GalleryLayout } from "./layout";
 import type { GalleryTheme } from "./theme";
 import type { SuiteRuntime } from "./suite-runtime";
 import { setGalleryEnv } from "./env-store";
@@ -29,7 +29,7 @@ import {
 import { ReflectiveFloor } from "./room-floor";
 import { furnitureOf } from "./furniture";
 import { RoomSigns } from "./room-signs";
-import { CROSS_SLOTS, crossWalls, patchRoomMaterial, setCrossWindow } from "./room-shading";
+import { CROSS_SLOTS, patchRoomMaterial, roomCross, setCrossWindow } from "./room-shading";
 import {
   damaskTextures,
   laylightTexture,
@@ -369,11 +369,12 @@ export function Lighting({
 
 function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
   return useMemo(() => {
-    const { hallWidth: W, hallLength: L, wallHeight: H } = layout;
+    const { hallLength: L, wallHeight: H } = layout;
     // the room's height for the AO: a vault rises above the walls
     const top = Math.max(H, ...ceilingSpecs(layout, theme).map((sp) => (sp.kind === "vault" ? sp.yCeil : H)));
-    const roomHalf = new THREE.Vector3(W / 2, top, L / 2);
-    const cross = crossWalls(layout);
+    const roomHalf = new THREE.Vector3(outerHalf(layout), top, L / 2);
+    // shared with the floor and the films' corner (the window of cross walls moves for all of them)
+    const cross = roomCross(layout);
     const textures: THREE.Texture[] = [];
     const finish = theme.room.wallFinish;
 
@@ -460,7 +461,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         extraUniforms: { uUplight: uplight },
         extraPars: "uniform vec3 uUplight;",
         extraColor: `{
-  float dw = min(min(uRoomHalf.x - abs(vRoomPos.x), uRoomHalf.z - abs(vRoomPos.z)), roomCrossFace(vRoomPos));
+  float dw = min(min(roomHalfX(vRoomPos.z) - abs(vRoomPos.x), uRoomHalf.z - abs(vRoomPos.z)), roomCrossFace(vRoomPos));
   float up = exp(-max(dw, 0.0) / 1.2);
   totalEmissiveRadiance += diffuseColor.rgb * uUplight * (0.3 + 0.7 * up);
 }`,
@@ -697,7 +698,7 @@ export function Room({
   return (
     <group>
       <ReflectiveFloor
-        W={layout.hallWidth}
+        W={2 * outerHalf(layout)}
         L={layout.hallLength}
         H={layout.wallHeight}
         theme={theme}

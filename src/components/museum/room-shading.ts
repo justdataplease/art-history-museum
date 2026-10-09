@@ -38,22 +38,40 @@ float roomHash2(vec2 p) {
 `;
 
 export const ROOM_AO_PARS = /* glsl */ `
-uniform vec3 uRoomHalf;  // (hallWidth/2, wallHeight, hallLength/2)
+uniform vec3 uRoomHalf;  // (widest room's half width, wallHeight, hallLength/2)
 uniform vec3 uRoomAO;    // (strength, radius m, share applied to direct light)
 uniform vec4 uCross;     // the suite's cross walls nearest the visitor: centre planes (far away when absent)
 uniform vec3 uDoor;      // their doorways: half width, height; the walls' half depth
+uniform vec4 uDoorX;     // each doorway's centre (x)
+uniform vec4 uHalfA;     // half the width of the room before the first of those walls, and after the next three
+uniform vec2 uHalfB;     // (x) after the fourth
+uniform vec4 uNook;      // the films' corner's floor: x0, x1 (the back of its wall), z0 (its open end), z1
+uniform vec4 uNookK;     // how much of the room's light reaches into it: direct, indirect; its wall's top (y)
+uniform vec4 uNookS;     // the centre of its screen (x, y, z)
+uniform vec3 uNookGlow;  // the light the picture throws
 varying vec3 vRoomPos;
 varying vec3 vRoomNrm;
 float roomEdge(float d) {
   return 1.0 - uRoomAO.x * exp(-max(d, 0.0) / uRoomAO.y);
 }
+// half the width of the room at depth z (rooms differ)
+float roomHalfX(float z) {
+  return z > uCross.x ? uHalfA.x : z > uCross.y ? uHalfA.y : z > uCross.z ? uHalfA.z : z > uCross.w ? uHalfA.w : uHalfB.x;
+}
 // distance to the solid part of the cross wall centred on plane c (the
-// doorway opening excepted; nothing from within the wall's own depth)
-float roomCrossDist(float c, vec3 p) {
+// doorway opening, centred on x = cx, excepted; nothing from within the wall's own depth)
+float roomCrossDist(float c, float cx, vec3 p) {
   float dz = abs(p.z - c) - uDoor.z;
   if (dz < 0.0) return 1e4;
-  float dx = p.y < uDoor.y ? max(0.0, uDoor.x - abs(p.x)) : 0.0;
+  float dx = p.y < uDoor.y ? max(0.0, uDoor.x - abs(p.x - cx)) : 0.0;
   return length(vec2(dz, dx));
+}
+// how far into the films' corner (0 outside it): behind its wall, below the wall's top, in from its open end
+float roomNook(vec3 p) {
+  float behind = 1.0 - smoothstep(uNook.y - 0.02, uNook.y + 0.06, p.x);
+  float within = smoothstep(uNook.z - 0.8, uNook.z + 1.6, p.z) * step(p.z, uNook.w + 0.3) * step(uNook.x - 0.3, p.x);
+  float below = 1.0 - smoothstep(uNookK.z, uNookK.z + 0.9, p.y);
+  return behind * within * below;
 }
 // distance to the nearest cross-wall face
 float roomCrossFace(vec3 p) {
@@ -61,26 +79,33 @@ float roomCrossFace(vec3 p) {
 }
 float roomAO(vec3 p, vec3 n) {
   vec3 an = abs(n);
-  float ax = roomEdge(uRoomHalf.x - abs(p.x));
+  float ax = roomEdge(roomHalfX(p.z) - abs(p.x));
   float ay = roomEdge(p.y) * roomEdge(uRoomHalf.y - p.y);
   float az = roomEdge(uRoomHalf.z - abs(p.z))
-    * roomEdge(roomCrossDist(uCross.x, p))
-    * roomEdge(roomCrossDist(uCross.y, p))
-    * roomEdge(roomCrossDist(uCross.z, p))
-    * roomEdge(roomCrossDist(uCross.w, p));
+    * roomEdge(roomCrossDist(uCross.x, uDoorX.x, p))
+    * roomEdge(roomCrossDist(uCross.y, uDoorX.y, p))
+    * roomEdge(roomCrossDist(uCross.z, uDoorX.z, p))
+    * roomEdge(roomCrossDist(uCross.w, uDoorX.w, p));
   return mix(ax, 1.0, an.x) * mix(ay, 1.0, an.y) * mix(az, 1.0, an.z);
 }
 `;
 
 /**
- * Where the suite's cross walls stand, for ROOM_AO_PARS (uCross / uDoor).
- * The same two vectors are shared by every room material, so moving the
- * window of four walls nearest the visitor (setCrossWindow) updates them
- * all at once; a single room keeps them far away.
+ * Where the suite's cross walls stand, how wide its rooms are, and the films' corner, for ROOM_AO_PARS. The
+ * same vectors are shared by every room material, so moving the window of four walls nearest the visitor
+ * (setCrossWindow) updates them all at once; a single room keeps the walls far away. The films' corner's light
+ * (nookK, nookGlow) changes with the film.
  */
 export interface CrossWalls {
   cross: THREE.Vector4;
   door: THREE.Vector3;
+  doorX: THREE.Vector4;
+  halfA: THREE.Vector4;
+  halfB: THREE.Vector2;
+  nook: THREE.Vector4;
+  nookK: THREE.Vector4;
+  nookS: THREE.Vector4;
+  nookGlow: THREE.Color;
 }
 
 const FAR_AWAY = 1e4;
@@ -88,21 +113,80 @@ const FAR_AWAY = 1e4;
 /** Cross walls (doorways) the AO window holds at once. */
 export const CROSS_SLOTS = 4;
 
-/** uCross / uDoor for a layout, holding its first CROSS_SLOTS cross walls. */
-export function crossWalls(layout: Pick<GalleryLayout, "doorways">): CrossWalls {
+/** How much of the room's light reaches behind the films' wall, direct and indirect, before a film dims it. */
+export const NOOK_LIGHT: [number, number] = [0.18, 0.5];
+
+type ShadedLayout = Pick<GalleryLayout, "doorways" | "rooms" | "hallWidth" | "nook">;
+
+/** A room with no cross walls and no films' corner (any width: its AO from the box alone). */
+const NO_WALLS: ShadedLayout = { doorways: [], rooms: [], hallWidth: 2 * FAR_AWAY, nook: null };
+
+/** The shared vectors for a layout, holding its first CROSS_SLOTS cross walls. */
+export function crossWalls(layout: ShadedLayout): CrossWalls {
   const d0 = layout.doorways[0];
+  const n = layout.nook;
   const cw: CrossWalls = {
     cross: new THREE.Vector4(FAR_AWAY, FAR_AWAY, FAR_AWAY, FAR_AWAY),
     door: new THREE.Vector3(d0?.halfWidth ?? 0, d0?.height ?? 0, d0 ? d0.thickness / 2 : 0),
+    doorX: new THREE.Vector4(),
+    halfA: new THREE.Vector4(),
+    halfB: new THREE.Vector2(),
+    nook: n ? new THREE.Vector4(n.x0, n.x1, n.z0, n.z1) : new THREE.Vector4(FAR_AWAY, FAR_AWAY, FAR_AWAY, FAR_AWAY),
+    nookK: new THREE.Vector4(NOOK_LIGHT[0], NOOK_LIGHT[1], n?.wall.height ?? 0, 0),
+    nookS: n ? new THREE.Vector4(n.screen.cx, n.screen.bottom + n.screen.h / 2, n.screen.z, 0) : new THREE.Vector4(),
+    nookGlow: new THREE.Color(0, 0, 0),
   };
   setCrossWindow(cw, layout, 0);
   return cw;
 }
 
-/** Point the AO at the cross walls first..first+CROSS_SLOTS-1 (far away past the end). */
-export function setCrossWindow(cw: CrossWalls, layout: Pick<GalleryLayout, "doorways">, first: number): void {
+/** One set of shared vectors per layout: the room's materials, its floor and the films' corner's things. */
+const shared = new WeakMap<object, CrossWalls>();
+export function roomCross(layout: ShadedLayout): CrossWalls {
+  let cw = shared.get(layout);
+  if (!cw) shared.set(layout, (cw = crossWalls(layout)));
+  return cw;
+}
+
+/** The shader uniforms over a set of shared vectors (by reference: they move together). */
+export function crossUniforms(cw: CrossWalls): Record<string, THREE.IUniform> {
+  return {
+    uCross: { value: cw.cross },
+    uDoor: { value: cw.door },
+    uDoorX: { value: cw.doorX },
+    uHalfA: { value: cw.halfA },
+    uHalfB: { value: cw.halfB },
+    uNook: { value: cw.nook },
+    uNookK: { value: cw.nookK },
+    uNookS: { value: cw.nookS },
+    uNookGlow: { value: cw.nookGlow },
+  };
+}
+
+/** Point the AO at the cross walls first..first+CROSS_SLOTS-1 (far away past the end), and at the widths of
+ *  the rooms between them. A room outside the window takes the widest beyond it: an AO a little light there,
+ *  never a dark band. */
+export function setCrossWindow(cw: CrossWalls, layout: ShadedLayout, first: number): void {
   const z = (i: number) => layout.doorways[first + i]?.z ?? FAR_AWAY;
+  const x = (i: number) => layout.doorways[first + i]?.x ?? 0;
   cw.cross.set(z(0), z(1), z(2), z(3));
+  cw.doorX.set(x(0), x(1), x(2), x(3));
+  const rooms = layout.rooms;
+  const last = rooms.length - 1;
+  const widest = (lo: number, hi: number) => {
+    let m = 0;
+    for (let i = Math.max(0, lo); i <= Math.min(last, hi); i++) m = Math.max(m, rooms[i].halfWidth);
+    return m || layout.hallWidth / 2;
+  };
+  // before the window's first wall: that room and any before it; after its last: every room on
+  const h = (i: number) => {
+    const r = Math.min(first + i, last);
+    if (i === 0) return widest(0, r);
+    if (i === CROSS_SLOTS || r === last) return widest(r, last);
+    return widest(r, r);
+  };
+  cw.halfA.set(h(0), h(1), h(2), h(3));
+  cw.halfB.set(h(4), 0);
 }
 
 export const ROOM_AO_APPLY = /* glsl */ `
@@ -112,6 +196,21 @@ export const ROOM_AO_APPLY = /* glsl */ `
   reflectedLight.indirectSpecular *= mix(1.0, rAO, 0.6);
   reflectedLight.directDiffuse *= mix(1.0, rAO, uRoomAO.z);
   reflectedLight.directSpecular *= mix(1.0, rAO, uRoomAO.z);
+  // behind the films' wall: the room's light reaches in dimly, and the picture lights what faces it
+  float nk = roomNook(vRoomPos);
+  if (nk > 0.0) {
+    float kd = mix(1.0, uNookK.x, nk);
+    float ki = mix(1.0, uNookK.y, nk);
+    reflectedLight.directDiffuse *= kd;
+    reflectedLight.directSpecular *= kd;
+    reflectedLight.indirectDiffuse *= ki;
+    reflectedLight.indirectSpecular *= ki;
+    vec3 toS = uNookS.xyz - vRoomPos;
+    float d2 = max(dot(toS, toS), 1e-4);
+    float lam = max(0.0, dot(normalize(vRoomNrm), toS * inversesqrt(d2)));
+    float front = smoothstep(0.0, 0.25, toS.z);
+    reflectedLight.directDiffuse += diffuseColor.rgb * uNookGlow * (nk * lam * front / (1.0 + d2 * 0.3));
+  }
 }
 `;
 
@@ -163,8 +262,7 @@ export function patchRoomMaterial<T extends THREE.MeshStandardMaterial>(
     uRoomHalf: { value: opts.roomHalf.clone() },
     uRoomAO: { value: new THREE.Vector3(...opts.ao) },
     // shared by reference: the window of cross walls moves for all materials
-    uCross: { value: (opts.cross ?? crossWalls({ doorways: [] })).cross },
-    uDoor: { value: (opts.cross ?? crossWalls({ doorways: [] })).door },
+    ...crossUniforms(opts.cross ?? crossWalls({ ...NO_WALLS, hallWidth: 2 * opts.roomHalf.x })),
     uMottle: { value: new THREE.Vector2(opts.mottle ?? 0, opts.mottleScale ?? 0.45) },
     uShadowGap: {
       value: new THREE.Vector2(opts.shadowGap?.bottom ?? 0, opts.shadowGap?.top ?? 0),

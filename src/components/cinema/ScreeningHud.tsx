@@ -1,8 +1,8 @@
 "use client";
 
-// The screening room's player and HUD. useScreening keeps one film deck for the gallery (film-deck.ts) and the
-// runtime the room's 3D reads (cinema-runtime.ts), and plays the artist's films in order; ScreeningHud shows what
-// the projector shows (bottom left) and the artist's films to choose from (F).
+// The films' corner's player and HUD. useScreening keeps one film deck for the gallery (film-deck.ts) and the
+// runtime the corner's 3D reads (cinema-runtime.ts), and plays the artist's films in order; ScreeningHud shows
+// what the projector shows (bottom left) and the artist's films to choose from (F).
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Film } from "@/lib/types";
@@ -46,7 +46,7 @@ export interface Screening {
   playFilm: (f: Film) => void;
   next: () => void;
   toggle: () => void;
-  /** Coming in: the film that was showing goes on, else the first. */
+  /** Coming into the corner: the film that was showing goes on, else the first. */
   start: () => void;
   origin: string;
   /** Changes when an embedded player mounts or unmounts. */
@@ -54,7 +54,7 @@ export interface Screening {
 }
 
 export function useScreening(films: Film[], layout: GalleryLayout): Screening {
-  const room = layout.screening;
+  const room = layout.nook;
   const [deck] = useState(() => (room && films.length && typeof document !== "undefined" ? new FilmDeck() : null));
   const [rt] = useState(() => (deck && room ? createRuntime(deck, room.screen) : null));
   const runtime = useRef<CinemaRuntime | null>(rt);
@@ -108,7 +108,6 @@ export function ScreeningHud({
   engaged,
   programme,
   onProgramme,
-  onLeave,
 }: {
   screening: Screening;
   artistName: string;
@@ -117,7 +116,6 @@ export function ScreeningHud({
   /** The films list is open; open or close it. */
   programme: boolean;
   onProgramme: (open: boolean) => void;
-  onLeave: () => void;
 }) {
   const { state, films } = s;
   const current = state.film;
@@ -192,9 +190,6 @@ export function ScreeningHud({
           <div className={styles.buttons}>
             <button type="button" className={styles.close} onClick={() => onProgramme(false)}>
               Close (F)
-            </button>
-            <button type="button" className={styles.close} onClick={onLeave}>
-              Back to the gallery
             </button>
           </div>
         </aside>

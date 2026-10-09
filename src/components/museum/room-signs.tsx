@@ -55,11 +55,16 @@ function planSigns(layout: GalleryLayout): Sign[] {
     // beside the door case, on the visitor's right as they face the doorway
     // (beyond a palace gallery's columns)
     const off = d.halfWidth + (d.columns ? 0.8 : CASE_REACH + CASE_GAP) + hw;
-    if (off + hw > layout.hallWidth / 2 - 0.3) return;
+    // (beside a doorway off the axis; where its room's wall has the space)
+    const cx = d.arch > 0 ? 0 : d.x;
+    const before = layout.rooms[i]?.halfWidth ?? layout.hallWidth / 2;
+    const after = layout.rooms[i + 1]?.halfWidth ?? layout.hallWidth / 2;
     // approaching from the entrance (facing −z, right = +x): the room beyond
-    signs.push({ room: i + 1, in: i, x: off, y, z: d.z + d.thickness / 2, facing: 1 });
-    // looking back (facing +z, right = −x): the room before
-    signs.push({ room: i, in: i + 1, x: -off, y, z: d.z - d.thickness / 2, facing: -1 });
+    if (cx + off + hw <= before - 0.3) signs.push({ room: i + 1, in: i, x: cx + off, y, z: d.z + d.thickness / 2, facing: 1 });
+    // looking back (facing +z, right = −x): the room before (not behind the films' free-standing wall)
+    const wall = layout.nook?.room === i + 1 ? layout.nook.wall : null;
+    const left = wall ? -wall.face - 0.15 : after - 0.3;
+    if (off + hw - cx <= left) signs.push({ room: i, in: i + 1, x: cx - off, y, z: d.z - d.thickness / 2, facing: -1 });
   });
   // room by room, so the rooms around the visitor are one draw range
   return signs.sort((a, b) => a.in - b.in);

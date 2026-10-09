@@ -35,10 +35,14 @@ you can visit, freely, without an account.
   original scale, reduced or enlarged.
 - **Watch the films.** A gallery whose artist has films (documentaries,
   television portraits, archive footage, linked from their Wikipedia articles
-  in every language) has a screening room beside its entrance room, in the
-  gallery's own style: walk through the curtain (or the top bar's **Films**),
-  sit among the chairs, and the projector throws the film on the screen while
-  the lights dim.
+  in every language) shows them as museums do, in a corner of the gallery:
+  the second room is wider and nearly square, and behind a free-standing wall
+  of its paintings two rows of chairs face a screen, the projector behind
+  them. Walk round the wall (or take the top bar's **Films**) and the film
+  plays; walk out and it waits.
+- **No two rooms alike.** Rooms differ in width, and the doorways between
+  them step to one side or the other, so the walk through a long suite turns
+  rather than running down one straight alley.
 
 On a computer, use **W A S D** to move (at a run; the settings have walking
 speeds) and the mouse to look, **Space** to jump, **C** to sit, **G** for the

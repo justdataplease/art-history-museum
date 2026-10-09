@@ -1,4 +1,4 @@
-// What every part of a screening room reads each frame: the deck, and the light it makes, eased like a real
+// What every part of the films' corner reads each frame: the deck, and the light it makes, eased like a real
 // room's (the house lights dim over a few seconds when a film starts; the lamp comes on at once).
 
 import * as THREE from "three";

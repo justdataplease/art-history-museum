@@ -708,11 +708,11 @@ export function TouchPlayer({
       if (floor) {
         _flat.x = floor.x;
         _flat.z = floor.z;
-        // a tap on a cross wall: walk up to the foot of the wall instead
+        // a tap on a wall: walk up to the foot of the wall instead
         const wall = firstWallHit(ray.ray.origin, floor, layout);
         if (wall) {
-          _flat.x = wall.x;
-          _flat.z = wall.z + wall.facing * 0.6;
+          _flat.x = wall.x + wall.nx * 0.6;
+          _flat.z = wall.z + wall.nz * 0.6;
         }
         confine(_flat, layout);
         const p = camera.position;

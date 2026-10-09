@@ -109,12 +109,12 @@ export function MuseumApp({
       elevator: (design?.floors.length ?? 0) > 1,
       exits: !design && !!neighbours,
       phases: design ? undefined : artist.phases?.map((p) => p.name),
-      // the films about the artist: a screening room beside the entrance room
-      screening: !design && !!artist.films?.length,
+      // the films about the artist: a corner of the second room, behind a free-standing wall
+      films: !design && !!artist.films?.length,
     });
   }, [artist, theme, design, neighbours]);
   const screening = useScreening(useMemo(() => artist.films ?? [], [artist.films]), layout);
-  const films = layout.screening ? screening.films.length : 0;
+  const films = layout.nook ? screening.films.length : 0;
   // the flagship (a thumbnail, in a suite) and the entrance room's nearest works
   const gate = useMemo(() => entryGate(layout), [layout]);
   const rooms = layout.rooms.length;
@@ -529,43 +529,37 @@ export function MuseumApp({
   }, [ride]);
   const pressLift = useCallback((dir: LiftDirection) => void rideRef.current(dir), []);
   const goToLift = useCallback(() => jump((api) => api?.toElevator()), [jump]);
-  // ---- the screening room: through its curtain (walking into it, or the top bar's Films), the film showing goes
-  // on (else the first); whoever leaves leaves it paused (ScreeningRoom), and the gallery's music comes back
+  // ---- the films' corner: walking in behind its wall (or the top bar's Films, which takes one there), the film
+  // showing goes on (else the first); whoever walks out leaves it paused (FilmNook), and the music comes back
   const [inFilmRoom, setInFilmRoom] = useState(false);
   const [programme, setProgramme] = useState(false);
   const startFilm = screening.start;
-  const passScreening = useCallback(
-    (into: boolean) => {
-      jump((api) => {
-        api?.screening(into);
-        if (into) startFilm();
-      });
+  const goFilms = useCallback(() => jump((api) => api?.films()), [jump]);
+  const onInsideFilmRoom = useCallback(
+    (inside: boolean) => {
+      setInFilmRoom(inside);
+      duckMusic(inside ? 0 : 1, 1.2);
+      if (inside) startFilm();
+      else {
+        programmeOpen.current = false;
+        setProgramme(false);
+      }
     },
-    [jump, startFilm]
+    [startFilm]
   );
-  const onInsideFilmRoom = useCallback((inside: boolean) => {
-    setInFilmRoom(inside);
-    duckMusic(inside ? 0 : 1, 1.2);
-    if (!inside) {
-      programmeOpen.current = false;
-      setProgramme(false);
-    }
-  }, []);
-  const screeningProps = useMemo(
+  const filmsProps = useMemo(
     () =>
-      layout.screening && screening.deck
+      layout.nook && screening.deck
         ? {
             runtime: screening.runtime,
-            films,
             origin: screening.origin,
             deckKey: screening.deckKey,
-            onPass: passScreening,
             inside: inFilmRoom,
             onInside: onInsideFilmRoom,
             onScreen: screening.toggle,
           }
         : undefined,
-    [layout.screening, screening.deck, screening.runtime, films, screening.origin, screening.deckKey, passScreening, inFilmRoom, onInsideFilmRoom, screening.toggle]
+    [layout.nook, screening.deck, screening.runtime, screening.origin, screening.deckKey, inFilmRoom, onInsideFilmRoom, screening.toggle]
   );
   // the films list (F): the cursor is freed to choose, and taken back on closing it
   const programmeOpen = useRef(false);
@@ -716,7 +710,7 @@ export function MuseumApp({
           cameraRef={cameraRef}
           lift={lift}
           exits={exits}
-          screening={screeningProps}
+          films={filmsProps}
         />
       </Canvas>
 
@@ -736,10 +730,10 @@ export function MuseumApp({
             <button
               type="button"
               className={`mus-back ${styles.filmsLink}`}
-              onClick={() => passScreening(!inFilmRoom)}
-              title={inFilmRoom ? "Back to the gallery" : `The screening room: ${films} film${films === 1 ? "" : "s"} about ${artist.name}`}
+              onClick={() => (inFilmRoom ? toggleProgramme() : goFilms())}
+              title={inFilmRoom ? "The films about the artist" : `${films} film${films === 1 ? "" : "s"} about ${artist.name}, behind a wall of the second room`}
             >
-              {inFilmRoom ? "← Gallery" : `▶ Films · ${films}`}
+              {`▶ Films · ${films}`}
             </button>
           )}
         </div>
@@ -793,11 +787,6 @@ export function MuseumApp({
           engaged={engaged}
           programme={programme}
           onProgramme={toggleProgramme}
-          onLeave={() => {
-            programmeOpen.current = false;
-            setProgramme(false);
-            passScreening(false);
-          }}
         />
       )}
 
@@ -812,7 +801,7 @@ export function MuseumApp({
                 <b>Tap floor</b> walk
               </span>
               <span>
-                <b>Films</b> back to the gallery
+                <b>Films</b> the list
               </span>
             </>
           ) : (
@@ -831,9 +820,6 @@ export function MuseumApp({
               </span>
               <span>
                 <b>C</b> sit
-              </span>
-              <span>
-                <b>Curtain</b> back to the gallery
               </span>
               <span>
                 <b>Esc</b> release

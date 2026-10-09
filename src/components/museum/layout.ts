@@ -11,6 +11,8 @@ export interface Placement {
   room: number;
   /** Wall-label scale (1: the standard card; smaller beside prints and miniatures). */
   label?: number;
+  /** Hangs on the film corner's free-standing wall (FilmNook), not on the room's left wall. */
+  partition?: boolean;
 }
 
 export interface Bench {
@@ -106,6 +108,9 @@ export interface SuiteRoom {
   /** z of the room's far (−z) and near (+z) wall faces. */
   z0: number;
   z1: number;
+  /** Half the room's width: its side walls stand at x = ±halfWidth. Rooms differ (never narrower than the
+   *  suite's hallWidth); a cross wall reaches as far as the wider of the rooms either side. */
+  halfWidth: number;
   /** Year span of the dated works hung in the room (null: none is dated). */
   years: [number, number] | null;
   /** The phase of the artist's life the room shows ("Blue Period"), when the gallery follows phases. */
@@ -118,7 +123,10 @@ export interface Doorway {
   z: number;
   /** Cross-wall thickness (depth of the reveals). */
   thickness: number;
-  /** Half the clear opening width, centred on the hall axis (x = 0). */
+  /** Centre of the opening: on the hall axis (0), or to one side of it where both rooms have the wall, so the
+   *  walk through the suite turns. */
+  x: number;
+  /** Half the clear opening width. */
   halfWidth: number;
   /** Clear opening height (the crown of an arch). */
   height: number;
@@ -163,33 +171,36 @@ export interface GalleryLayout {
   /** Lighting rails' distance in from the side walls (TRACK_INSET in a hall,
    *  less in a low cabinet so the spots keep their ~30° aim). */
   trackInset: number;
-  /** The screening room (LayoutOptions.screening). */
-  screening: Screening | null;
+  /** The films about the artist, in a corner of one room (LayoutOptions.films). */
+  nook: FilmNook | null;
 }
 
-/** A screening room beside an artist's gallery, as museums have for films about the artist: a curtained doorway
- *  in the entrance room's right wall (x = hallWidth / 2) leads into a small room of its own, built well away from
- *  the hall so that neither one's lights reach the other (walking through the curtain crosses the distance).
- *  Two rows of the room style's chairs face a screen on its far wall (−z), the projector on its stand behind
- *  them; its own doorway is in its left wall (x = x0), near the back. */
-export interface Screening {
-  /** The curtained doorway in the gallery: its centre (z), half its width, its height. */
-  door: { z: number; halfWidth: number; height: number };
-  /** The room's floor (x0..x1, z0..z1), its height, and its doorway's centre on its left wall. */
+/**
+ * The films about the artist, shown as museums show them, in a corner of the gallery itself: one room of the
+ * suite (the second; a single room's own) is wider, nearly square, and a free-standing wall of its works stands
+ * on its left, joined to its near wall. Behind that wall, open at its far end, two rows of the room style's
+ * chairs face a screen on the near wall, the projector on its stand behind them. The room's lights reach in only
+ * dimly (the room's surfaces darken there: room-shading), and the picture lights it.
+ */
+export interface FilmNook {
+  room: number;
+  /** The free-standing wall: its face toward the room (x), its depth (behind the face), its run from its open
+   *  end (z0) to the room's near wall (z1), its height. */
+  wall: { face: number; thickness: number; z0: number; z1: number; height: number };
+  /** The floor behind it: the room's left wall to the wall's back (x0..x1), its open end to the near wall (z0..z1). */
   x0: number;
   x1: number;
   z0: number;
   z1: number;
-  height: number;
-  doorZ: number;
-  /** The screen's frame on the far wall (16:9: the largest picture), centred on x = cx, its bottom edge. */
+  /** The screen on the near wall, facing −z: its frame (16:9, the largest picture) centred on x = cx, its bottom
+   *  edge, its plane (z). */
   screen: { w: number; h: number; bottom: number; z: number; cx: number };
-  /** The projector's stand (x, z) and its lens. */
+  /** The projector's stand (x, z) and its lens, toward the screen (+z). */
   projector: { x: number; z: number; lens: [number, number, number] };
-  /** The chairs: the room style's (LayoutOptions.furnish), five to a row. */
-  chairs: Furnishing[];
-  /** What stands in the way on its floor: the rows and the stand. */
+  /** What stands in the way on its floor besides the chairs (furniture): the projector's stand. */
   blocks: Bench[];
+  /** Where the top bar's Films puts the visitor: behind the chairs, facing the screen (yaw π: toward +z). */
+  view: { x: number; z: number; yaw: number };
 }
 
 /** Centre line for small and mid-sized works (museum standard ~1.45-1.60 m). */
@@ -339,8 +350,8 @@ export interface LayoutOptions {
   /** The phases of the artist's life, in order (each painting's `phase` indexes them): rooms split where a phase
    *  ends, each named after its phase, instead of evenly by year. */
   phases?: string[];
-  /** A screening room beside the gallery (films about the artist): its doorway in the entrance room's right wall. */
-  screening?: boolean;
+  /** The films about the artist: a corner of one room for them (FilmNook). */
+  films?: boolean;
 }
 
 /** Physical canvas size in metres. Prefers Wikidata's measured size
@@ -459,8 +470,7 @@ function byYear(a: Painting, b: Painting): number {
 }
 
 interface Sized {
-  /** null: the screening room's doorway, kept clear on the wall. */
-  painting: Painting | null;
+  painting: Painting;
   w: number;
   h: number;
   /** Footprint toward the entrance (+z) and toward the far wall (−z). */
@@ -484,11 +494,11 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       seats: [],
       elevator: null,
       exits: null,
-      rooms: [{ index: 0, z0: -MIN_HALL_LENGTH / 2, z1: MIN_HALL_LENGTH / 2, years: null }],
+      rooms: [{ index: 0, z0: -MIN_HALL_LENGTH / 2, z1: MIN_HALL_LENGTH / 2, halfWidth: BASE_HALL_WIDTH / 2, years: null }],
       doorways: [],
       screen: null,
       trackInset: TRACK_INSET,
-      screening: null,
+      nook: null,
     };
   }
   const cab = hanging.cabinet;
@@ -533,11 +543,25 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       chapters.push([]);
       titles.push(null);
     }
+    // the films' room (the second) holds half a room's works, so it can be nearly square: the rest of its
+    // phase goes on in the room after
+    const filmShare = Math.ceil(hanging.roomMax / 2);
+    if (opts.films && chapters.length > 1 && chapters[1].length > filmShare) {
+      const c = chapters[1];
+      chapters.splice(1, 1, c.slice(0, filmShare), c.slice(filmShare));
+      titles.splice(1, 0, titles[1]);
+    }
     nRooms = chapters.length;
     overture = nRooms > VISTA_ROOMS;
     anchorRoom = overture ? 0 : nRooms - 1;
   } else {
-    const roomSizes = splitRooms(paintings.length, hanging.roomMax);
+    let roomSizes = splitRooms(paintings.length, hanging.roomMax);
+    // the films' room (the second) holds half a room's works, so it can be nearly square
+    const filmShare = Math.ceil(hanging.roomMax / 2);
+    if (opts.films && roomSizes.length > 1 && roomSizes[1] > filmShare) {
+      const others = splitRooms(paintings.length - filmShare, hanging.roomMax);
+      roomSizes = [others[0], filmShare, ...others.slice(1)];
+    }
     nRooms = roomSizes.length;
     overture = nRooms > VISTA_ROOMS;
     anchorRoom = overture ? 0 : nRooms - 1;
@@ -564,11 +588,8 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
     });
     return { left, right };
   });
-  // the screening room's doorway: the first thing on the entrance room's right wall, its casing clear of the works
-  if (opts.screening) {
-    const clear = SCREENING.doorHalf + SCREENING.casing + 0.35;
-    walls[0].right.unshift({ painting: null, w: 0, h: 0, near: clear, far: clear });
-  }
+  // the films' corner: in the second room of a suite (as one walks on), in a single room its own
+  const filmRoom = opts.films ? Math.min(1, nRooms - 1) : -1;
 
   // 0 for a room of cabinet pictures (largest side <= 0.9 m), 1 from ~2.1 m up.
   const largest = paintings.reduce((largest, p) => {
@@ -582,23 +603,13 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
 
   const run = (ws: Sized[]) =>
     ws.reduce((s, x) => s + x.near + x.far, 0) + hanging.air * Math.max(0, ws.length - 1);
-  // Each room is as long as its own works need (the same rule as one hall);
-  // an overture room leaves the flagship's screen a good viewing distance.
-  const roomLengths = walls.map(({ left, right }, r) =>
-    Math.max(
-      Math.ceil(minLength * 10) / 10,
-      Math.ceil((entryClear + Math.max(run(left), run(right)) + farClear) * 10) / 10,
-      overture && r === 0 ? Math.ceil((SCREEN_BACK + (cab ? 9 : 15)) * 10) / 10 : 0
-    )
-  );
-  const hallLength =
-    roomLengths.reduce((s, l) => s + l, 0) + CROSS_WALL_THICKNESS * (nRooms - 1);
+  const tenth = (v: number) => Math.ceil(v * 10) / 10;
 
   const a = size(anchor);
   const sideMax = rest.reduce((largest, p) => Math.max(largest, size(p).w), 0);
   // the flagship's screen: the work and its label with a margin
   const screenHalf = a.w / 2 + reach(a.w, a.h) + 0.45;
-  // one width for the whole suite, so the doorways line up on one axis
+  // the suite's width: what its works need (a room may be wider than this, never narrower)
   const hallWidth = Math.min(
     MAX_HALL_WIDTH,
     Math.ceil(10 * Math.max(
@@ -618,6 +629,103 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
     )) / 10
   );
 
+  // Tall works raise the ceiling: the frame top keeps HEADROOM below it for
+  // the picture rail, the lighting track and its fixtures.
+  const maxTop = paintings.reduce((top, p) => {
+    const s = size(p);
+    return Math.max(top, hangHeight(s.h, eye) + s.h / 2 + frameAllowance(s.w, s.h));
+  }, 0);
+  const wallHeight = Math.max(tenth(baseHeight), tenth(maxTop + HEADROOM));
+
+  // Doorways scale a little with the wall: ~3.4 m clear in a 4.7 m room. A palace gallery's arches span
+  // half the hall and rise nearly to the cornice, on columns.
+  const arched = !!opts.arches && !cab;
+  const doorHeight = arched ? Math.max(3.8, wallHeight - 0.45) : Math.min(4, Math.max(3, wallHeight - 1.3));
+  const doorHalf = arched
+    ? Math.min(2.7, Math.max(1.7, hallWidth * 0.26))
+    : cab?.doorHalf ?? Math.min(2.8, Math.max(2.4, doorHeight * 0.76)) / 2;
+
+  // No two rooms alike, as in a real museum: now and then one is wider than the rest, and a doorway stands to
+  // one side of the axis, so the walk through the suite turns (seeded by the works: the same on every visit).
+  const plan = seeded(paintings.map((p) => p.slug).join("|") + "#plan");
+  const half = hallWidth / 2;
+  const halves = chapters.map(() => {
+    const roll = plan();
+    const step = plan();
+    if (nRooms === 1 || roll < 0.45) return half;
+    const steps = cab ? WIDER_CABINET : WIDER;
+    return +Math.min(Math.max(half, WIDEST / 2), half + steps[Math.floor(step * steps.length) % steps.length]).toFixed(2);
+  });
+  let last = 0;
+  const offsets = halves.slice(1).map((_, i) => {
+    const roll = plan();
+    const mag = plan();
+    const coin = plan();
+    const most = Math.min(halves[i], halves[i + 1]) - doorHalf - DOOR_SIDE;
+    // a palace's arches keep to the axis
+    if (arched) return 0;
+    // the films' room's near doorway moves to the right, to leave its free-standing wall room on the left
+    if (i === filmRoom - 1) return (last = +Math.max(0, Math.min(NOOK.shift, halves[i] - doorHalf - DOOR_SIDE)).toFixed(2));
+    // and the doorway a short suite's flagship closes keeps to the axis
+    if (roll < 0.3 || most < MIN_SHIFT || (!overture && i === nRooms - 2)) return (last = 0);
+    // to the other side from the last doorway that moved (the walk zigzags), else either
+    const side = last ? -Math.sign(last) : coin < 0.5 ? -1 : 1;
+    return (last = +(side * (MIN_SHIFT + mag * (most - MIN_SHIFT))).toFixed(2));
+  });
+
+  // The films' room: its free-standing wall stands to the left of the doorway in its near wall, and the room is
+  // as wide as the corner behind that wall needs.
+  let face = 0;
+  if (filmRoom >= 0) {
+    let nearX = 0;
+    let nearReach: number;
+    if (filmRoom === 0) nearReach = ENTRANCE_DOOR.width / 2 + DOOR_CASING + 1.2;
+    else {
+      nearX = offsets[filmRoom - 1];
+      nearReach = doorHalf + (arched && opts.arches === "columns" ? COLUMN_OUT + COLUMN_RADIUS : 0) + NOOK.byDoor;
+    }
+    face = +(nearX - nearReach).toFixed(2);
+    halves[filmRoom] = Math.max(halves[filmRoom], +(NOOK.width + NOOK.thickness - face).toFixed(2));
+  }
+  // its left-hand works: on the free-standing wall as far as that holds them, the rest on the room's left wall
+  // beyond the wall's open end (one at least, of two or more)
+  let onWall: Sized[] = [];
+  let beyond: Sized[] = [];
+  if (filmRoom >= 0) {
+    const left = walls[filmRoom].left;
+    const room = NOOK.length - entryClear - NOOK.endClear;
+    let k = 0;
+    let used = 0;
+    while (k < left.length) {
+      const need = used + (k ? hanging.air : 0) + left[k].near + left[k].far;
+      if (need > room) break;
+      used = need;
+      k++;
+    }
+    if (k === left.length && k >= 2) k--;
+    onWall = left.slice(0, k);
+    beyond = left.slice(k);
+  }
+
+  // Each room is as long as its own works need (the same rule as one hall); an overture room leaves the
+  // flagship's screen a good viewing distance; the films' room is nearly square.
+  const roomLengths = walls.map(({ left, right }, r) =>
+    r === filmRoom
+      ? Math.max(
+          tenth(minLength),
+          tenth(entryClear + run(right) + farClear),
+          tenth(NOOK.length + NOOK.beyond + (beyond.length ? run(beyond) + farClear : 0)),
+          tenth(2 * halves[r] * NOOK.square)
+        )
+      : Math.max(
+          tenth(minLength),
+          tenth(entryClear + Math.max(run(left), run(right)) + farClear),
+          overture && r === 0 ? tenth(SCREEN_BACK + (cab ? 9 : 15)) : 0
+        )
+  );
+  const hallLength =
+    roomLengths.reduce((s, l) => s + l, 0) + CROSS_WALL_THICKNESS * (nRooms - 1);
+
   // Rooms from the entrance (+z) toward the far end wall (−z).
   const spans: { z0: number; z1: number }[] = [];
   {
@@ -630,7 +738,6 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
   }
 
   const placements: Placement[] = [];
-  let doorZ: number | null = null;
 
   // Anchor piece on the far end wall, or on the overture screen.
   const screenZ = spans[0].z0 + SCREEN_BACK;
@@ -650,51 +757,45 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
 
   walls.forEach(({ left, right }, r) => {
     const { z0, z1 } = spans[r];
+    const hw = halves[r];
     // Both walls span the same run (justified spacing), so a wall with fewer
     // or narrower works gets more air instead of ending early.
-    const zNear = z1 - entryClear;
-    const span = z1 - z0 - entryClear - farClear;
-    const hang = (ws: Sized[], side: -1 | 1): Placement[] => {
-      const total = ws.reduce((s, x) => s + x.near + x.far, 0);
+    const hang = (ws: Sized[], x: number, side: -1 | 1, zNear: number, zFar: number, partition = false): Placement[] => {
+      const span = zNear - zFar;
+      const total = ws.reduce((s, w) => s + w.near + w.far, 0);
       const gap = ws.length > 1 ? (span - total) / (ws.length - 1) : 0;
       let cursor = ws.length > 1 ? zNear : zNear - (span - total) / 2;
-      return ws.flatMap((x): Placement[] => {
-        const z = cursor - x.near;
-        cursor = z - x.far - gap;
-        if (!x.painting) {
-          doorZ = z;
-          return [];
-        }
-        return [{
-          painting: x.painting,
-          position: [side * (hallWidth / 2 - WALL_GAP), hangHeight(x.h, eye), z],
+      return ws.map((w): Placement => {
+        const z = cursor - w.near;
+        cursor = z - w.far - gap;
+        return {
+          painting: w.painting,
+          position: [x, hangHeight(w.h, eye), z],
           rotationY: side === -1 ? Math.PI / 2 : -Math.PI / 2,
-          w: x.w,
-          h: x.h,
+          w: w.w,
+          h: w.h,
           room: r,
           label: hanging.label,
-        }];
+          ...(partition ? { partition: true } : {}),
+        };
       });
     };
+    const zNear = z1 - entryClear;
+    const zFar = z0 + farClear;
+    const lefts =
+      r === filmRoom
+        ? [
+            ...hang(onWall, face + WALL_GAP, -1, zNear, z1 - NOOK.length + NOOK.endClear, true),
+            ...hang(beyond, -hw + WALL_GAP, -1, z1 - NOOK.length - NOOK.beyond, zFar),
+          ]
+        : hang(left, -hw + WALL_GAP, -1, zNear, zFar);
+    const rights = hang(right, hw - WALL_GAP, 1, zNear, zFar);
     // Interleave back into chronological order in the placements array.
-    const lefts = hang(left, -1);
-    const rights = hang(right, 1);
-    for (let i = 0; i < lefts.length; i++) {
-      placements.push(lefts[i]);
+    for (let i = 0; i < Math.max(lefts.length, rights.length); i++) {
+      if (lefts[i]) placements.push(lefts[i]);
       if (rights[i]) placements.push(rights[i]);
     }
   });
-
-  // Tall works raise the ceiling: the frame top keeps HEADROOM below it for
-  // the picture rail, the lighting track and its fixtures.
-  const maxTop = placements.reduce(
-    (top, p) => Math.max(top, p.position[1] + p.h / 2 + frameAllowance(p.w, p.h)),
-    0,
-  );
-  const wallHeight = Math.max(
-    Math.ceil(baseHeight * 10) / 10,
-    Math.ceil((maxTop + HEADROOM) * 10) / 10
-  );
 
   const rooms: SuiteRoom[] = spans.map(({ z0, z1 }, r) => {
     // the room's chronological chapter: the flagship hangs out of sequence
@@ -705,21 +806,16 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       index: r,
       z0,
       z1,
+      halfWidth: halves[r],
       years: years.length ? [Math.min(...years), Math.max(...years)] : null,
       title: titles[r] ?? null,
     };
   });
 
-  // Doorways scale a little with the wall: ~3.4 m clear in a 4.7 m room. A palace gallery's arches span
-  // half the hall and rise nearly to the cornice, on columns.
-  const arched = !!opts.arches && !cab;
-  const doorHeight = arched ? Math.max(3.8, wallHeight - 0.45) : Math.min(4, Math.max(3, wallHeight - 1.3));
-  const doorHalf = arched
-    ? Math.min(2.7, Math.max(1.7, hallWidth * 0.26))
-    : cab?.doorHalf ?? Math.min(2.8, Math.max(2.4, doorHeight * 0.76)) / 2;
-  const doorways: Doorway[] = spans.slice(0, -1).map(({ z0 }) => ({
+  const doorways: Doorway[] = spans.slice(0, -1).map(({ z0 }, i) => ({
     z: z0 - CROSS_WALL_THICKNESS / 2,
     thickness: CROSS_WALL_THICKNESS,
+    x: offsets[i],
     halfWidth: doorHalf,
     height: doorHeight,
     arch: arched ? Math.min(doorHalf * 0.8, doorHeight - 2.6) : 0,
@@ -737,11 +833,17 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       }
     : null;
 
-  const elevator = opts.elevator ? elevatorSpot(hallWidth) : null;
-  const exits = opts.exits ? exitDoors(hallWidth, exitInner(overture, a.w / 2 + reach(a.w, a.h))) : null;
+  const elevator = opts.elevator ? elevatorSpot(2 * halves[0]) : null;
+  const exits = opts.exits ? exitDoors(2 * halves[nRooms - 1], exitInner(overture, a.w / 2 + reach(a.w, a.h))) : null;
+  // the films' corner behind its wall of works, and its chairs
+  const films =
+    filmRoom >= 0
+      ? filmNook(filmRoom, spans[filmRoom], halves[filmRoom], face, wallHeight, placements.filter((p) => p.partition), opts.furnish)
+      : null;
+  const nook = films?.nook ?? null;
   const furniture = opts.furnish
     ? furnish({
-        W: hallWidth,
+        halves,
         spans,
         doorways,
         sizes: opts.furnish,
@@ -752,72 +854,119 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
         front: overture ? screenZ + SCREEN_THICKNESS / 2 : null,
         elevator,
         exits: !!exits,
+        nook,
       })
     : [];
+  if (films) furniture.push(...films.chairs);
 
   const barriers = placements.filter((pl) => (pl.painting.pageviews ?? 0) >= ROPED_VIEWS).map(ropeOff);
   const seats = opts.furnish?.seats ? furniture.flatMap(opts.furnish.seats) : [];
-  const screening = doorZ !== null ? screeningRoom(hallWidth, wallHeight, doorZ, opts.furnish) : null;
-  if (screening && opts.furnish?.seats) seats.push(...screening.chairs.flatMap(opts.furnish.seats));
 
   return {
     hallWidth, hallLength, wallHeight, placements, furniture, barriers, seats, elevator, exits, rooms, doorways, screen,
-    trackInset: cab?.trackInset ?? TRACK_INSET, screening,
+    trackInset: cab?.trackInset ?? TRACK_INSET, nook,
   };
 }
 
-/** The screening room's measures: its doorway (and casing), how far from the hall it is built, its floor. */
-export const SCREENING = { doorHalf: 0.72, casing: 0.2, doorHeight: 2.55, apart: 40, length: 8.4, width: 6.4, height: 3.8 };
+/** Wider rooms: how much wider (half of it, either side), in a hall and in a cabinet; the widest any room gets. */
+const WIDER = [0.4, 0.7, 1.0, 1.3];
+const WIDER_CABINET = [0.3, 0.6];
+const WIDEST = MAX_HALL_WIDTH + 1;
+/** A doorway keeps this much wall either side of it, beside its case, for the room card (room-signs). */
+const DOOR_SIDE = 1.5;
+/** The least a doorway moves off the axis, when it moves (less would read as a mistake). */
+const MIN_SHIFT = 0.7;
 
-/** The screening room for a doorway at doorZ in the hall's right wall (layout.ts Screening). */
-function screeningRoom(W: number, wallHeight: number, doorZ: number, furnish?: FurnishSizes): Screening {
-  // the chairs: the narrowest of the style's, five to a row with a hand's breadth between, two rows
+/**
+ * The films' corner's measures: the floor behind the free-standing wall (across, at least) and the wall's run
+ * from the near wall (the screen, two rows of chairs, the projector and an aisle to its open end); the wall's
+ * depth; the wall kept clear between a work and its open end, and on the room's left wall beyond it; how far
+ * the room's near doorway moves to the right, and the wall the free-standing one keeps from that doorway's case;
+ * the room's length to its width.
+ */
+const NOOK = { width: 4.4, length: 7.4, thickness: 0.24, endClear: 0.55, beyond: 2.0, shift: 1.4, byDoor: 1.9, square: 0.9 };
+
+/** The films' corner of room `room` (FilmNook), its wall's face at x = face; and its seats: the room style's
+ *  narrowest chair, up to five to a row, two rows (a style without chairs, an Edo tea house's, its benches
+ *  turned across the rows). */
+function filmNook(
+  room: number,
+  span: { z0: number; z1: number },
+  half: number,
+  face: number,
+  wallHeight: number,
+  onWall: Placement[],
+  furnish?: FurnishSizes
+): { nook: FilmNook; chairs: Furnishing[] } {
+  const x0 = -half;
+  const x1 = +(face - NOOK.thickness).toFixed(3);
+  const z1 = span.z1;
+  const zEnd = +(z1 - NOOK.length).toFixed(3);
+  // the rows by the room's left wall, the aisle beside the wall of works; the screen centred on the rows
+  const band0 = x0 + 0.25;
+  const band1 = x1 - 0.7;
+  const cx = +((band0 + band1) / 2).toFixed(3);
+  const sw = Math.min(3, band1 - band0 - 0.2);
+  const sz = +(z1 - 0.06).toFixed(3);
+  const row1 = sz - Math.max(2.6, sw * 0.95);
+  const row2 = row1 - 1.2;
+  const standZ = +(row2 - 1.75).toFixed(3);
   const chairs: Furnishing[] = [];
   const pick = furnish?.chairs.length
     ? furnish.chairs.reduce((best, s, i) => (s[0] < furnish.chairs[best][0] ? i : best), 0)
     : -1;
-  const [cw, cd] = pick >= 0 ? furnish!.chairs[pick] : [0.6, 0.6];
-  const per = 5;
-  const pitchX = cw + 0.1;
-  const rowW = per * pitchX - 0.1;
-  const width = Math.max(SCREENING.width, Math.ceil((rowW + 2 * 1.15) * 10) / 10);
-  const length = SCREENING.length;
-  const height = Math.min(SCREENING.height, Math.max(3.4, wallHeight));
-  const x0 = W / 2 + SCREENING.apart;
-  const x1 = x0 + width;
-  const cx = (x0 + x1) / 2;
-  // its doorway near the back of its left wall, level with the gallery's, so one walks on in the same direction
-  const z1 = doorZ + 1.1;
-  const z0 = z1 - length;
-  const sw = Math.min(3.6, width - 2.2);
-  const screen = { w: sw, h: +((sw * 9) / 16).toFixed(3), bottom: 0.95, z: z0 + 0.12, cx };
-  const rowZ = [z0 + 3.0, z0 + 3.0 + Math.max(1.15, cd + 0.5)];
-  const blocks: Bench[] = [];
   if (pick >= 0) {
-    rowZ.forEach((z, r) => {
+    const [cw, cd] = furnish!.chairs[pick];
+    const pitch = cw + 0.06;
+    const per = Math.max(3, Math.min(5, Math.floor((band1 - band0 + 0.06) / pitch)));
+    const rowW = per * pitch - 0.06;
+    [row1, row2].forEach((z, r) => {
       for (let i = 0; i < per; i++) {
-        const x = cx - rowW / 2 + cw / 2 + i * pitchX;
-        // facing the screen (π: toward −z), in the style's first fabric, a row a shade apart
-        chairs.push({ kind: "chair", index: pick, position: [+x.toFixed(3), +z.toFixed(3)], rotation: Math.PI, size: [cw, cd], room: 0, tint: 0.17 + r * 0.02 });
+        const x = cx - rowW / 2 + cw / 2 + i * pitch;
+        // facing the screen (+z), in the style's first fabric, a row a shade apart
+        chairs.push({ kind: "chair", index: pick, position: [+x.toFixed(3), +z.toFixed(3)], rotation: 0, size: [cw, cd], room, tint: 0.17 + r * 0.02 });
       }
-      blocks.push({ position: [cx, z], size: [rowW, cd] });
+    });
+  } else if (furnish?.centre.length) {
+    // a bench runs along its depth: turned a quarter, across the corner
+    const [bw, bd] = furnish.centre[0];
+    const per = Math.max(1, Math.floor((band1 - band0 + 0.1) / (bd + 0.1)));
+    const rowW = per * (bd + 0.1) - 0.1;
+    const top = furnish.top?.[0];
+    [row1, row2].forEach((z, r) => {
+      for (let i = 0; i < per; i++) {
+        const x = cx - rowW / 2 + bd / 2 + i * (bd + 0.1);
+        chairs.push({
+          kind: "centre", index: 0, position: [+x.toFixed(3), +z.toFixed(3)], rotation: Math.PI / 2, size: [bw, bd], room,
+          tint: 0.17 + r * 0.02, ...(top ? { top } : {}),
+        });
+      }
     });
   }
-  const stand = { x: cx, z: Math.min(z1 - 1.25, rowZ[1] + 1.55) };
-  blocks.push({ position: [stand.x, stand.z], size: [0.75, 0.9] });
+  // as high as its works want, under the room's cornice
+  const top = onWall.reduce((t, p) => Math.max(t, p.position[1] + p.h / 2 + frameAllowance(p.w, p.h)), 0);
+  const height = +Math.min(wallHeight - 0.5, Math.max(2.9, top + 0.35)).toFixed(2);
   return {
-    door: { z: doorZ, halfWidth: SCREENING.doorHalf, height: SCREENING.doorHeight },
-    x0, x1, z0, z1, height, doorZ,
-    screen,
-    projector: { ...stand, lens: [stand.x, 2.12, stand.z - 0.56] },
+    nook: {
+      room,
+      wall: { face, thickness: NOOK.thickness, z0: zEnd, z1, height },
+      x0,
+      x1,
+      z0: zEnd,
+      z1,
+      screen: { w: +sw.toFixed(3), h: +((sw * 9) / 16).toFixed(3), bottom: 0.95, z: sz, cx },
+      projector: { x: cx, z: standZ, lens: [cx, 2.12, +(standZ + 0.56).toFixed(3)] },
+      blocks: [{ position: [cx, standZ], size: [0.75, 0.9] }],
+      view: { x: cx, z: +(row2 - 0.86).toFixed(3), yaw: Math.PI },
+    },
     chairs,
-    blocks,
   };
 }
 
-/** Inside the screening room (far beyond the hall's right wall). */
-export function inScreening(layout: GalleryLayout, x: number): boolean {
-  return !!layout.screening && x > layout.hallWidth / 2 + SCREENING.apart / 2;
+/** In the films' corner: behind its wall, `margin` in from its open end. */
+export function inNook(layout: GalleryLayout, x: number, z: number, margin = 0): boolean {
+  const n = layout.nook;
+  return !!n && x < n.x1 + 0.05 && x > n.x0 - 0.5 && z > n.z0 + margin && z < n.z1 + 0.5;
 }
 
 /** A door's width with its casing. */
@@ -903,7 +1052,7 @@ export function columnsOf(layout: Pick<GalleryLayout, "doorways">): { x: number;
     if (!d.columns) continue;
     for (const sz of [-1, 1])
       for (const sx of [-1, 1]) {
-        out.push({ x: sx * (d.halfWidth + COLUMN_OUT), z: d.z + sz * (d.thickness / 2 + COLUMN_OUT), r: d.columns });
+        out.push({ x: d.x + sx * (d.halfWidth + COLUMN_OUT), z: d.z + sz * (d.thickness / 2 + COLUMN_OUT), r: d.columns });
       }
   }
   return out;
@@ -936,7 +1085,8 @@ export function turnedHalf(size: [number, number], ry: number): [number, number]
  * flagship, the elevator and the side walls' works (which start ENTRY_CLEAR / FAR_CLEAR from the cross walls).
  */
 function furnish(o: {
-  W: number;
+  /** Each room's half width. */
+  halves: number[];
   spans: { z0: number; z1: number }[];
   doorways: Doorway[];
   sizes: FurnishSizes;
@@ -948,12 +1098,18 @@ function furnish(o: {
   elevator: ElevatorSpot | null;
   /** Doors in the far end wall: its corners stay clear. */
   exits: boolean;
+  /** The films' corner: its room's near left corner is behind the free-standing wall. */
+  nook: FilmNook | null;
 }): Furnishing[] {
-  const { W, spans, doorways, sizes, rng } = o;
+  const { halves, spans, doorways, sizes, rng, nook } = o;
   const out: Furnishing[] = [];
   const last = spans.length - 1;
   const round = (v: number) => +v.toFixed(3);
   spans.forEach(({ z0, z1 }, r) => {
+    const W = 2 * halves[r];
+    const films = nook?.room === r ? nook : null;
+    // down the middle of the room (in the films' room, of the floor left of its free-standing wall)
+    const midX = films ? round((films.wall.face + halves[r]) / 2) : 0;
     const roomTint = rng();
     // most pieces in a room match; now and then one is covered in another of the style's fabrics
     const tint = () => (rng() < 0.3 ? rng() : roomTint);
@@ -976,7 +1132,7 @@ function furnish(o: {
         for (let i = 0; i < count; i++) {
           const z = count === 1 ? lo + (hi - lo) * (0.3 + 0.4 * rng()) : lo + (i / (count - 1)) * (hi - lo);
           const top = sizes.top?.[index];
-          out.push({ kind: "centre", index, position: [0, round(z)], rotation: 0, size: [w, d], room: r, tint: t, ...(top ? { top } : {}) });
+          out.push({ kind: "centre", index, position: [midX, round(z)], rotation: 0, size: [w, d], room: r, tint: t, ...(top ? { top } : {}) });
           placed++;
         }
       }
@@ -993,18 +1149,22 @@ function furnish(o: {
     }
     const ends: End[] = [];
     const casing = 0.35;
+    // the wall either side of a doorway: from its case (on this side of its centre) to the side wall
+    // (a piece keeps to its own side of the axis, even where the doorway has moved over to the other)
+    const beside = (d: Doorway, side: 1 | -1) => Math.max(0.3, side * d.x + d.halfWidth + casing + (d.columns ? 0.65 : 0));
     for (const side of [-1, 1] as const) {
-      // the near wall: the entrance (not the elevator's side), else the doorway from the room before
-      if (r === 0) {
+      // the near wall: the entrance (not the elevator's side), else the doorway from the room before; not the
+      // films' corner, behind its wall
+      if (films && side === -1) {
+        // (none)
+      } else if (r === 0) {
         if (!(o.elevator && side === -1)) ends.push({ zWall: z1, facing: -1, side, inner: ENTRANCE_DOOR.width / 2 + casing });
       } else {
-        const d = doorways[r - 1];
-        ends.push({ zWall: z1, facing: -1, side, inner: d.halfWidth + casing + (d.columns ? 0.65 : 0) });
+        ends.push({ zWall: z1, facing: -1, side, inner: beside(doorways[r - 1], side) });
       }
       // the far wall: the doorway to the next room (not behind an overture's screen), or the flagship's wall
       if (r < last) {
-        const d = doorways[r];
-        if (!(o.front !== null && r === 0)) ends.push({ zWall: z0, facing: 1, side, inner: d.halfWidth + casing + (d.columns ? 0.65 : 0) });
+        if (!(o.front !== null && r === 0)) ends.push({ zWall: z0, facing: 1, side, inner: beside(doorways[r], side) });
       } else if (!o.exits) {
         ends.push({ zWall: z0, facing: 1, side, inner: o.anchorHalf > 0 ? o.anchorHalf + 0.35 : 0.5 });
       }
@@ -1110,6 +1270,16 @@ export function roomAt(layout: GalleryLayout, z: number): number {
   return lo;
 }
 
+/** Half the width of the room holding depth z. */
+export function halfWidthAt(layout: GalleryLayout, z: number): number {
+  return layout.rooms[roomAt(layout, z)]?.halfWidth ?? layout.hallWidth / 2;
+}
+
+/** Half the width of the widest room: how far the floor and the cross walls reach. */
+export function outerHalf(layout: Pick<GalleryLayout, "hallWidth" | "rooms">): number {
+  return layout.rooms.reduce((m, r) => Math.max(m, r.halfWidth), layout.hallWidth / 2);
+}
+
 /** Margin kept between the camera and a wall face. */
 export const WALL_MARGIN = 0.55;
 
@@ -1144,24 +1314,15 @@ function pushOut(
 const STEP_UP = 0.15;
 
 /** Keep a visitor (x, z on the floor) inside the suite, out of the cross
- *  walls (only the doorways let them through) and out of the furniture: but over a bench once the feet are
- *  up at its top (a jump onto it, standing on it). */
+ *  walls (only the doorways let them through), the flagship's screen and the films' wall, and out of the
+ *  furniture: but over a bench once the feet are up at its top (a jump onto it, standing on it). */
 export function confine(p: { x: number; z: number }, layout: GalleryLayout, feet = 0): void {
   const m = WALL_MARGIN;
-  const sr = layout.screening;
-  if (sr && inScreening(layout, p.x)) {
-    const clamp = () => {
-      p.x = Math.min(sr.x1 - m, Math.max(sr.x0 + m, p.x));
-      p.z = Math.min(sr.z1 - m, Math.max(sr.z0 + m, p.z));
-    };
-    clamp();
-    for (const { position: [x, z], size: [w, d] } of sr.blocks) pushOut(p, x - w / 2, x + w / 2, z - d / 2, z + d / 2, BODY_RADIUS);
-    clamp();
-    return;
-  }
+  // each room its own width (the room at the visitor's depth)
   const clampHall = () => {
-    p.x = Math.min(layout.hallWidth / 2 - m, Math.max(-layout.hallWidth / 2 + m, p.x));
     p.z = Math.min(layout.hallLength / 2 - m, Math.max(-layout.hallLength / 2 + m, p.z));
+    const hw = halfWidthAt(layout, p.z);
+    p.x = Math.min(hw - m, Math.max(-hw + m, p.x));
   };
   clampHall();
   for (const b of seatsOf(layout)) {
@@ -1178,26 +1339,28 @@ export function confine(p: { x: number; z: number }, layout: GalleryLayout, feet
       p.z = b.position[1] + (dz < 0 ? -hz : hz);
     }
   }
-  if (layout.doorways.length === 0) return;
   // Cross walls: the faces keep the usual wall margin, the jambs the body
   // radius (rounded corners, so the visitor slides round them). The same
-  // for the flagship's screen.
-  const W = layout.hallWidth;
+  // for the flagship's screen and the films' wall.
+  const W = 2 * outerHalf(layout) + 1;
+  const grow = m - BODY_RADIUS;
   for (const d of layout.doorways) {
-    const zh = d.thickness / 2 + (m - BODY_RADIUS);
-    pushOut(p, -W, -d.halfWidth, d.z - zh, d.z + zh, BODY_RADIUS);
-    pushOut(p, d.halfWidth, W, d.z - zh, d.z + zh, BODY_RADIUS);
+    const zh = d.thickness / 2 + grow;
+    pushOut(p, -W, d.x - d.halfWidth, d.z - zh, d.z + zh, BODY_RADIUS);
+    pushOut(p, d.x + d.halfWidth, W, d.z - zh, d.z + zh, BODY_RADIUS);
   }
   const s = layout.screen;
   if (s) {
-    const zh = s.thickness / 2 + (m - BODY_RADIUS);
+    const zh = s.thickness / 2 + grow;
     pushOut(p, -s.halfWidth, s.halfWidth, s.z - zh, s.z + zh, BODY_RADIUS);
   }
+  const w = layout.nook?.wall;
+  if (w) pushOut(p, w.face - w.thickness - grow, w.face + grow, w.z0 - grow, w.z1 + 1, BODY_RADIUS);
   clampHall();
 }
 
-/** Everything in the way on the floor, as footprints: the furniture (its turned footprint's box) and a
- *  palace gallery's columns. */
+/** Everything in the way on the floor, as footprints: the furniture (its turned footprint's box), a
+ *  palace gallery's columns, the rope barriers and the films' projector. */
 const seatBoxes = new WeakMap<GalleryLayout, Bench[]>();
 function seatsOf(layout: GalleryLayout): Bench[] {
   const kept = seatBoxes.get(layout);
@@ -1210,6 +1373,7 @@ function seatsOf(layout: GalleryLayout): Bench[] {
   for (const { box: [x0, x1, z0, z1] } of layout.barriers) {
     out.push({ position: [(x0 + x1) / 2, (z0 + z1) / 2], size: [x1 - x0 + 0.1, z1 - z0 + 0.1] });
   }
+  if (layout.nook) out.push(...layout.nook.blocks);
   seatBoxes.set(layout, out);
   return out;
 }
@@ -1257,15 +1421,19 @@ function blockers(layout: GalleryLayout): Bench[] {
 type P2 = { x: number; z: number };
 type Box = [number, number, number, number]; // x0, x1, z0, z1
 
-/** Cross-wall solids a straight walk must miss (grown by the body radius). */
+/** Wall solids a straight walk must miss (grown by the body radius): the cross walls either side of their
+ *  doorways, and the films' wall. */
 function wallBoxes(layout: GalleryLayout): Box[] {
-  const W = layout.hallWidth;
+  const W = 2 * outerHalf(layout) + 1;
   const r = BODY_RADIUS + 0.02;
+  const grow = WALL_MARGIN - BODY_RADIUS + r;
   const out: Box[] = [];
   for (const d of layout.doorways) {
-    const zh = d.thickness / 2 + (WALL_MARGIN - BODY_RADIUS) + r;
-    out.push([-W, -d.halfWidth + r, d.z - zh, d.z + zh], [d.halfWidth - r, W, d.z - zh, d.z + zh]);
+    const zh = d.thickness / 2 + grow;
+    out.push([-W, d.x - d.halfWidth + r, d.z - zh, d.z + zh], [d.x + d.halfWidth - r, W, d.z - zh, d.z + zh]);
   }
+  const w = layout.nook?.wall;
+  if (w) out.push([w.face - w.thickness - grow, w.face + grow, w.z0 - grow, w.z1 + 1]);
   return out;
 }
 
@@ -1304,13 +1472,23 @@ function segmentHitsBox(a: P2, b: P2, box: Box): boolean {
   );
 }
 
+/** The two floor points that lead round the films' wall's open end: on the room's side, then behind it. */
+function roundNook(layout: GalleryLayout): [P2, P2] | null {
+  const n = layout.nook;
+  if (!n) return null;
+  const z = n.z0 - WALL_MARGIN - 0.35;
+  return [
+    { x: n.wall.face + WALL_MARGIN + 0.35, z },
+    { x: Math.max(n.x0 + WALL_MARGIN + 0.2, n.x1 - WALL_MARGIN - 0.35), z },
+  ];
+}
+
 /**
  * Floor waypoints for walking from `a` to `b` (b included, a not): through
- * the middle of every doorway between their rooms and round any bench in the
- * way, then string-pulled so no corner a straight line can cut remains.
+ * the middle of every doorway between their rooms, round the films' wall into or out of its corner, and round
+ * any bench in the way, then string-pulled so no corner a straight line can cut remains.
  */
 export function planRoute(a: P2, b: P2, layout: GalleryLayout): P2[] {
-  if (inScreening(layout, a.x)) return [{ x: a.x, z: a.z }, { x: b.x, z: b.z }];
   const walls = wallBoxes(layout);
   const stops = blockers(layout);
   const benches = stops.map((x) => benchBox(x, 0.02));
@@ -1320,12 +1498,17 @@ export function planRoute(a: P2, b: P2, layout: GalleryLayout): P2[] {
   const ra = roomAt(layout, a.z);
   const rb = roomAt(layout, b.z);
   const pts: P2[] = [{ x: a.x, z: a.z }];
+  const round = roundNook(layout);
+  const aIn = inNook(layout, a.x, a.z);
+  const bIn = inNook(layout, b.x, b.z);
+  if (round && aIn && !bIn) pts.push(round[1], round[0]);
   const step = rb > ra ? 1 : -1;
   for (let r = ra; r !== rb; r += step) {
     const d = layout.doorways[step > 0 ? r : r - 1];
     const off = d.thickness / 2 + WALL_MARGIN + 0.3;
-    pts.push({ x: 0, z: d.z + step * off }, { x: 0, z: d.z - step * off });
+    pts.push({ x: d.x, z: d.z + step * off }, { x: d.x, z: d.z - step * off });
   }
+  if (round && bIn && !aIn) pts.push(round[0], round[1]);
   pts.push({ x: b.x, z: b.z });
 
   // detour round benches standing across a leg: past the side nearer the leg
@@ -1339,9 +1522,16 @@ export function planRoute(a: P2, b: P2, layout: GalleryLayout): P2[] {
       .sort((u, v) => (q.z < p.z ? v.position[1] - u.position[1] : u.position[1] - v.position[1]));
     for (const bench of hits) {
       const [x0, x1, z0, z1] = benchBox(bench, 0.2);
-      const side = (p.x + q.x) / 2 < bench.position[0] ? x0 : x1;
       const [first, second] = q.z < p.z ? [z1, z0] : [z0, z1];
-      out.push({ x: side, z: first }, { x: side, z: second });
+      const beside = (s: P2) => s.z > z0 && s.z < z1;
+      const sideOf = (s: P2) => (s.x < bench.position[0] ? x0 : x1);
+      // already alongside it (or stopping alongside): along that side, round the one end
+      if (beside(p) && !beside(q)) out.push({ x: sideOf(p), z: second });
+      else if (beside(q) && !beside(p)) out.push({ x: sideOf(q), z: first });
+      else {
+        const side = (p.x + q.x) / 2 < bench.position[0] ? x0 : x1;
+        out.push({ x: side, z: first }, { x: side, z: second });
+      }
     }
     out.push(q);
   }
@@ -1360,55 +1550,80 @@ export function planRoute(a: P2, b: P2, layout: GalleryLayout): P2[] {
 
 type P3 = { x: number; y: number; z: number };
 
+/** Where a line first meets a wall: the point, the line's parameter, and the face's normal on the line's side
+ *  (nx, nz); `facing` is nz for a cross wall (+1: the face toward the entrance). */
+export interface WallHit {
+  t: number;
+  x: number;
+  y: number;
+  z: number;
+  facing: 1 | -1;
+  nx: number;
+  nz: number;
+}
+
 /**
  * Where the straight line a→b first runs into a cross wall (anywhere but a
- * doorway opening): the crossing point and the side the line came from
- * (+1: the face toward the entrance). Null when the line is clear.
+ * doorway opening), the flagship's screen or the films' wall: the crossing point and the face's normal toward
+ * where the line came from. Null when the line is clear.
  */
-export function firstWallHit(
-  a: P3,
-  b: P3,
-  layout: GalleryLayout
-): { t: number; x: number; y: number; z: number; facing: 1 | -1 } | null {
-  // the screening room has no cross walls (its own walls are its floor's bounds: confine)
-  if (inScreening(layout, a.x)) return null;
-  let best: { t: number; x: number; y: number; z: number; facing: 1 | -1 } | null = null;
+export function firstWallHit(a: P3, b: P3, layout: GalleryLayout): WallHit | null {
+  let best: WallHit | null = null;
+  // a face of constant z, solid where `solid` says
+  const zFace = (zf: number, solid: (x: number, y: number) => boolean) => {
+    if ((a.z - zf) * (b.z - zf) >= 0) return;
+    const t = (zf - a.z) / (b.z - a.z);
+    if (best && t >= best.t) return;
+    const x = a.x + t * (b.x - a.x);
+    const y = a.y + t * (b.y - a.y);
+    if (!solid(x, y)) return;
+    const facing = a.z > zf ? 1 : -1;
+    best = { t, x, y, z: zf, facing, nx: 0, nz: facing };
+  };
   const s = layout.screen;
   if (s) {
     // the flagship's screen: a solid box (only its faces matter here)
     for (const zf of [s.z + s.thickness / 2, s.z - s.thickness / 2]) {
-      if ((a.z - zf) * (b.z - zf) >= 0) continue;
-      const t = (zf - a.z) / (b.z - a.z);
-      const x = a.x + t * (b.x - a.x);
-      const y = a.y + t * (b.y - a.y);
-      if (Math.abs(x) > s.halfWidth || y > s.height || y < 0) continue;
-      if (!best || t < best.t) best = { t, x, y, z: zf, facing: a.z > zf ? 1 : -1 };
+      zFace(zf, (x, y) => Math.abs(x) <= s.halfWidth && y <= s.height && y >= 0);
     }
   }
   for (const d of layout.doorways) {
     for (const zf of [d.z + d.thickness / 2, d.z - d.thickness / 2]) {
-      if ((a.z - zf) * (b.z - zf) >= 0) continue;
-      const t = (zf - a.z) / (b.z - a.z);
+      zFace(zf, (x, y) => !(Math.abs(x - d.x) <= d.halfWidth && y <= d.height && y >= 0));
+    }
+  }
+  const w = layout.nook?.wall;
+  if (w) {
+    // the films' wall: its face, its back and its open end
+    zFace(w.z0, (x, y) => x >= w.face - w.thickness && x <= w.face && y <= w.height && y >= 0);
+    for (const xf of [w.face, w.face - w.thickness]) {
+      if ((a.x - xf) * (b.x - xf) >= 0) continue;
+      const t = (xf - a.x) / (b.x - a.x);
       if (best && t >= best.t) continue;
-      const x = a.x + t * (b.x - a.x);
       const y = a.y + t * (b.y - a.y);
-      if (Math.abs(x) <= d.halfWidth && y <= d.height && y >= 0) continue;
-      best = { t, x, y, z: zf, facing: a.z > zf ? 1 : -1 };
+      const z = a.z + t * (b.z - a.z);
+      if (y < 0 || y > w.height || z < w.z0 || z > w.z1) continue;
+      const nx = a.x > xf ? 1 : -1;
+      best = { t, x: xf, y, z, facing: 1, nx, nz: 0 };
     }
   }
   return best;
 }
 
-/** Walking distance between two floor points (through the doorway centres). */
+/** Walking distance between two floor points (through the doorways' centres). */
 export function pathDistance(a: P2, b: P2, layout: GalleryLayout): number {
   const ra = roomAt(layout, a.z);
   const rb = roomAt(layout, b.z);
   if (ra === rb) return Math.hypot(b.x - a.x, b.z - a.z);
-  const ahead = rb > ra;
-  const first = layout.doorways[ahead ? ra : ra - 1];
-  const last = layout.doorways[ahead ? rb - 1 : rb];
-  // All door centres lie on x = 0, so the middle of the walk is straight.
-  return Math.hypot(a.x, first.z - a.z) + Math.abs(last.z - first.z) + Math.hypot(b.x, b.z - last.z);
+  const step = rb > ra ? 1 : -1;
+  let at: P2 = a;
+  let total = 0;
+  for (let r = ra; r !== rb; r += step) {
+    const d = layout.doorways[step > 0 ? r : r - 1];
+    total += Math.hypot(d.x - at.x, d.z - at.z);
+    at = d;
+  }
+  return total + Math.hypot(b.x - at.x, b.z - at.z);
 }
 
 const ROMAN: [number, string][] = [
@@ -1489,8 +1704,14 @@ export function inspectPose(
 
 /** How far the camera may back away from a placement before leaving its room. */
 export function inspectMaxDist(pl: Placement, layout: GalleryLayout): number {
-  if (Math.abs(pl.rotationY) > 0.1) return layout.hallWidth - 0.8;
   const room = layout.rooms[pl.room];
+  if (Math.abs(pl.rotationY) > 0.1) {
+    const hw = room?.halfWidth ?? layout.hallWidth / 2;
+    // across the films' room, the free-standing wall stands in the way along its run
+    const w = layout.nook?.room === pl.room ? layout.nook.wall : null;
+    if (w && pl.position[2] > w.z0 - 0.5) return hw - w.face - 0.8;
+    return 2 * hw - 0.8;
+  }
   // the far wall, or the flagship's screen standing in front of it
   return (room ? room.z1 - room.z0 : layout.hallLength) - 1.5 - (layout.screen && pl.room === 0 ? pl.position[2] - room.z0 : 0);
 }

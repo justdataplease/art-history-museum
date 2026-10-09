@@ -175,8 +175,8 @@ export class SuiteRuntime {
     this.layout = layout;
     this.suite = layout.rooms.length > 1;
     const gate = new Set(opts.gate);
-    const W = layout.hallWidth;
     this.exhibits = layout.placements.map((pl, i) => {
+      const hw = layout.rooms[pl.room]?.halfWidth ?? layout.hallWidth / 2;
       const nx = Math.sin(pl.rotationY);
       const nz = Math.cos(pl.rotationY);
       const [x, , z] = pl.position;
@@ -193,7 +193,7 @@ export class SuiteRuntime {
         gate: gate.has(pl.painting.slug),
         isAnchor: i === 0,
         view: {
-          x: THREE.MathUtils.clamp(x + nx * VIEW_DIST, -W / 2 + 0.6, W / 2 - 0.6),
+          x: THREE.MathUtils.clamp(x + nx * VIEW_DIST, -hw + 0.6, hw - 0.6),
           z: z + nz * VIEW_DIST,
         },
         wall: [

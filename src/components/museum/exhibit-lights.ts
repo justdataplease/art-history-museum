@@ -54,12 +54,14 @@ export interface ExhibitLights {
 }
 
 /** The hall a placement's fixtures hang in: its own room's rails (the
- *  flagship's screen has a cross rail of its own, in front of its face). */
+ *  flagship's screen has a cross rail of its own, in front of its face; the films' free-standing wall a side
+ *  rail of its own, as if it were the room's left wall). */
 export function roomDims(layout: GalleryLayout, pl: Placement): HallDims {
   const room = layout.rooms[pl.room];
   const screen = layout.screen && pl === layout.placements[0] ? layout.screen : null;
+  const wall = pl.partition ? layout.nook?.wall : null;
   return {
-    hallWidth: layout.hallWidth,
+    hallWidth: wall ? 2 * Math.abs(wall.face) : 2 * (room?.halfWidth ?? layout.hallWidth / 2),
     hallLength: layout.hallLength,
     wallHeight: layout.wallHeight,
     roomZ0: screen ? screen.z + screen.thickness / 2 : room?.z0,
