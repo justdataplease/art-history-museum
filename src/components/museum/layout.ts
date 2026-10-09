@@ -78,8 +78,9 @@ export interface ElevatorSpot {
   height: number;
   /** The call buttons, between the entrance doors' casing and the elevator. */
   panelX: number;
-  /** The floor directory beside it, where the wall leaves room. */
+  /** The floor directory beside it, where the wall leaves room, and the board's width. */
   directoryX: number | null;
+  directoryWidth: number;
 }
 
 /** The entrance doors in the near wall (z = +hallLength / 2), centred on the hall axis. */
@@ -762,6 +763,8 @@ function elevatorSpot(W: number): ElevatorSpot {
     height: 2.5,
     panelX: -(inner + clear + gap / 2 + 0.02),
     directoryX: clear >= 0.8 ? -(inner + clear / 2) : beyond >= 0.8 ? -(x + halfWidth + frame + beyond / 2) : null,
+    // as wide as reads from a step away (the full floor names), with a margin of wall either side
+    directoryWidth: Math.max(0.56, Math.min(0.84, (clear >= 0.8 ? clear : beyond) - 0.24)),
   };
 }
 

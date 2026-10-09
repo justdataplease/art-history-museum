@@ -143,7 +143,7 @@ export function Elevator({
     if (spot.directoryX === null) return null;
     const c = document.createElement("canvas");
     const rows = floors.length;
-    c.width = 512;
+    c.width = 640;
     c.height = 150 + rows * 92;
     const g = c.getContext("2d");
     if (g) {
@@ -167,9 +167,15 @@ export function Elevator({
         g.fillStyle = here ? AMBER : "#e9e1d0";
         g.font = "600 44px Georgia, serif";
         g.fillText(String(floors[i].number ?? i + 1), 44, y);
-        g.font = "28px Georgia, serif";
         const label = floors[i].label.replace(/^Floor -?\d+ · /, "");
-        g.fillText(label.length > 24 ? `${label.slice(0, 23)}…` : label, 104, y - 12);
+        // the whole name: a size smaller where it is long, cut with an ellipsis only past that
+        const room = c.width - 104 - 36;
+        let size = 30;
+        g.font = `${size}px Georgia, serif`;
+        while (size > 23 && g.measureText(label).width > room) g.font = `${--size}px Georgia, serif`;
+        let text = label;
+        while (g.measureText(text).width > room && text.length > 4) text = `${text.replace(/…$/, "").slice(0, -1).trimEnd()}…`;
+        g.fillText(text, 104, y - 12);
         g.fillStyle = here ? "rgba(255, 196, 120, 0.85)" : "rgba(233, 225, 208, 0.55)";
         g.font = "20px system-ui, sans-serif";
         g.fillText(here ? "You are here" : `${floors[i].works} works`, 104, y + 22);
@@ -352,12 +358,12 @@ export function Elevator({
       {hasDown && <Arrow x={spot.panelX} y={btnY("down")} z={zw - 0.024} up={false} />}
       {/* the floor directory */}
       {directory && spot.directoryX !== null && (
-        <group position={[spot.directoryX, 1.5, zw - 0.006]} rotation={[0, Math.PI, 0]}>
+        <group position={[spot.directoryX, 1.55, zw - 0.006]} rotation={[0, Math.PI, 0]}>
           <mesh material={mats.metal}>
-            <boxGeometry args={[0.56, 0.52 * directory.aspect + 0.06, 0.008]} />
+            <boxGeometry args={[spot.directoryWidth, (spot.directoryWidth - 0.04) * directory.aspect + 0.06, 0.008]} />
           </mesh>
           <mesh position={[0, 0, 0.006]}>
-            <planeGeometry args={[0.52, 0.52 * directory.aspect]} />
+            <planeGeometry args={[spot.directoryWidth - 0.04, (spot.directoryWidth - 0.04) * directory.aspect]} />
             <meshStandardMaterial map={directory.tex} roughness={0.6} />
           </mesh>
         </group>

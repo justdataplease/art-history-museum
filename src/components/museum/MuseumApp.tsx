@@ -698,7 +698,7 @@ export function MuseumApp({
                 <b>Tap floor</b> walk
               </span>
               <span>
-                <b>Tap a painting</b> inspect
+                <b>Tap painting</b> inspect
               </span>
             </>
           ) : (
@@ -710,7 +710,7 @@ export function MuseumApp({
                 <b>Mouse</b> look
               </span>
               <span>
-                <b>Click</b> a painting to inspect
+                <b>Click</b> inspect
               </span>
               <span>
                 <b>Space</b> jump
@@ -727,7 +727,7 @@ export function MuseumApp({
                 </span>
               )}
               <span>
-                <b>G</b> audio guide
+                <b>G</b> guide
               </span>
               {layout.elevator && (up || down) && (
                 <span>
@@ -738,10 +738,10 @@ export function MuseumApp({
                 <b>O</b> settings
               </span>
               <span>
-                <b>P</b> secret menu
+                <b>P</b> secret
               </span>
               <span>
-                <b>Esc</b> release cursor
+                <b>Esc</b> release
               </span>
             </>
           )}
@@ -816,7 +816,7 @@ export function MuseumApp({
         onPick={selectPainting}
       />
 
-      {layout.elevator && (up || down) && walkEnabled && (
+      {layout.elevator && (up || down) && walkEnabled && (nearLift || touch) && (
         <div className={styles.lift} role="group" aria-label="Elevator">
           {nearLift ? (
             <>
