@@ -91,8 +91,8 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
   - [x] G cycles: famous works (starts by itself at them), every work, off; captions on screen.
   - [x] A script per artist and per work: what you see in the picture first, then its story.
   - [x] A natural voice: Kokoro (a neural text-to-speech model) runs in the visitor's browser on WebGPU, about
-    330 MB downloaded once; Auto uses it on a computer whose browser has no natural voice of its own (Edge's and
-    Safari's premium voices are kept), else the browser's best voice reads. Settings → Audio guide: the voice,
+    330 MB downloaded once, only when the visitor chooses Natural (Auto reads with the browser's best voice, and
+    with the natural one once it is on the device). Settings → Audio guide: the voice,
     five natural voices, the browser's voices, a reading speed (0.85× to 1.5×) and "Hear it". Live 2026-10-09.
   - [ ] Recorded narration in place of the browser's voice.
   - [ ] Greek names said the Greek way (the voices are English).

@@ -20,7 +20,7 @@ import type { GuideArtist, Painting } from "@/lib/types";
 import type { Placement } from "./layout";
 import { duckMusic } from "./MuseumAudio";
 import { GUIDE_SPEEDS, getSettings, setSettings, useSettings } from "./settings";
-import { browserHasNatural, naturalVoice, pickBrowserVoice, speakBrowser, type Speaking } from "./voice";
+import { naturalVoice, pickBrowserVoice, speakBrowser, type Speaking } from "./voice";
 import styles from "./AudioGuide.module.css";
 
 const STORAGE_KEY = "timeline-museum:audio-guide";
@@ -96,14 +96,12 @@ function toSentences(lines: string[]): string[] {
   ).filter((s) => s.length > 1);
 }
 
-/** The AI voice for this visitor: chosen, or (auto) on a desktop that can run it, not saving data, whose browser
- *  has no natural voice of its own. */
-function wantsNatural(touch: boolean): boolean {
+/** The AI voice for this visitor: chosen in Settings (which downloads it, once), or (auto) when it is on this
+ *  device already. It never downloads by itself. */
+function wantsNatural(): boolean {
   const s = getSettings();
   if (s.guideVoice === "browser") return false;
-  if (s.guideVoice === "natural") return true;
-  const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
-  return !touch && !saveData && !browserHasNatural();
+  return s.guideVoice === "natural" || naturalVoice.onDevice === true;
 }
 const speedLabel = (s: number) => `${s}×`;
 
@@ -168,10 +166,14 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
     };
   }, []);
 
-  // the AI voice downloads (once, kept by the browser) and warms up in the background while the browser's reads
+  // the AI voice warms up in the background while the browser's reads: when chosen in Settings (downloaded once,
+  // kept by the browser), or on Auto when it is on this device already
   useEffect(() => {
-    if (on && wantsNatural(touch)) void naturalVoice.load();
-  }, [on, touch, settings.guideVoice]);
+    if (!on) return;
+    void naturalVoice.checkDevice().then(() => {
+      if (wantsNatural()) void naturalVoice.load();
+    });
+  }, [on, settings.guideVoice]);
 
   // the gallery's scripts, ahead of the first painting
   useEffect(() => {
@@ -246,13 +248,13 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
           onLine: (text: string) => current.current === key && setLine(text),
           onEnd: () => current.current === key && done(),
         };
-        if (wantsNatural(touch) && naturalVoice.state === "ready") speech.current = naturalVoice.speak(lines, s.naturalVoice, o);
+        if (wantsNatural() && naturalVoice.state === "ready") speech.current = naturalVoice.speak(lines, s.naturalVoice, o);
         else if ("speechSynthesis" in window) speech.current = speakBrowser(lines, pickBrowserVoice(s.browserVoice), o);
         else done();
       };
       next(0);
     },
-    [silence, finished, touch]
+    [silence, finished]
   );
 
   const narrate = useCallback(
@@ -363,7 +365,7 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
     setSettings({ guideSpeed });
     if (audioEl.current) audioEl.current.playbackRate = guideSpeed;
   };
-  const loadingVoice = on && naturalState === "loading" && wantsNatural(touch);
+  const loadingVoice = on && naturalState === "loading" && wantsNatural();
   return (
     <>
       <div className={`mus-guide ${styles.guide}`}>

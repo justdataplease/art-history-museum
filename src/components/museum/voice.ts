@@ -1,7 +1,8 @@
 // The audio guide's voices. Two engines, one interface (speak lines, one at a time, with the line being read):
 // - the natural voice: Kokoro, a neural text-to-speech model, run in a worker on this device's graphics card
 //   (public/voice/kokoro-worker.js). It sounds like a person reading. It needs WebGPU and a one-time ~330 MB
-//   download (kept by the browser); while it loads, and where it cannot run, the browser's voice reads;
+//   download (kept by the browser), which only the visitor starts (Settings → Audio guide → Natural); while it
+//   loads, and where it cannot run, the browser's voice reads;
 // - the browser's own voice (Web Speech API), the most natural of those it offers: Edge's "Natural" voices,
 //   Safari's Premium and Enhanced ones, Google's, never the novelty voices.
 // Both read at the guide's speed (settings.ts guideSpeed); sentences are a breath apart.
@@ -21,6 +22,9 @@ export const NATURAL_VOICES: { id: string; label: string }[] = [
 const MODEL_BYTES = 330e6;
 /** The breath between two sentences, seconds (at speed 1). */
 const BREATH = 0.28;
+/** Where the worker's library keeps the model (transformers.js: Cache Storage, keyed by the file's URL). */
+const MODEL_CACHE = "transformers-cache";
+const MODEL_FILE = /Kokoro-82M-v1\.0-ONNX\/resolve\/[^/]+\/onnx\/model\.onnx$/;
 
 export interface Speaking {
   stop(): void;
@@ -39,8 +43,12 @@ class NaturalVoice {
   state: NaturalState = "idle";
   /** Download progress while loading, 0..1. */
   progress = 0;
+  /** The model is in this browser already (downloaded once, by choosing the natural voice): loading it then
+   *  downloads nothing, so Auto uses it. Null until `checkDevice()` answers. */
+  onDevice: boolean | null = null;
   private worker: Worker | null = null;
   private supported: Promise<boolean> | null = null;
+  private stored: Promise<boolean> | null = null;
   private ctx: AudioContext | null = null;
   private nextId = 1;
   private waiting = new Map<number, { resolve: (b: AudioBuffer) => void; reject: (e: Error) => void }>();
@@ -55,6 +63,7 @@ class NaturalVoice {
   }
   getState = () => this.state;
   getProgress = () => this.progress;
+  getOnDevice = () => this.onDevice;
 
   /** A WebGPU adapter here (the model is too slow without one). */
   canRun(): Promise<boolean> {
@@ -72,6 +81,24 @@ class NaturalVoice {
     });
   }
 
+  /** Whether the model is on this device (see `onDevice`). */
+  checkDevice(): Promise<boolean> {
+    this.stored ??= (async () => {
+      try {
+        if (!("caches" in window) || !(await caches.has(MODEL_CACHE))) return false;
+        const keys = await (await caches.open(MODEL_CACHE)).keys();
+        return keys.some((r) => MODEL_FILE.test(r.url)) && (await this.canRun());
+      } catch {
+        return false;
+      }
+    })().then((yes) => {
+      this.onDevice = yes;
+      this.emit();
+      return yes;
+    });
+    return this.stored;
+  }
+
   /** Start downloading and warming the model (once). */
   async load(): Promise<void> {
     if (this.worker || !(await this.canRun())) return;
@@ -87,6 +114,8 @@ class NaturalVoice {
       } else if (m.type === "ready") {
         this.state = "ready";
         this.progress = 1;
+        this.onDevice = true;
+        this.stored = Promise.resolve(true);
         this.emit();
       } else if (m.type === "audio") {
         const job = this.waiting.get(m.id);
@@ -216,11 +245,6 @@ export function browserVoices(): SpeechSynthesisVoice[] {
 export function pickBrowserVoice(uri: string): SpeechSynthesisVoice | null {
   const list = browserVoices();
   return list.find((v) => v.voiceURI === uri) ?? list[0] ?? null;
-}
-
-/** A natural voice in the browser itself (Edge's, Safari's premium ones): good enough that the AI one can wait. */
-export function browserHasNatural(): boolean {
-  return browserVoices().some((v) => rank(v) >= 8);
 }
 
 export function speakBrowser(lines: string[], voice: SpeechSynthesisVoice | null, o: SpeakOptions): Speaking {

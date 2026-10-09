@@ -45,13 +45,15 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true });
   }, []);
-  // the AI voice: whether this device runs it, and its download
+  // the AI voice: whether this device runs it, whether it is here already, and its download (only "Natural" starts it)
   const natural = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getState, () => "idle" as const);
   const progress = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getProgress, () => 0);
+  const onDevice = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getOnDevice, () => null);
   const [canRun, setCanRun] = useState<boolean | null>(null);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   useEffect(() => {
     void naturalVoice.canRun().then(setCanRun);
+    void naturalVoice.checkDevice();
     if (!("speechSynthesis" in window)) return;
     const list = () => setVoices(browserVoices());
     list();
@@ -64,9 +66,9 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
     sample.current?.stop();
     const g = getSettings();
     const o = { speed: g.guideSpeed, onLine: () => {}, onEnd: () => {} };
-    const useNatural = g.guideVoice !== "browser" && natural === "ready";
-    if (g.guideVoice === "natural" || (g.guideVoice === "auto" && canRun)) void naturalVoice.load();
-    sample.current = useNatural
+    const wants = g.guideVoice === "natural" || (g.guideVoice === "auto" && onDevice === true);
+    if (wants) void naturalVoice.load();
+    sample.current = wants && natural === "ready"
       ? naturalVoice.speak([SAMPLE], g.naturalVoice, o)
       : speakBrowser([SAMPLE], pickBrowserVoice(g.browserVoice), o);
   };
@@ -75,11 +77,11 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
       ? "This device cannot run the natural voice (it needs WebGPU): the browser's best voice reads."
       : natural === "loading"
         ? `The natural voice is downloading: ${Math.round(progress * 100)}% (about 330 MB, once; the browser keeps it). The browser's voice reads meanwhile.`
-        : natural === "ready"
-          ? "The natural voice runs on this device."
-          : natural === "error"
-            ? "The natural voice would not start here: the browser's voice reads."
-            : "Natural: a neural voice run on this device (about 330 MB, downloaded once). Auto uses it on a computer whose browser has no natural voice of its own.";
+        : natural === "error"
+          ? "The natural voice would not start here: the browser's voice reads."
+          : natural === "ready" || onDevice
+            ? "The natural voice is on this device: Auto and Natural read with it."
+            : "Auto reads with the browser's best voice. Natural is a neural voice that sounds like a person reading: choosing it downloads it (about 330 MB, once; the browser keeps it) and runs it on this device. Nothing downloads unless you choose it.";
   return (
     <div className={styles.settingsBack} onClick={() => onClose(true)}>
       <div
@@ -126,7 +128,7 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
             value={s.guideVoice}
             options={[
               { key: "auto", label: "Auto" },
-              { key: "natural", label: "Natural (AI)" },
+              { key: "natural", label: onDevice || natural === "ready" ? "Natural (AI)" : "Natural (AI · 330 MB)" },
               { key: "browser", label: "Browser's voice" },
             ]}
             onPick={(guideVoice) => {
@@ -135,7 +137,7 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
             }}
           />
           <p>{voiceNote}</p>
-          {s.guideVoice !== "browser" && canRun !== false && (
+          {canRun !== false && (s.guideVoice === "natural" || (s.guideVoice === "auto" && onDevice)) && (
             <div className={styles.seg} style={{ marginTop: 10 }}>
               {NATURAL_VOICES.map((v) => (
                 <button key={v.id} type="button" aria-pressed={s.naturalVoice === v.id} onClick={() => setSettings({ naturalVoice: v.id })}>
