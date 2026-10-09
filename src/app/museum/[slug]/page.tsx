@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getArtist, getArtistSlugs, getTimeline } from "@/lib/data";
 import { withPhases } from "@/lib/phases";
+import { filmCount } from "@/lib/films";
 import type { GalleryLink } from "@/lib/types";
 import { FLAGSHIP_THUMB_PX, paintingTextureUrl, wallTexturePx } from "@/lib/img";
 import { buildLayout, entryPreloads } from "@/components/museum/layout";
@@ -102,5 +103,5 @@ export default async function MuseumPage({ params }: Props) {
     });
   });
 
-  return <MuseumApp artist={artist} neighbours={await neighbours(slug)} key={slug} />;
+  return <MuseumApp artist={artist} neighbours={await neighbours(slug)} films={filmCount(slug)} key={slug} />;
 }

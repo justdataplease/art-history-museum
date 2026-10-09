@@ -86,10 +86,13 @@ const placardEl = () => document.querySelector(".mus-placard");
 export function MuseumApp({
   artist,
   neighbours,
+  films = 0,
 }: {
   artist: ArtistWithPaintings;
   /** An artist's gallery: the artists before and after in the timeline's order, behind the doors at its end. */
   neighbours?: { prev: GalleryLink | null; next: GalleryLink | null };
+  /** Films about the artist in the cinema (/cinema/<slug>): a way there from the top bar. */
+  films?: number;
 }) {
   // a custom room may choose its room style, wall colour and hanging order (src/lib/rooms.ts)
   const design = artist.room;
@@ -659,6 +662,11 @@ export function MuseumApp({
           <Link href="/" className="mus-back">
             ← Timeline
           </Link>
+          {films > 0 && !inspect && (
+            <Link href={`/cinema/${artist.slug}`} className={`mus-back ${styles.filmsLink}`} title={`The cinema: ${films} film${films === 1 ? "" : "s"} about ${artist.name}`}>
+              ▶ Films · {films}
+            </Link>
+          )}
         </div>
         <div className={`mus-placard ${styles.placard}${inspect ? ` ${styles.placardHidden}` : ""}`}>
           <h1>{artist.name}</h1>

@@ -1,11 +1,15 @@
 "use client";
 
-// The gallery's settings (O, or the Settings button top-left): walking speed, the canvas surface, and the
-// on-screen controls (H). Saved in this browser (settings.ts).
+// The gallery's settings (O, or the Settings button top-left): walking speed, the canvas surface, the on-screen
+// controls (H), and the audio guide's voice and speed. Saved in this browser (settings.ts).
 
-import { useEffect, useRef } from "react";
-import { setSettings, useSettings, type Pace } from "./settings";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { GUIDE_SPEEDS, getSettings, setSettings, useSettings, type GuideVoice, type Pace } from "./settings";
+import { NATURAL_VOICES, browserVoices, naturalVoice, pickBrowserVoice, speakBrowser, type Speaking } from "./voice";
 import styles from "./museum.module.css";
+
+const SAMPLE =
+  "The audio guide reads to you in front of the works people come to see: what you see in the painting first, then its story.";
 
 const PACES: { key: Pace; label: string }[] = [
   { key: "slow", label: "Stroll" },
@@ -41,6 +45,41 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true });
   }, []);
+  // the AI voice: whether this device runs it, and its download
+  const natural = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getState, () => "idle" as const);
+  const progress = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getProgress, () => 0);
+  const [canRun, setCanRun] = useState<boolean | null>(null);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  useEffect(() => {
+    void naturalVoice.canRun().then(setCanRun);
+    if (!("speechSynthesis" in window)) return;
+    const list = () => setVoices(browserVoices());
+    list();
+    window.speechSynthesis.addEventListener?.("voiceschanged", list);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", list);
+  }, []);
+  const sample = useRef<Speaking | null>(null);
+  useEffect(() => () => sample.current?.stop(), []);
+  const hear = () => {
+    sample.current?.stop();
+    const g = getSettings();
+    const o = { speed: g.guideSpeed, onLine: () => {}, onEnd: () => {} };
+    const useNatural = g.guideVoice !== "browser" && natural === "ready";
+    if (g.guideVoice === "natural" || (g.guideVoice === "auto" && canRun)) void naturalVoice.load();
+    sample.current = useNatural
+      ? naturalVoice.speak([SAMPLE], g.naturalVoice, o)
+      : speakBrowser([SAMPLE], pickBrowserVoice(g.browserVoice), o);
+  };
+  const voiceNote =
+    canRun === false
+      ? "This device cannot run the natural voice (it needs WebGPU): the browser's best voice reads."
+      : natural === "loading"
+        ? `The natural voice is downloading: ${Math.round(progress * 100)}% (about 330 MB, once; the browser keeps it). The browser's voice reads meanwhile.`
+        : natural === "ready"
+          ? "The natural voice runs on this device."
+          : natural === "error"
+            ? "The natural voice would not start here: the browser's voice reads."
+            : "Natural: a neural voice run on this device (about 330 MB, downloaded once). Auto uses it on a computer whose browser has no natural voice of its own.";
   return (
     <div className={styles.settingsBack} onClick={() => onClose(true)}>
       <div
@@ -80,6 +119,55 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
             onPick={(hud) => setSettings({ hud })}
           />
           <p>Hidden leaves only the room and the paintings; a small button brings them back.</p>
+        </section>
+        <section>
+          <h3>Audio guide</h3>
+          <Choice<GuideVoice>
+            value={s.guideVoice}
+            options={[
+              { key: "auto", label: "Auto" },
+              { key: "natural", label: "Natural (AI)" },
+              { key: "browser", label: "Browser's voice" },
+            ]}
+            onPick={(guideVoice) => {
+              setSettings({ guideVoice });
+              if (guideVoice === "natural") void naturalVoice.load();
+            }}
+          />
+          <p>{voiceNote}</p>
+          {s.guideVoice !== "browser" && canRun !== false && (
+            <div className={styles.seg} style={{ marginTop: 10 }}>
+              {NATURAL_VOICES.map((v) => (
+                <button key={v.id} type="button" aria-pressed={s.naturalVoice === v.id} onClick={() => setSettings({ naturalVoice: v.id })}>
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {voices.length > 0 && (s.guideVoice === "browser" || canRun === false || natural !== "ready") && (
+            <select
+              className={styles.voiceSelect}
+              value={s.browserVoice}
+              onChange={(e) => setSettings({ browserVoice: e.target.value })}
+              aria-label="The browser's voice"
+            >
+              <option value="">Best: {voices[0].name}</option>
+              {voices.map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+          )}
+          <h3 style={{ marginTop: 14 }}>Reading speed</h3>
+          <Choice<string>
+            value={String(s.guideSpeed)}
+            options={GUIDE_SPEEDS.map((v) => ({ key: String(v), label: `${v}×` }))}
+            onPick={(v) => setSettings({ guideSpeed: Number(v) })}
+          />
+          <button type="button" className={styles.hear} onClick={hear}>
+            ▶ Hear it
+          </button>
         </section>
         <button type="button" className={styles.settingsDone} onClick={() => onClose(true)}>
           Done

@@ -25,6 +25,13 @@
   cursor: pointer;
 }
 
+.status {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(233, 229, 226, 0.6);
+}
+
 .toggle kbd {
   margin-left: 8px;
   font: inherit;

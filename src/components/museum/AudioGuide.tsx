@@ -6,18 +6,21 @@
 //
 // The text is standard, prepared data (archive/guide.py -> /api/guide/<artist>): one script per artist and per
 // work, with a stable id and version. The voice is separate: a recording of the script when there is one
-// (public/audio/guide/<id>.mp3, subtitles timed by sentence length), else the browser's own voice (Web Speech
-// API), one sentence at a time. A live AI voice can later read the same scripts. The sentence being read shows
-// as a subtitle; the gallery music steps back while the guide speaks.
+// (public/audio/guide/<id>.mp3, subtitles timed by sentence length), else a voice reading it one sentence at a
+// time (voice.ts): the natural AI voice, run on this device, where it can run and is chosen (Settings), else the
+// browser's most natural voice. All at the visitor's speed (the 1× button, or Settings). The sentence being
+// read shows as a subtitle; the gallery music steps back while the guide speaks.
 //
 // "In front of": within NEAR metres, the painting ahead of the visitor (FACING), for DWELL_MS. Checked on a
 // timer, not per frame: the canvas renders on demand and stops drawing when the visitor stands still.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import * as THREE from "three";
 import type { GuideArtist, Painting } from "@/lib/types";
 import type { Placement } from "./layout";
 import { duckMusic } from "./MuseumAudio";
+import { GUIDE_SPEEDS, getSettings, setSettings, useSettings } from "./settings";
+import { browserHasNatural, naturalVoice, pickBrowserVoice, speakBrowser, type Speaking } from "./voice";
 import styles from "./AudioGuide.module.css";
 
 const STORAGE_KEY = "timeline-museum:audio-guide";
@@ -93,13 +96,16 @@ function toSentences(lines: string[]): string[] {
   ).filter((s) => s.length > 1);
 }
 
-function pickVoice(): SpeechSynthesisVoice | null {
-  const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith("en"));
-  const rank = (v: SpeechSynthesisVoice) =>
-    (/natural|neural|online/i.test(v.name) ? 4 : 0) + (/google/i.test(v.name) ? 2 : 0) +
-    (v.lang === "en-GB" || v.lang === "en-US" ? 1 : 0) + (v.localService ? 0 : 1);
-  return voices.sort((a, b) => rank(b) - rank(a))[0] ?? null;
+/** The AI voice for this visitor: chosen, or (auto) on a desktop that can run it, not saving data, whose browser
+ *  has no natural voice of its own. */
+function wantsNatural(touch: boolean): boolean {
+  const s = getSettings();
+  if (s.guideVoice === "browser") return false;
+  if (s.guideVoice === "natural") return true;
+  const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+  return !touch && !saveData && !browserHasNatural();
 }
+const speedLabel = (s: number) => `${s}×`;
 
 interface Props {
   placements: Placement[];
@@ -125,7 +131,10 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
   const [paused, setPaused] = useState(false);
   const current = useRef<string | null>(null);
   const introduced = useRef(new Set<string>());
-  const voice = useRef<SpeechSynthesisVoice | null>(null);
+  const speech = useRef<Speaking | null>(null);
+  const settings = useSettings();
+  const naturalState = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getState, () => "idle" as const);
+  const naturalProgress = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getProgress, () => 0);
   const scripts = useRef(new Map<string, Promise<ArtistScripts | null>>());
   const audioEl = useRef<HTMLAudioElement | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -144,19 +153,25 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
   }, []);
 
   useEffect(() => {
-    const speech = "speechSynthesis" in window;
+    const synth = "speechSynthesis" in window;
     setSupported(true); // recordings play without speech synthesis
     setMode(readMode());
-    if (!speech) return;
-    const pick = () => (voice.current = pickVoice());
-    pick();
-    window.speechSynthesis.addEventListener?.("voiceschanged", pick);
+    if (!synth) return;
+    // Chrome lists its voices a moment after load
+    const list = () => window.speechSynthesis.getVoices();
+    list();
+    window.speechSynthesis.addEventListener?.("voiceschanged", list);
     return () => {
-      window.speechSynthesis.removeEventListener?.("voiceschanged", pick);
+      window.speechSynthesis.removeEventListener?.("voiceschanged", list);
       window.speechSynthesis.cancel();
       duckMusic(1, 1);
     };
   }, []);
+
+  // the AI voice downloads (once, kept by the browser) and warms up in the background while the browser's reads
+  useEffect(() => {
+    if (on && wantsNatural(touch)) void naturalVoice.load();
+  }, [on, touch, settings.guideVoice]);
 
   // the gallery's scripts, ahead of the first painting
   useEffect(() => {
@@ -166,6 +181,8 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
   const silence = useCallback(() => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
+    speech.current?.stop();
+    speech.current = null;
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     audioEl.current?.pause();
   }, []);
@@ -206,6 +223,7 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
           // a recording: subtitles by each sentence's share of the text
           const a = audioEl.current ?? (audioEl.current = new Audio());
           a.src = s.audio;
+          a.playbackRate = getSettings().guideSpeed;
           a.onended = () => next(i + 1);
           a.onerror = () => speakLines(lines, () => next(i + 1));
           a.onloadedmetadata = () => {
@@ -221,20 +239,20 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
         } else speakLines(lines, () => next(i + 1));
       };
       const speakLines = (lines: string[], done: () => void) => {
-        if (!("speechSynthesis" in window) || !lines.length) return done();
-        lines.forEach((text, j) => {
-          const u = new SpeechSynthesisUtterance(text);
-          if (voice.current) u.voice = voice.current;
-          u.lang = voice.current?.lang ?? "en-GB";
-          u.rate = 0.98;
-          u.onstart = () => current.current === key && setLine(text);
-          if (j === lines.length - 1) u.onend = () => done();
-          window.speechSynthesis.speak(u);
-        });
+        if (!lines.length) return done();
+        const s = getSettings();
+        const o = {
+          speed: s.guideSpeed,
+          onLine: (text: string) => current.current === key && setLine(text),
+          onEnd: () => current.current === key && done(),
+        };
+        if (wantsNatural(touch) && naturalVoice.state === "ready") speech.current = naturalVoice.speak(lines, s.naturalVoice, o);
+        else if ("speechSynthesis" in window) speech.current = speakBrowser(lines, pickBrowserVoice(s.browserVoice), o);
+        else done();
       };
       next(0);
     },
-    [silence, finished]
+    [silence, finished, touch]
   );
 
   const narrate = useCallback(
@@ -332,13 +350,20 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
     const a = audioEl.current;
     if (paused) {
       if (a && a.src && a.currentTime > 0 && !a.ended) void a.play();
-      else window.speechSynthesis?.resume();
+      else speech.current?.resume();
     } else {
       if (a && !a.paused) a.pause();
-      else window.speechSynthesis?.pause();
+      else speech.current?.pause();
     }
     setPaused(!paused);
   };
+  const cycleSpeed = () => {
+    const i = GUIDE_SPEEDS.findIndex((s) => Math.abs(s - settings.guideSpeed) < 0.01);
+    const guideSpeed = GUIDE_SPEEDS[(i + 1) % GUIDE_SPEEDS.length];
+    setSettings({ guideSpeed });
+    if (audioEl.current) audioEl.current.playbackRate = guideSpeed;
+  };
+  const loadingVoice = on && naturalState === "loading" && wantsNatural(touch);
   return (
     <>
       <div className={`mus-guide ${styles.guide}`}>
@@ -352,6 +377,22 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
           <span aria-hidden>🎧</span> Audio guide: {MODE_LABEL[mode]}
           {!touch && <kbd>G</kbd>}
         </button>
+        {on && (
+          <button
+            type="button"
+            className={styles.small}
+            onClick={cycleSpeed}
+            title="Reading speed (from the next sentence); the voice is in Settings"
+            aria-label={`Reading speed ${settings.guideSpeed} times`}
+          >
+            {speedLabel(settings.guideSpeed)}
+          </button>
+        )}
+        {loadingVoice && (
+          <span className={styles.status} title="A natural voice, run on this device: downloaded once, then kept by the browser">
+            Natural voice {Math.round(naturalProgress * 100)}%
+          </span>
+        )}
         {on && speaking && (
           <>
             <button type="button" className={styles.small} onClick={pauseResume}>

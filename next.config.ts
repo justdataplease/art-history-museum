@@ -15,13 +15,22 @@ const isDev = process.env.NODE_ENV === "development";
 //   uploads0..uploads8.wikiart.org (CORS: *).
 const WIKIMEDIA = "https://upload.wikimedia.org https://thumb.wikimedia.org";
 const WIKIART = "https://*.wikiart.org";
+// the cinema (src/components/cinema): films play from where they live. Projected: ERT's archive (HLS, fetched by
+// hls.js), Wikimedia Commons and the Internet Archive; embedded: the video sites' own players.
+const FILM_MEDIA = "https://mediastream.ert.gr https://archive.org https://*.archive.org";
+const FILM_FRAMES = "https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://geo.dailymotion.com";
+// the audio guide's natural voice (src/components/museum/voice): the model runs in the visitor's browser, its code
+// from jsdelivr, its weights and voices from Hugging Face (WebAssembly needs 'wasm-unsafe-eval')
+const VOICE_CODE = "https://cdn.jsdelivr.net";
+const VOICE_DATA = "https://huggingface.co https://*.huggingface.co https://*.hf.co https://cdn.jsdelivr.net";
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${VOICE_CODE}${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   `img-src 'self' data: blob: ${WIKIMEDIA} ${WIKIART}`,
-  "media-src 'self' blob: https://upload.wikimedia.org",
-  `connect-src 'self' ${WIKIMEDIA} ${WIKIART}`,
+  `media-src 'self' blob: https://upload.wikimedia.org ${FILM_MEDIA}`,
+  `connect-src 'self' ${WIKIMEDIA} ${WIKIART} ${FILM_MEDIA} ${VOICE_DATA}`,
+  `frame-src ${FILM_FRAMES}`,
   "font-src 'self' data:",
   "worker-src 'self' blob:",
   "object-src 'none'",
@@ -47,8 +56,11 @@ const nextConfig: NextConfig = {
     "/api/guide/*": ["./data/site/guide/*.json"],
     // an artist's phases (archive/phases.py, src/lib/phases.ts) when a gallery regenerates; a work's details
     // for the inspect panel (/api/work/<artist>/<work>, src/lib/rooms.ts workAbout)
-    "/museum/*": ["./data/site/phases.json"],
+    "/museum/*": ["./data/site/phases.json", "./data/site/films.json"],
     "/api/work/*/*": ["./data/site/rooms.json"],
+    // the cinema's programme (archive/films.py), and the galleries' way to it
+    "/cinema": ["./data/site/films.json"],
+    "/cinema/*": ["./data/site/films.json"],
   },
 
   // No images config: painting textures and portraits load straight from

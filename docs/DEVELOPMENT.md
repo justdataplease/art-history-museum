@@ -66,6 +66,7 @@ archive/.venv/Scripts/python -m archive.commons fetch   # data/commons: works on
 archive/.venv/Scripts/python -m archive.site   # data/site/museum.json, rooms.json (`archive.site rooms`: rooms.json only)
 archive/.venv/Scripts/python -m archive.guide build   # data/site/guide: audio guide scripts
 archive/.venv/Scripts/python -m archive.phases        # data/site/phases.json: the phases galleries follow
+archive/.venv/Scripts/python -m archive.films fetch   # data/site/films.json: the cinema's films, from the painters' Wikipedia articles (reads data/site; cached in data/films)
 npm run load-db                                # reads data/site when present
 ```
 
@@ -82,7 +83,11 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
   link; `/api/room` the picker's live count and preview (`?preview=1`); `/api/room/works?q=` the picker's search for works to add (title and
   artist words, `&a=` one artist's best known); the picker's drag and drop is `src/app/rooms/drag.ts` (a moved
   work is recorded in the link as `artist/painting@floor:place`, only the works moved); `/api/guide/<artist>` the audio guide's scripts (`data/site/guide`); `/api/work/<artist>/<work>` a work's
-  tags, museums and same-year works for the inspect panel; `/surprise?from=<artist>` a gallery from another
+  tags, museums and same-year works for the inspect panel; `/cinema` painters on film and `/cinema/<painter>` a
+  painter's cinema (prerendered from `data/site/films.json`, `src/components/cinema`: a projector whose beam and
+  room light follow the film; open streams are a video texture, YouTube, Vimeo and Dailymotion their own player
+  behind a hole in the canvas); `/api/films/where` whether the visitor is in Greece (ERT's films that play there
+  only); `/surprise?from=<artist>` a gallery from another
   period (the "Surprise me" at a gallery's end); `/furniture` (development only) every
   room style's furniture (the layout picks among it room by room), for modelling it.
 

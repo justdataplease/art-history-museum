@@ -33,11 +33,17 @@ you can visit, freely, without an account.
   what others painted the same year, or the original image on its own. Wall
   labels show recorded dimensions when available and whether the display is at
   original scale, reduced or enlarged.
+- **Go to the cinema.** Documentaries, television portraits and archive
+  footage of painters, linked from their Wikipedia articles in every
+  language, play on a projector in a dark auditorium: the beam carries the
+  film's light through the dust, and the room changes with it. From a
+  gallery's top bar (**Films**) or the timeline's **Cinema**.
 
 On a computer, use **W A S D** to move (at a run; the settings have walking
 speeds) and the mouse to look, **Space** to jump, **C** to sit, **G** for the
-audio guide and **O** for the settings: speed, the canvas texture, and hiding
-the controls (**H**).
+audio guide and **O** for the settings: speed, the canvas texture, the audio
+guide's voice (a natural AI voice run on your computer, or the browser's) and
+reading speed, and hiding the controls (**H**).
 On a phone, drag to look and tap the floor to walk. Click or tap a painting to
 inspect it. **Explore → How to explore** brings back the short guide on the
 timeline.

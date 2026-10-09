@@ -25,3 +25,4 @@ data/guide
 data/*.tmp
 data/site/*.tmp
 .claude
+data/films

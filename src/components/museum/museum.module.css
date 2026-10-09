@@ -40,6 +40,14 @@
 .topRight.topRight {
   justify-content: flex-end;
 }
+/* the way to the artist's cinema, beside the way back */
+.topSide.topSide {
+  gap: 8px;
+}
+.filmsLink.filmsLink {
+  color: var(--gold-soft);
+  border-color: rgba(199, 169, 122, 0.45);
+}
 
 @media (max-width: 640px) {
   .placard.placard {
@@ -549,6 +557,30 @@
   font-size: 12.5px;
   line-height: 1.45;
   color: rgba(233, 229, 226, 0.62);
+}
+.voiceSelect {
+  width: 100%;
+  margin-top: 10px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--light);
+  background: rgba(10, 9, 8, 0.6);
+  border: 1px solid rgba(199, 169, 122, 0.35);
+  border-radius: 4px;
+}
+.hear {
+  margin-top: 10px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold-soft);
+  background: transparent;
+  border: 1px solid rgba(199, 169, 122, 0.45);
+  border-radius: 999px;
+  cursor: pointer;
 }
 .seg {
   display: flex;
