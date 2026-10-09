@@ -586,11 +586,6 @@ function exitDoor(trim: GeoBatch, cx: number, z: number, dw: number, dh: number,
   }
 }
 
-/** Top of a door case above the floor (its cornice / frame). */
-export function doorCaseTop(dh: number, classical: boolean): number {
-  return classical ? dh + 0.205 : dh + 0.04;
-}
-
 /** Height of the picture rail's centre (when the theme has one): below the cove's springing. */
 export function pictureRailY(coveBase: number): number {
   return coveBase - 0.32;

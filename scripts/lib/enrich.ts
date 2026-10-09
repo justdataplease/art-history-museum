@@ -18,7 +18,6 @@
 import { createLimiter, createPacer, fetchJson, readItemCache, saveItemCache, splitLongRequest } from "./wiki";
 import { fetchFileMeta, wikiFileOf, type FileMeta, type ImageCredit } from "./credits";
 import { dropSeriesRepresentatives, fetchClaims } from "./passes";
-export { createPacer } from "./wiki";
 
 export interface EnrichablePainting {
   slug: string;

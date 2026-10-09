@@ -173,32 +173,35 @@ function ScreenBoard({ local }: { local: Local }) {
 }
 
 /** A projected film's picture: the frame on the screen, with the lamp's hot spot; before the first frame, the
- *  lamp's white (the leader). Added to the lit screen. */
+ *  lamp's white (the leader). Added to the screen, whose own light (the room's, reaching in) it takes down as the
+ *  house lights go down: a projected black is the screen in the dark. */
 function Picture({ runtime, local }: { runtime: Rt; local: Local }) {
   const mesh = useRef<THREE.Mesh>(null);
-  const mat = useMemo(
-    () =>
-      additive(
-        new THREE.ShaderMaterial({
-          uniforms: { uMap: { value: null }, uHasMap: { value: 0 }, uLevel: { value: 0 }, uGain: { value: 0.78 } },
-          vertexShader: /* glsl */ `
-            varying vec2 vUv;
-            void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-          fragmentShader: /* glsl */ `
-            uniform sampler2D uMap; uniform float uHasMap; uniform float uLevel; uniform float uGain;
-            varying vec2 vUv;
-            void main() {
-              vec2 c = (vUv - 0.5) * vec2(1.0, 0.75);
-              float hot = 1.0 - 0.35 * dot(c, c);   // a little brighter in the middle, as a lamp throws it
-              vec3 pic = uHasMap > 0.5 ? texture2D(uMap, vUv).rgb : vec3(0.42, 0.41, 0.39);
-              gl_FragColor = vec4(pic * hot * uLevel * uGain, 0.0);
-              #include <colorspace_fragment>
-              gl_FragColor.a = 0.0;
-            }`,
-        })
-      ),
-    []
-  );
+  const mat = useMemo(() => {
+    const m = additive(
+      new THREE.ShaderMaterial({
+        uniforms: { uMap: { value: null }, uHasMap: { value: 0 }, uLevel: { value: 0 }, uGain: { value: 0.92 } },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D uMap; uniform float uHasMap; uniform float uLevel; uniform float uGain;
+          varying vec2 vUv;
+          void main() {
+            vec2 c = (vUv - 0.5) * vec2(1.0, 0.75);
+            float hot = 1.0 - 0.35 * dot(c, c);   // a little brighter in the middle, as a lamp throws it
+            // a video texture comes undecoded (three decodes it in its own materials' shaders): to linear here
+            vec3 pic = uHasMap > 0.5 ? sRGBTransferEOTF(texture2D(uMap, vUv)).rgb : vec3(0.42, 0.41, 0.39);
+            gl_FragColor = vec4(pic * hot * uLevel * uGain, 0.0);
+            #include <colorspace_fragment>
+            // how much of the screen's own light goes (blended as 1 - alpha; the canvas's alpha is left alone)
+            gl_FragColor.a = 0.85 * uLevel;
+          }`,
+      })
+    );
+    m.blendDst = THREE.OneMinusSrcAlphaFactor;
+    return m;
+  }, []);
   useEffect(() => () => mat.dispose(), [mat]);
   useFrame(() => {
     const rt = runtime.current;
@@ -287,7 +290,7 @@ function Embed({ runtime, local, origin, inside }: { runtime: Rt; local: Local; 
 function Beam({ runtime, local }: { runtime: Rt; local: Local }) {
   const camera = useThree((s) => s.camera);
   const mesh = useRef<THREE.Mesh>(null);
-  const lastRect = useRef("");
+  const lastRect = useRef({ w: 0, h: 0 });
   const lens = local.projector.lens;
   const geo = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -364,7 +367,10 @@ function Beam({ runtime, local }: { runtime: Rt; local: Local }) {
                 float nearScreen = smoothstep(0.0, 0.8, p.z - uScreenZ);
                 // not right before one's eyes: looking along the beam, its haze would veil the picture
                 float seen = smoothstep(0.4, 2.0, distance(p, ro));
-                acc += col * haze * fall * edge * nearScreen * seen;
+                // dust throws light on forward: bright looking toward the lens, faint looking down the beam at the
+                // picture
+                float toward = 0.5 - 0.5 * dot(rd, normalize(p - uLens));
+                acc += col * haze * fall * edge * nearScreen * seen * (0.12 + 0.88 * toward);
               }
               gl_FragColor = vec4(acc * dt * uLevel * uGain, 0.0);
               #include <colorspace_fragment>
@@ -383,9 +389,10 @@ function Beam({ runtime, local }: { runtime: Rt; local: Local }) {
     m.visible = rt.level > 0.003;
     local.toLocal(camera.position, mat.uniforms.uEye.value as THREE.Vector3);
     const { w, h, cx, cy } = rt.rect;
-    const key = `${w.toFixed(3)}x${h.toFixed(3)}`;
-    if (key !== lastRect.current) {
-      lastRect.current = key;
+    const seen = lastRect.current;
+    if (Math.abs(w - seen.w) > 5e-4 || Math.abs(h - seen.h) > 5e-4) {
+      seen.w = w;
+      seen.h = h;
       const z = local.screen.z + 0.03;
       const apex = new THREE.Vector3(...lens);
       const c = [

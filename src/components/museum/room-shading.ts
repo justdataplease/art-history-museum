@@ -243,8 +243,6 @@ export interface RoomPatchOptions {
   replaceMap?: string;
   /** Extra GLSL injected after the lights, before AO (reflectedLight in scope). */
   extraDirect?: string;
-  /** Extra GLSL injected after the AO step (reflectedLight is in scope). */
-  extraLight?: string;
   extraUniforms?: Record<string, THREE.IUniform>;
   extraPars?: string;
 }
@@ -317,8 +315,7 @@ ${opts.extraColor ?? ""}`
         "#include <aomap_fragment>",
         `#include <aomap_fragment>
 ${opts.extraDirect ?? ""}
-${ROOM_AO_APPLY}
-${opts.extraLight ?? ""}`
+${ROOM_AO_APPLY}`
       );
   };
   mat.customProgramCacheKey = () => `room:${opts.key}:${useMottle ? 1 : 0}${useGap ? 1 : 0}`;

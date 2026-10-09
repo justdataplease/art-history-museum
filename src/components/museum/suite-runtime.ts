@@ -575,8 +575,9 @@ export class SuiteRuntime {
    */
   private cull(p: P3): void {
     if (!this.suite) return;
-    const { doorways } = this.layout;
     const here = roomAt(this.layout, p.z);
+    // each room's wedge once (the exhibits of a room share it)
+    const wedges: Wedge[] = [];
     for (const e of this.exhibits) {
       const r = e.placement.room;
       // Far rooms are unmounted; only the exhibit window needs portal tests.
@@ -587,43 +588,64 @@ export class SuiteRuntime {
       }
       let show = true;
       if (r !== here) {
-        // slopes (x, and y up, per unit of depth) the doorways let through
-        const ahead = r > here;
-        let lo = -Infinity;
-        let hi = Infinity;
-        let up = Infinity;
-        for (let j = Math.min(r, here); j < Math.max(r, here); j++) {
-          const d = doorways[j];
-          for (const zf of [d.z + d.thickness / 2, d.z - d.thickness / 2]) {
-            const depth = ahead ? p.z - zf : zf - p.z;
-            if (depth <= 0.02) continue; // the camera stands within this face
-            lo = Math.max(lo, (-d.halfWidth - p.x) / depth);
-            hi = Math.min(hi, (d.halfWidth - p.x) / depth);
-            up = Math.min(up, (d.height - p.y) / depth);
-          }
-        }
-        // a point's slopes, with a 10 cm margin at its own depth
-        const depthOf = (q: P2) => Math.max(0.02, ahead ? p.z - q.z : q.z - p.z);
-        const inWedge = (q: P2) => {
-          const depth = depthOf(q);
-          const s = (q.x - p.x) / depth;
-          const m = CULL_MARGIN / depth;
-          return s >= lo - m && s <= hi + m;
-        };
+        const w = (wedges[r] ??= this.wedge(p, here, r));
+        const { ahead, lo, hi, up } = w;
         const [a, b] = e.wall;
-        const da = depthOf(a);
-        const db = depthOf(b);
+        const da = depthTo(p, a, ahead);
+        const db = depthTo(p, b, ahead);
         const sa = (a.x - p.x) / da;
         const sb = (b.x - p.x) / db;
         const m = CULL_MARGIN / Math.min(da, db);
-        show = lo <= hi && (inWedge(a) || inWedge(b) || (Math.min(sa, sb) <= lo + m && Math.max(sa, sb) >= hi - m));
+        show = lo <= hi && (inWedge(p, a, w) || inWedge(p, b, w) || (Math.min(sa, sb) <= lo + m && Math.max(sa, sb) >= hi - m));
         if (!show && lo <= hi) {
-          show = e.lenses.some((q) => inWedge(q) && (q.y - p.y - CULL_MARGIN) / depthOf(q) <= up);
+          for (const q of e.lenses) {
+            if (inWedge(p, q, w) && (q.y - p.y - CULL_MARGIN) / depthTo(p, q, ahead) <= up) {
+              show = true;
+              break;
+            }
+          }
         }
       }
       e.seen = show;
       if (e.group && e.group.visible !== show) e.group.visible = show;
     }
   }
+
+  /** The slopes (x, and y up, per unit of depth) every doorway between the camera's room and room `r` lets
+   *  through, each doorway about its own centre. */
+  private wedge(p: P3, here: number, r: number): Wedge {
+    const { doorways } = this.layout;
+    const ahead = r > here;
+    let lo = -Infinity;
+    let hi = Infinity;
+    let up = Infinity;
+    for (let j = Math.min(r, here); j < Math.max(r, here); j++) {
+      const d = doorways[j];
+      for (const zf of [d.z + d.thickness / 2, d.z - d.thickness / 2]) {
+        const depth = ahead ? p.z - zf : zf - p.z;
+        if (depth <= 0.02) continue; // the camera stands within this face
+        lo = Math.max(lo, (d.x - d.halfWidth - p.x) / depth);
+        hi = Math.min(hi, (d.x + d.halfWidth - p.x) / depth);
+        up = Math.min(up, (d.height - p.y) / depth);
+      }
+    }
+    return { ahead, lo, hi, up };
+  }
+}
+
+/** What the doorways toward a room leave open (SuiteRuntime.wedge); `ahead`: the room lies further down the suite. */
+type Wedge = { ahead: boolean; lo: number; hi: number; up: number };
+
+/** A point's depth from the camera, toward the room (at least 2 cm). */
+function depthTo(p: P3, q: P2, ahead: boolean): number {
+  return Math.max(0.02, ahead ? p.z - q.z : q.z - p.z);
+}
+
+/** Is a point within the wedge, with a 10 cm margin at its own depth? */
+function inWedge(p: P3, q: P2, w: Wedge): boolean {
+  const depth = depthTo(p, q, w.ahead);
+  const s = (q.x - p.x) / depth;
+  const m = CULL_MARGIN / depth;
+  return s >= w.lo - m && s <= w.hi + m;
 }
 

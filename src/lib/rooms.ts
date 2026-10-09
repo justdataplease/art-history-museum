@@ -18,7 +18,7 @@ import { FEATURED_ARTIST_SLUGS } from "@/components/timeline/featured-artists";
 import { paintingTextureUrl } from "./img";
 import { hasFilters, parsePin, selectionQuery, workFloor, workKey, type FloorSpec, type Selection } from "./room-query";
 
-export { parseSelection, selectionQuery, MAX_DEFAULT, type Selection, type FloorSpec } from "./room-query";
+export { parseSelection } from "./room-query";
 
 export interface RoomTerm {
   id: string;

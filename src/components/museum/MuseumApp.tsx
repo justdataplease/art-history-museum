@@ -575,21 +575,23 @@ export function MuseumApp({
     },
     [touch]
   );
+  // the film's keys (from its stable actions, not the screening's state, which changes as the film plays)
+  const { toggle: toggleFilm, next: nextFilm, deck: filmDeck } = screening;
   useEffect(() => {
     if (!inFilmRoom) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-      if (e.code === "KeyK") screening.toggle();
-      else if (e.code === "KeyN") screening.next();
-      else if (e.code === "KeyJ") screening.deck?.seek(-10);
-      else if (e.code === "KeyL") screening.deck?.seek(10);
+      if (e.code === "KeyK") toggleFilm();
+      else if (e.code === "KeyN") nextFilm();
+      else if (e.code === "KeyJ") filmDeck?.seek(-10);
+      else if (e.code === "KeyL") filmDeck?.seek(10);
       else if (e.code === "KeyF") toggleProgramme();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [inFilmRoom, screening, toggleProgramme]);
+  }, [inFilmRoom, toggleFilm, nextFilm, filmDeck, toggleProgramme]);
   // ---- an artist's gallery: the doors at its end to the artists before and after (or the timeline), and a
   // surprise: another period's gallery. Walking up to a door, the HUD's buttons, or E / Q in the last room.
   const exitHref = useCallback(

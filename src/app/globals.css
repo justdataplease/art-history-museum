@@ -1575,13 +1575,6 @@ button {
   display: block;
 }
 
-.tl-note-lead {
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: 12.5px;
-  letter-spacing: 0.01em;
-  color: var(--ink);
-}
 
 .tl-note a {
   pointer-events: auto;
@@ -1611,10 +1604,6 @@ button {
 
 .view-stars .tl-heart {
   color: #d9776b;
-}
-
-.view-stars .tl-note-lead {
-  color: rgba(233, 229, 226, 0.86);
 }
 
 .tl-source {
@@ -1710,10 +1699,6 @@ button {
     letter-spacing: 0.02em;
     text-align: center;
     text-wrap: balance;
-  }
-
-  .tl-note-lead {
-    display: none !important;
   }
 
   .tl-note-by {

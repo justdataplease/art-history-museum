@@ -13,11 +13,9 @@ const LABEL = "View the source code on GitHub";
 export function SourceLink({
   className,
   compact = false,
-  inert,
 }: {
   className: string;
   compact?: boolean;
-  inert?: boolean;
 }) {
   return (
     <a
@@ -26,7 +24,6 @@ export function SourceLink({
       target="_blank"
       rel="noopener noreferrer"
       title={compact ? LABEL : undefined}
-      inert={inert}
     >
       <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
         <path

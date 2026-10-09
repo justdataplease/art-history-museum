@@ -383,6 +383,7 @@ function SuiteDirector({
   onRoom?: (room: number) => void;
 }) {
   const camera = useThree((s) => s.camera);
+  const scene = useThree((s) => s.scene);
   const invalidate = useThree((s) => s.invalidate);
   useEffect(() => {
     runtime.setFocus(focusSlug);
@@ -394,15 +395,15 @@ function SuiteDirector({
   }, [runtime, open, invalidate]);
   useEffect(() => (onRoom ? runtime.onRoomChange(onRoom) : undefined), [runtime, onRoom]);
   // Test hook: an init script sets window.__MUSEUM_DEBUG__ to reach the
-  // camera, layout and runtime from automation (nothing is exposed otherwise).
+  // camera, scene, layout and runtime from automation (nothing is exposed otherwise).
   useEffect(() => {
     const w = window as unknown as { __MUSEUM_DEBUG__?: boolean; __museum?: unknown };
     if (!w.__MUSEUM_DEBUG__) return;
-    w.__museum = { camera, layout: runtime.layout, runtime, invalidate, textureStats };
+    w.__museum = { camera, scene, layout: runtime.layout, runtime, invalidate, textureStats };
     return () => {
       w.__museum = undefined;
     };
-  }, [camera, runtime, invalidate]);
+  }, [camera, scene, runtime, invalidate]);
   useFrame((state, dt) => {
     if (runtime.update(camera.position, dt)) state.invalidate();
   });

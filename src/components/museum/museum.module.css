@@ -40,7 +40,7 @@
 .topRight.topRight {
   justify-content: flex-end;
 }
-/* the way to the artist's cinema, beside the way back */
+/* the top bar's buttons, side by side (the films' beside the way back) */
 .topSide.topSide {
   gap: 8px;
 }

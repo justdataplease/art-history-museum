@@ -29,9 +29,8 @@ export interface CinemaRuntime {
   house: number;
   /** The picture's place on the screen (metres). */
   rect: { w: number; h: number; cx: number; cy: number };
-  /** The light the screen throws back into the room (linear RGB) and how bright it is. */
+  /** The light the screen throws back into the room (linear RGB). */
   color: THREE.Color;
-  lum: number;
   /** Projected (the beam carries the picture) or embedded (a neutral flicker). */
   textured: boolean;
   /** The reels' turn this frame (radians). */
@@ -41,7 +40,7 @@ export interface CinemaRuntime {
 
 export function createRuntime(deck: FilmDeck, frame: ScreenFrame): CinemaRuntime {
   return {
-    deck, frame, level: 0, house: 1, rect: pictureRect(16 / 9, frame), color: new THREE.Color(0, 0, 0), lum: 0,
+    deck, frame, level: 0, house: 1, rect: pictureRect(16 / 9, frame), color: new THREE.Color(0, 0, 0),
     textured: false, reel: 0, time: 0,
   };
 }
@@ -74,7 +73,6 @@ export function stepRuntime(rt: CinemaRuntime, dt: number, now: number): void {
     // the sampled colour, eased a little (a cut changes the room at once, but not in one frame)
     const k = 1 - Math.exp(-dt / 0.08);
     rt.color.lerp(rt.deck.light, k);
-    rt.lum += (rt.deck.lum - rt.lum) * k;
   } else if (film && status === "playing") {
     // an embedded player's picture cannot be read: a cool, gently changing light with the odd cut
     const t = rt.time;
@@ -84,13 +82,11 @@ export function stepRuntime(rt: CinemaRuntime, dt: number, now: number): void {
     const v = (0.28 + 0.32 * shot) * flicker;
     _neutral.setRGB(v * 0.92, v * 0.95, v);
     rt.color.lerp(_neutral, 1 - Math.exp(-dt / 0.12));
-    rt.lum = rt.color.g;
   } else {
     // a paused embed, the leader before a projected film's first frame: the lamp's own white
     const w = status === "paused" || status === "loading" ? 0.35 : 0;
     _neutral.setRGB(w, w, w * 0.97);
     rt.color.lerp(_neutral, 1 - Math.exp(-dt / 0.2));
-    rt.lum = rt.color.g;
   }
   if (status === "playing") rt.reel += dt * 2.4;
 }

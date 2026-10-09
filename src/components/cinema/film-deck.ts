@@ -42,9 +42,8 @@ export class FilmDeck {
   private sampleCtx: CanvasRenderingContext2D | null = null;
   private lastSample = 0;
   private sampledTime = -1;
-  /** The light the screen gives the room (linear RGB, 0..1) and its brightness. */
+  /** The light the screen gives the room (linear RGB, 0..1). */
   readonly light = new THREE.Color(0, 0, 0);
-  lum = 0;
   private hls: HlsLike | null = null;
   private sourceIndex = 0;
   private offError: (() => void) | null = null;
@@ -54,7 +53,6 @@ export class FilmDeck {
   private pendingPlay = false;
   private loadId = 0;
   volume = 1;
-  muted = false;
 
   constructor() {
     if (typeof document === "undefined") {
@@ -200,13 +198,6 @@ export class FilmDeck {
       v.load();
     }
     this.light.setRGB(0, 0, 0);
-    this.lum = 0;
-  }
-
-  stop() {
-    this.loadId++;
-    this.unload();
-    this.set({ film: null, status: "idle", mode: null, time: 0, duration: 0, error: null });
   }
 
   play() {
@@ -243,12 +234,8 @@ export class FilmDeck {
     this.volume = v;
     this.applyVolume();
   }
-  setMuted(m: boolean) {
-    this.muted = m;
-    this.applyVolume();
-  }
   private applyVolume() {
-    const vol = this.muted ? 0 : this.volume;
+    const vol = this.volume;
     if (this.video) this.video.volume = Math.min(1, Math.max(0, vol));
     this.command("volume", Math.round(vol * 100));
   }
@@ -363,7 +350,6 @@ export class FilmDeck {
       const n = (px.length / 4) * 255;
       // sRGB average -> linear
       this.light.setRGB(r / n, g / n, b / n, THREE.SRGBColorSpace);
-      this.lum = 0.2126 * this.light.r + 0.7152 * this.light.g + 0.0722 * this.light.b;
       if (this.small) this.small.needsUpdate = true;
       return true;
     } catch {
