@@ -91,6 +91,49 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
 - **Images** load straight from Wikimedia's servers at fixed thumbnail widths
   ([`src/lib/img.ts`](../src/lib/img.ts)), retrying if Wikimedia is busy.
 
+## The timeline
+
+The timeline is coded from scratch in `src/components/timeline/`: React, plain
+DOM and SVG, no charting library. GSAP only tweens the fly-tos (zoom on a log
+scale, so a long flight feels like travel).
+
+- **One transform.** Zoom and pan are one `{ k, x, y }` (`timeline-math.ts`):
+  `k` stretches the years (1× to 80×), `x` pans, `y` scrolls a wall taller
+  than the screen. Wheel, pinch and drag write to a ref, and React renders at
+  most once per animation frame.
+- **Layout is a pure function, rerun every frame.** `computeWallLayout` and
+  `computeStarLayout` take the data, the viewport and the transform and return
+  boxes in screen pixels: plain loops over 573 artists in 35 periods, with no
+  layout reads from the DOM. What zoom doesn't change is computed once: the
+  period lanes (`assignLanes`, best-fit interval packing), each star's year
+  and each constellation's figure (a minimum spanning tree).
+- **Gallery Wall.** Each period owns its own stretch of its lane, so rows can
+  never collide and need no search. A bisection finds the row height at which
+  the lanes near the screen share the height; lanes fade in and out smoothly,
+  so nothing jumps.
+- **Culling.** Every row and star has an `onScreen` flag (the screen plus a
+  margin). Off screen it renders as an empty, memoised button parked outside
+  the view, so the DOM keeps one focusable node per artist for Tab and screen
+  readers, but only what is in view is drawn. Grid lines and axis ticks are a
+  few SVG paths, and each constellation is one path.
+- **Labels never overlap.** `text-measure.ts` measures each string once on a
+  canvas at 100 px and scales it (an estimate until the web fonts load). Wall
+  titles sit on a rail above each lane (`placeRail` in `label-place.ts`),
+  inside their band or as a callout with a leader. The Star Map places
+  portraits and names greedily, largest body of work first, on an occupancy
+  grid of 32 px cells, and steers them off constellation lines. What doesn't
+  fit waits until you zoom in.
+- **Starfield.** Three pre-rendered SVG tiles, each moved by one compositor
+  transform and twinkled by CSS opacity, so it never repaints. The Star Map
+  uses no CSS filters.
+
+No timeline frame times are recorded yet: `perf-probe.mjs` measures the 3D
+galleries only. `node scripts/verify-e2e.mjs` checks that no two visible labels
+overlap: with All artists on, in both views, at the overview and zoomed in;
+and on the Star Map at eight screen sizes (360×740 to 1600×900). To time the
+timeline, record a Chrome DevTools Performance trace while zooming with All
+artists on.
+
 ## Performance
 
 Measured with `node scripts/perf-probe.mjs <slug> <baseUrl>` on a production

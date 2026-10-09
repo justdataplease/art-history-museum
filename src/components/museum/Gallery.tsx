@@ -3,7 +3,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import type { ArtistWithPaintings, RoomFloor } from "@/lib/types";
+import type { ArtistWithPaintings, GalleryLink, RoomFloor } from "@/lib/types";
 import {
   confine,
   entryGate,
@@ -23,6 +23,7 @@ import { lodAt, SuiteRuntime, type Lod } from "./suite-runtime";
 import { textureStats } from "./exhibit-texture";
 import { FxSlot } from "./fx/Slot";
 import { Elevator, type ElevatorApi, type LiftDirection } from "./Elevator";
+import { ExitDoors, type ExitSide } from "./ExitDoors";
 
 export type { LockApi };
 
@@ -90,6 +91,12 @@ export interface GalleryProps {
     apiRef: RefObject<ElevatorApi | null>;
     onNear: (near: boolean) => void;
     onPress: (dir: LiftDirection) => void;
+  };
+  /** An artist's gallery: the doors to the artists before and after (layout.exits). */
+  exits?: {
+    prev: GalleryLink | null;
+    next: GalleryLink | null;
+    onThrough: (side: ExitSide) => void;
   };
 }
 
@@ -288,6 +295,17 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
           apiRef={props.lift.apiRef}
           onNear={props.lift.onNear}
           onPress={props.lift.onPress}
+        />
+      )}
+      {layout.exits && props.exits && (
+        <ExitDoors
+          spot={layout.exits}
+          hallLength={layout.hallLength}
+          runtime={runtime}
+          prev={props.exits.prev}
+          next={props.exits.next}
+          enabled={props.walkEnabled}
+          onThrough={props.exits.onThrough}
         />
       )}
       {/* after the controls: it reads the camera they have just moved */}

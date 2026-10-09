@@ -46,7 +46,8 @@ export function RoomNavigator({
   const listId = useId();
   const n = layout.rooms.length;
   const here = layout.rooms[room];
-  const years = here ? roomYears(here, "–") : "";
+  // a gallery that follows the artist's life names each room after its phase ("Blue Period · 1901–1904")
+  const years = here ? [here.title, roomYears(here, "–")].filter(Boolean).join(" · ") : "";
 
   const close = useCallback((refocus: boolean) => {
     setOpen(false);
@@ -194,7 +195,7 @@ export function RoomNavigator({
           onKeyDown={onListKey}
         >
           {layout.rooms.map((r) => {
-            const span = roomYears(r, "–");
+            const span = [r.title, roomYears(r, "–")].filter(Boolean).join(" · ");
             const current = r.index === room;
             return (
               <button

@@ -85,6 +85,19 @@ export interface ElevatorSpot {
 /** The entrance doors in the near wall (z = +hallLength / 2), centred on the hall axis. */
 export const ENTRANCE_DOOR = { width: 1.9, height: 3.05, depth: 0.32 };
 
+/** An artist's gallery ends at two doors in the far end wall (z = −hallLength / 2), either side of the flagship:
+ *  to the artist before (x < 0, on the left as one faces the wall) and the artist after (x > 0). */
+export interface ExitDoors {
+  /** Centre of each door (|x|). */
+  x: number;
+  /** Half the door's width, and its height. */
+  halfWidth: number;
+  height: number;
+}
+export const EXIT_DOOR = { halfWidth: 0.6, height: 2.45, casing: 0.22 };
+/** The wall kept clear between a door's casing and the hall's corner. */
+const EXIT_CORNER = 0.35;
+
 /** One room of the suite. Rooms run along the hall axis from the entrance
  *  (+z) to the far end wall (−z). */
 export interface SuiteRoom {
@@ -94,6 +107,8 @@ export interface SuiteRoom {
   z1: number;
   /** Year span of the dated works hung in the room (null: none is dated). */
   years: [number, number] | null;
+  /** The phase of the artist's life the room shows ("Blue Period"), when the gallery follows phases. */
+  title?: string | null;
 }
 
 /** A doorway in the cross wall between rooms[i] and rooms[i + 1]. */
@@ -136,6 +151,8 @@ export interface GalleryLayout {
   seats: SeatSpot[];
   /** A custom room's elevator (LayoutOptions.elevator). */
   elevator: ElevatorSpot | null;
+  /** An artist's gallery's doors to the artists before and after (LayoutOptions.exits). */
+  exits: ExitDoors | null;
   /** Entrance room first; a single-room gallery has exactly one. */
   rooms: SuiteRoom[];
   /** doorways[i] joins rooms[i] and rooms[i + 1]. */
@@ -289,6 +306,11 @@ export interface LayoutOptions {
   arches?: "columns" | "plain";
   /** An elevator beside the entrance doors (a custom room with more than one floor). */
   elevator?: boolean;
+  /** Doors to the artists before and after in the far end wall (an artist's gallery). */
+  exits?: boolean;
+  /** The phases of the artist's life, in order (each painting's `phase` indexes them): rooms split where a phase
+   *  ends, each named after its phase, instead of evenly by year. */
+  phases?: string[];
 }
 
 /** Physical canvas size in metres. Prefers Wikidata's measured size
@@ -430,6 +452,7 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       barriers: [],
       seats: [],
       elevator: null,
+      exits: null,
       rooms: [{ index: 0, z0: -MIN_HALL_LENGTH / 2, z1: MIN_HALL_LENGTH / 2, years: null }],
       doorways: [],
       screen: null,
@@ -452,16 +475,45 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
   // A big collection becomes a suite: chronological chapters of at most
   // ROOM_MAX works in rooms along one axis. The flagship closes the last
   // room, or, in a suite longer than VISTA_ROOMS, opens the first.
-  const roomSizes = splitRooms(paintings.length, hanging.roomMax);
-  const nRooms = roomSizes.length;
-  const overture = nRooms > VISTA_ROOMS;
-  const anchorRoom = overture ? 0 : nRooms - 1;
   const chapters: Painting[][] = [];
-  {
+  const titles: (string | null)[] = [];
+  let nRooms: number;
+  let overture: boolean;
+  let anchorRoom: number;
+  const phases = !opts.keepOrder && opts.phases?.length ? opts.phases : null;
+  if (phases) {
+    // by phase (the unplaced last), by year within it; each phase its own rooms of at most roomMax
+    const phaseOf = (p: Painting) => (p.phase != null && p.phase < phases.length ? p.phase : phases.length);
+    rest.sort((x, y) => phaseOf(x) - phaseOf(y));
+    for (let at = 0; at < rest.length; ) {
+      const ph = phaseOf(rest[at]);
+      let end = at;
+      while (end < rest.length && phaseOf(rest[end]) === ph) end++;
+      let from = at;
+      for (const size of splitRooms(end - at, hanging.roomMax)) {
+        chapters.push(rest.slice(from, from + size));
+        titles.push(phases[ph] ?? null);
+        from += size;
+      }
+      at = end;
+    }
+    if (!chapters.length) {
+      chapters.push([]);
+      titles.push(null);
+    }
+    nRooms = chapters.length;
+    overture = nRooms > VISTA_ROOMS;
+    anchorRoom = overture ? 0 : nRooms - 1;
+  } else {
+    const roomSizes = splitRooms(paintings.length, hanging.roomMax);
+    nRooms = roomSizes.length;
+    overture = nRooms > VISTA_ROOMS;
+    anchorRoom = overture ? 0 : nRooms - 1;
     let at = 0;
     roomSizes.forEach((size, r) => {
       const take = r === anchorRoom ? size - 1 : size; // that room also holds the flagship
       chapters.push(rest.slice(at, at + take));
+      titles.push(null);
       at += take;
     });
   }
@@ -523,7 +575,9 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       // the entrance doors, the call buttons and the elevator side by side
       opts.elevator ? ELEVATOR_HALL_WIDTH : 0,
       // a palace gallery's arches want breadth
-      opts.arches ? ARCHED_HALL_WIDTH : 0
+      opts.arches ? ARCHED_HALL_WIDTH : 0,
+      // the doors to the artists before and after, either side of the flagship
+      opts.exits ? 2 * (exitInner(overture, a.w / 2 + reach(a.w, a.h)) + exitWidth + EXIT_CORNER) : 0
     )) / 10
   );
 
@@ -610,6 +664,7 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       z0,
       z1,
       years: years.length ? [Math.min(...years), Math.max(...years)] : null,
+      title: titles[r] ?? null,
     };
   });
 
@@ -641,6 +696,7 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
     : null;
 
   const elevator = opts.elevator ? elevatorSpot(hallWidth) : null;
+  const exits = opts.exits ? exitDoors(hallWidth, exitInner(overture, a.w / 2 + reach(a.w, a.h))) : null;
   const furniture = opts.furnish
     ? furnish({
         W: hallWidth,
@@ -653,6 +709,7 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
         anchorHalf: overture ? 0 : a.w / 2 + reach(a.w, a.h),
         front: overture ? screenZ + SCREEN_THICKNESS / 2 : null,
         elevator,
+        exits: !!exits,
       })
     : [];
 
@@ -660,9 +717,24 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
   const seats = opts.furnish?.seats ? furniture.flatMap(opts.furnish.seats) : [];
 
   return {
-    hallWidth, hallLength, wallHeight, placements, furniture, barriers, seats, elevator, rooms, doorways, screen,
+    hallWidth, hallLength, wallHeight, placements, furniture, barriers, seats, elevator, exits, rooms, doorways, screen,
     trackInset: cab?.trackInset ?? TRACK_INSET,
   };
+}
+
+/** A door's width with its casing. */
+const exitWidth = 2 * (EXIT_DOOR.halfWidth + EXIT_DOOR.casing);
+/** The far wall kept clear about the axis: the flagship and its label (a long suite's flagship hangs on its screen
+ *  in the first room, leaving the far wall bare). */
+function exitInner(overture: boolean, anchorHalf: number): number {
+  return overture ? 0.9 : anchorHalf + 0.3;
+}
+/** The doors halfway between the flagship's wall and the corners; none when the hall (at its widest) is too narrow. */
+function exitDoors(W: number, inner: number): ExitDoors | null {
+  const lo = inner + EXIT_DOOR.casing + EXIT_DOOR.halfWidth;
+  const hi = W / 2 - EXIT_CORNER - EXIT_DOOR.casing - EXIT_DOOR.halfWidth;
+  if (hi < lo) return null;
+  return { x: +((lo + hi) / 2).toFixed(3), halfWidth: EXIT_DOOR.halfWidth, height: EXIT_DOOR.height };
 }
 
 /** Narrowest hall that fits the entrance doors, a stretch of wall, the call buttons and an elevator side by side. */
@@ -774,6 +846,8 @@ function furnish(o: {
   /** An overture's screen face (room 0's far limit), or null. */
   front: number | null;
   elevator: ElevatorSpot | null;
+  /** Doors in the far end wall: its corners stay clear. */
+  exits: boolean;
 }): Furnishing[] {
   const { W, spans, doorways, sizes, rng } = o;
   const out: Furnishing[] = [];
@@ -831,7 +905,7 @@ function furnish(o: {
       if (r < last) {
         const d = doorways[r];
         if (!(o.front !== null && r === 0)) ends.push({ zWall: z0, facing: 1, side, inner: d.halfWidth + casing + (d.columns ? 0.65 : 0) });
-      } else {
+      } else if (!o.exits) {
         ends.push({ zWall: z0, facing: 1, side, inner: o.anchorHalf > 0 ? o.anchorHalf + 0.35 : 0.5 });
       }
     }

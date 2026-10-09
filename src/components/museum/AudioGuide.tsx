@@ -341,7 +341,7 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
   };
   return (
     <>
-      <div className={styles.guide}>
+      <div className={`mus-guide ${styles.guide}`}>
         <button
           type="button"
           className={`${styles.toggle}${on ? ` ${styles.on}` : ""}`}

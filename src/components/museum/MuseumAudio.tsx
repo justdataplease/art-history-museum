@@ -497,7 +497,7 @@ export function MuseumAudio({
 
   return (
     <div
-      className={styles.root}
+      className={`mus-music ${styles.root}`}
       data-ready={started ? "true" : "false"}
       data-inspecting={inspecting ? "true" : "false"}
     >

@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import { isTakenDown } from "./takedowns";
 import { cleanArtistName, decodeEntities } from "./text";
+import { artistOrigin } from "./countries";
 
 // `next build` sets NEXT_PHASE for its prerender workers (read at runtime, not inlined).
 const BUILDING = process.env.NEXT_PHASE === "phase-production-build";
@@ -81,6 +82,27 @@ function readCache(): CacheShape | null {
   if (!fs.existsSync(file)) return null;
   cache = JSON.parse(fs.readFileSync(file, "utf8")) as CacheShape;
   return cache;
+}
+
+type OriginFacts = Record<string, { nationalities?: string[]; citizenship?: string[] }>;
+let originFacts: OriginFacts | null = null;
+/** Each artist's nationalities and citizenship, from data/site/rooms.json (archive/site.py); read once, kept small. */
+function readOriginFacts(): OriginFacts {
+  if (originFacts) return originFacts;
+  originFacts = {};
+  const file = path.join(process.cwd(), "data", "site", "rooms.json");
+  if (!fs.existsSync(file)) return originFacts;
+  const all = (JSON.parse(fs.readFileSync(file, "utf8")) as { artists?: OriginFacts }).artists ?? {};
+  for (const [slug, a] of Object.entries(all)) {
+    originFacts[slug] = { nationalities: a.nationalities, citizenship: a.citizenship };
+  }
+  return originFacts;
+}
+
+/** The artist with today's country and continent (the Explore panel's filters), when known. */
+function withOrigin(a: Artist): Artist {
+  const { country, continent } = artistOrigin(a.slug, readOriginFacts()[a.slug], a.tagline);
+  return country ? { ...a, country, continent } : a;
 }
 
 // ---------- DTOs ----------
@@ -210,14 +232,17 @@ export async function getTimeline(): Promise<TimelineData> {
     async (db) => {
       const r = await db.query<{ data: TimelineData }>(TIMELINE_SQL);
       const d = r.rows[0].data;
-      return { periods: d.periods.map(toPeriod), artists: d.artists.map((a) => toArtist(a, a.paintingCount)) };
+      return {
+        periods: d.periods.map(toPeriod),
+        artists: d.artists.map((a) => withOrigin(toArtist(a, a.paintingCount))),
+      };
     },
     () => {
       const c = readCache();
       if (!c) return { periods: [], artists: [] };
       return {
         periods: c.periods.map(toPeriod),
-        artists: c.artists.map((a) => toArtist(a, a.paintings.length)),
+        artists: c.artists.map((a) => withOrigin(toArtist(a, a.paintings.length))),
       };
     }
   );

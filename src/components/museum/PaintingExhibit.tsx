@@ -55,6 +55,7 @@ import type { ExhibitLights } from "./exhibit-lights";
 import { createShadowMaterial, shadowQuad } from "./exhibit-shadow";
 import { retainExhibitResources } from "./exhibit-shared";
 import { isInspectFlying } from "./renderer-motion";
+import { useSettings } from "./settings";
 import type { Lod, SuiteRuntime } from "./suite-runtime";
 
 // ------------------------------------------------------------------ tuning
@@ -496,6 +497,18 @@ function CanvasSurface({
     });
   }, [theme.era, theme.light.spot]);
   useEffect(() => () => material.dispose(), [material]);
+  // the visitor's setting: without the surface, no weave and no varnish, the image plain and matte
+  const surface = useSettings().surface;
+  useEffect(() => {
+    const weave = surface && hasWeave(theme.era) ? canvasWeaveTexture() : null;
+    material.specularIntensity = surface ? VARNISH_SPECULAR : 0;
+    material.roughness = surface ? canvasRoughness(theme.era) : 1;
+    if (material.normalMap !== weave) {
+      material.normalMap = weave;
+      material.needsUpdate = true; // with or without a normal map is another program
+    }
+    invalidate();
+  }, [material, surface, theme.era, invalidate]);
 
   const map = withheld ? (panel ?? primedCanvasTexture()) : (hi ?? base ?? placeholderTexture());
   useEffect(() => {

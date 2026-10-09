@@ -140,7 +140,8 @@ function drawCard(ctx: CanvasRenderingContext2D, layout: GalleryLayout, s: Sign,
 
   const room = layout.rooms[s.room];
   const numeral = roomNumeral(s.room);
-  const years = room ? roomYears(room) : "";
+  // the room's phase of the artist's life, when the gallery follows them, before its years
+  const years = room ? [room.title, roomYears(room)].filter(Boolean).join("  ·  ") : "";
   const mid = y0 + TEX_H / 2;
   ctx.textBaseline = "alphabetic";
   // numeral in serif capitals, the years in spaced sans, centred together

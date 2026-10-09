@@ -1,3 +1,5 @@
+import type { Continent } from "./countries";
+
 /** Credit line of an image, from its file description page on Wikimedia
  *  Commons or English Wikipedia. CC BY / CC BY-SA require it wherever the
  *  image is shown. */
@@ -36,6 +38,10 @@ export interface Artist {
   portraitCredit?: ImageCredit | null;
   wikipediaUrl: string | null;
   paintingCount: number;
+  /** Where the artist is from, as today's country ("Netherlands") and its continent, for the Explore
+   *  panel's filters (src/lib/countries.ts). Absent when unknown. */
+  country?: string | null;
+  continent?: Continent | null;
 }
 
 export interface Painting {
@@ -68,6 +74,15 @@ export interface Painting {
   /** Set in a custom room, where works by several artists hang together (src/lib/rooms.ts). */
   artistSlug?: string;
   artistName?: string;
+  /** The phase of the artist's life it belongs to (an index into ArtistWithPaintings.phases). */
+  phase?: number;
+}
+
+/** A phase of an artist's life ("Blue Period", 1901–1904): an artist's gallery splits its rooms at them. */
+export interface ArtistPhase {
+  name: string;
+  from: number;
+  to: number;
 }
 
 /** What the audio guide says about an artist the first time the visitor meets their work. */
@@ -78,6 +93,15 @@ export interface GuideArtist {
   deathYear: number | null;
   tagline: string;
   bio: string;
+}
+
+/** The artist before or after in the timeline's order: an artist's gallery ends at doors to both. */
+export interface GalleryLink {
+  slug: string;
+  name: string;
+  birthYear: number | null;
+  deathYear: number | null;
+  periodName: string;
 }
 
 /** One floor of a custom room (rooms spanning eras get one floor per era, joined by an elevator). */
@@ -118,4 +142,6 @@ export interface ArtistWithPaintings extends Artist {
   paintings: Painting[];
   /** Present when this "artist" is a custom room (works by several artists). */
   room?: RoomInfo;
+  /** The phases of the artist's life, when known (src/lib/phases.ts): the gallery's rooms follow them. */
+  phases?: ArtistPhase[];
 }

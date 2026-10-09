@@ -16,16 +16,19 @@ import { useRouter } from "next/navigation";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import gsap from "gsap";
-import type { ArtistWithPaintings, GuideArtist } from "@/lib/types";
+import type { ArtistWithPaintings, GalleryLink, GuideArtist } from "@/lib/types";
 import { buildLayout, entryGate, entryZ, EYE_HEIGHT, type Placement } from "./layout";
 import { furnishSizes, furnitureOf } from "./furniture";
 import type { ElevatorApi, LiftDirection } from "./Elevator";
+import type { ExitSide } from "./ExitDoors";
 import { Gallery, type LockApi, type TeleportApi, type WarmupApi } from "./Gallery";
 import { RoomNavigator } from "./RoomNavigator";
 import { InspectPanel } from "./InspectPanel";
 import { duckMusic, MuseumAudio, musicMuted } from "./MuseumAudio";
 import { AudioGuide } from "./AudioGuide";
 import { FxGate } from "./fx/Gate";
+import { SettingsPanel } from "./SettingsPanel";
+import { setSettings, useSettings } from "./settings";
 import { galleryTheme, roomTheme } from "./theme";
 import { createSettleTracker, type SettleTracker } from "./renderer-motion";
 import styles from "./museum.module.css";
@@ -80,7 +83,14 @@ const FX_AUDIO = { duck: duckMusic, muted: musicMuted };
 const LIFT_KEY = "timeline-museum:arrived-by-elevator";
 const placardEl = () => document.querySelector(".mus-placard");
 
-export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
+export function MuseumApp({
+  artist,
+  neighbours,
+}: {
+  artist: ArtistWithPaintings;
+  /** An artist's gallery: the artists before and after in the timeline's order, behind the doors at its end. */
+  neighbours?: { prev: GalleryLink | null; next: GalleryLink | null };
+}) {
   // a custom room may choose its room style, wall colour and hanging order (src/lib/rooms.ts)
   const design = artist.room;
   const theme = useMemo(
@@ -96,8 +106,10 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
       furnish: furnishSizes(furnitureOf(theme)),
       arches: theme.room.arches,
       elevator: (design?.floors.length ?? 0) > 1,
+      exits: !design && !!neighbours,
+      phases: design ? undefined : artist.phases?.map((p) => p.name),
     });
-  }, [artist, theme, design]);
+  }, [artist, theme, design, neighbours]);
   // the flagship (a thumbnail, in a suite) and the entrance room's nearest works
   const gate = useMemo(() => entryGate(layout), [layout]);
   const rooms = layout.rooms.length;
@@ -114,6 +126,9 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   // room itself: the full "step inside" card is the arrival's
   const [stepped, setStepped] = useState(false);
   const [touchActive, setTouchActive] = useState(false);
+  // the settings card (O), and whether the on-screen controls show (H)
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const hud = useSettings().hud;
   const [inspect, setInspect] = useState<Placement | null>(null);
   const [returning, setReturning] = useState(false);
   const [allSettled, setAllSettled] = useState(false);
@@ -248,6 +263,16 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
     inspectRef.current = pl;
     setInspect(pl);
   }, []);
+  // the inspected work's neighbours in its artist's work, by year (the inspect panel's "before" and "after")
+  const around = useMemo(() => {
+    if (!inspect) return undefined;
+    const who = inspect.painting.artistSlug;
+    const mine = layout.placements
+      .filter((pl) => pl.painting.artistSlug === who && pl.painting.year != null)
+      .sort((a, b) => a.painting.year! - b.painting.year!);
+    const i = mine.indexOf(inspect);
+    return i < 0 ? undefined : { before: mine[i - 1] ?? null, after: mine[i + 1] ?? null };
+  }, [inspect, layout]);
   /** Leave the painting. From a click (the close button) the cursor is captured again in the same gesture, so
    *  the visitor walks on as soon as the camera is back; Esc is not a gesture that may capture it. */
   const closeInspect = useCallback((relock = false) => {
@@ -374,8 +399,38 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [inspect, closeInspect]);
 
-  const walkEnabled = doorsOpen && arrived && !inspect && !returning && !riding;
+  const walkEnabled = doorsOpen && arrived && !inspect && !returning && !riding && !settingsOpen;
   const navEnabled = rooms > 1 && doorsOpen && arrived && !inspect && !returning && !riding;
+
+  // ---- settings: O opens the card (freeing the cursor to click it), H shows or hides the on-screen controls
+  const canSettle = doorsOpen && arrived && !inspect && !returning && !riding;
+  const openSettings = useCallback(() => {
+    setSettingsOpen(true);
+    if (document.pointerLockElement) document.exitPointerLock();
+  }, []);
+  const closeSettings = useCallback(
+    (relock: boolean) => {
+      setSettingsOpen(false);
+      if (relock && !touch) lockApi.current?.lock(true);
+    },
+    [touch]
+  );
+  useEffect(() => {
+    if (!canSettle) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("input, textarea, select, [contenteditable]")) return;
+      if (settingsOpen) {
+        if (e.key === "Escape" || e.code === "KeyO") closeSettings(false);
+        return;
+      }
+      if (e.code === "KeyO") openSettings();
+      else if (e.code === "KeyH") setSettings({ hud: !hud });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canSettle, settingsOpen, hud, openSettings, closeSettings]);
 
   // ---- jump to a room: a quick fade through black around the move, held
   // until the new room's works are hung and its lights are up
@@ -461,6 +516,52 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   }, [ride]);
   const pressLift = useCallback((dir: LiftDirection) => void rideRef.current(dir), []);
   const goToLift = useCallback(() => jump((api) => api?.toElevator()), [jump]);
+  // ---- an artist's gallery: the doors at its end to the artists before and after (or the timeline), and a
+  // surprise: another period's gallery. Walking up to a door, the HUD's buttons, or E / Q in the last room.
+  const exitHref = useCallback(
+    (side: ExitSide | "surprise") =>
+      side === "surprise"
+        ? `/surprise?from=${encodeURIComponent(artist.slug)}`
+        : (side === "prev" ? neighbours?.prev : neighbours?.next)
+          ? `/museum/${(side === "prev" ? neighbours!.prev : neighbours!.next)!.slug}`
+          : "/",
+    [artist.slug, neighbours]
+  );
+  const [leaving, setLeaving] = useState(false);
+  const leave = useCallback(
+    (side: ExitSide | "surprise") => {
+      if (leaving) return;
+      setLeaving(true);
+      duckMusic(0.25, 0.8);
+      setFading(true);
+      if (document.pointerLockElement) document.exitPointerLock();
+      const href = exitHref(side);
+      setTimeout(() => router.push(href), JUMP_FADE_MS + 200);
+    },
+    [leaving, exitHref, router]
+  );
+  const atEnd = !!layout.exits && !!neighbours && room === rooms - 1;
+  // the galleries behind the doors load while the visitor walks the last room
+  useEffect(() => {
+    if (!atEnd) return;
+    router.prefetch(exitHref("prev"));
+    router.prefetch(exitHref("next"));
+  }, [atEnd, exitHref, router]);
+  const exits = useMemo(
+    () => (layout.exits && neighbours ? { prev: neighbours.prev, next: neighbours.next, onThrough: leave } : undefined),
+    [layout.exits, neighbours, leave]
+  );
+  useEffect(() => {
+    if (!atEnd || !walkEnabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      if (e.code === "KeyE") leave("next");
+      else if (e.code === "KeyQ") leave("prev");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [atEnd, walkEnabled, leave]);
+
   const lift = useMemo(
     () =>
       layout.elevator && roomInfo
@@ -491,11 +592,11 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
   }, [walkEnabled, layout.elevator, up, down, nearLift, ride, goToLift]);
 
   const engaged = touch ? touchActive : locked; // walking with input captured
-  const showStart = doorsOpen && arrived && !inspect && !returning && !engaged;
+  const showStart = doorsOpen && arrived && !inspect && !returning && !engaged && !settingsOpen;
   const dpr = useMemo(() => [1, dprCap] as [number, number], [dprCap]);
 
   return (
-    <div className="mus-root">
+    <div className={`mus-root${hud ? "" : ` ${styles.hudOff}`}`}>
       <Canvas
         shadows={false}
         frameloop={live ? "demand" : "never"}
@@ -526,6 +627,7 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
           teleportApi={teleportApi}
           cameraRef={cameraRef}
           lift={lift}
+          exits={exits}
         />
       </Canvas>
 
@@ -605,19 +707,16 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
                 <b>W A S D</b> walk
               </span>
               <span>
-                <b>Hold W 3s</b> run
-              </span>
-              <span>
                 <b>Mouse</b> look
               </span>
               <span>
                 <b>Click</b> a painting to inspect
               </span>
               <span>
-                <b>Space</b> jump, onto benches
+                <b>Space</b> jump
               </span>
               <span>
-                <b>C</b> crouch, or sit
+                <b>C</b> sit
               </span>
               <span>
                 <b>M</b> music
@@ -635,6 +734,12 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
                   <b>E</b> elevator
                 </span>
               )}
+              <span>
+                <b>O</b> settings
+              </span>
+              <span>
+                <b>P</b> secret menu
+              </span>
               <span>
                 <b>Esc</b> release cursor
               </span>
@@ -682,11 +787,33 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
         </div>
       )}
 
+      {canSettle && (
+        <div className={styles.hudTools}>
+          <button type="button" className={styles.hudTool} onClick={openSettings} title="Walking speed, canvas surface, on-screen controls (O)">
+            <span aria-hidden>⚙</span> Settings{!touch && <kbd>O</kbd>}
+          </button>
+          {touch && (
+            <button type="button" className={styles.hudTool} onClick={() => setSettings({ hud: false })}>
+              Hide controls
+            </button>
+          )}
+        </div>
+      )}
+      {canSettle && !hud && !settingsOpen && (
+        <button type="button" className={`${styles.hudTool} ${styles.hudBack}`} onClick={() => setSettings({ hud: true })}>
+          {touch ? "Show controls" : <>Show controls<kbd>H</kbd></>}
+        </button>
+      )}
+      {settingsOpen && <SettingsPanel onClose={closeSettings} touch={touch} />}
+
       <InspectPanel
         placement={inspect}
         onClose={() => closeInspect(true)}
         touch={touch}
         artistName={inspect?.painting.artistName ?? artist.name}
+        artistSlug={inspect ? (inspect.painting.artistSlug ?? artist.slug) : ""}
+        around={around}
+        onPick={selectPainting}
       />
 
       {layout.elevator && (up || down) && walkEnabled && (
@@ -722,6 +849,34 @@ export function MuseumApp({ artist }: { artist: ArtistWithPaintings }) {
               </span>
             </button>
           )}
+        </div>
+      )}
+
+      {atEnd && walkEnabled && !leaving && (
+        <div className={styles.lift} role="group" aria-label="The galleries beyond">
+          <span className={styles.liftTitle}>End of the gallery · walk through a door</span>
+          {(["next", "prev"] as const).map((side) => {
+            const l = side === "prev" ? neighbours!.prev : neighbours!.next;
+            return (
+              <button key={side} type="button" className={styles.elevator} onClick={() => leave(side)}>
+                <span className={styles.elevatorArrow}>{side === "prev" ? "←" : "→"}</span>
+                <span>
+                  {l ? l.name : "The timeline"}
+                  <small>
+                    {l ? (side === "prev" ? "The artist before" : "The artist after") : "Back to"}
+                    {touch ? "" : side === "prev" ? " · press Q" : " · press E"}
+                  </small>
+                </span>
+              </button>
+            );
+          })}
+          <button type="button" className={styles.elevator} onClick={() => leave("surprise")}>
+            <span className={styles.elevatorArrow}>✦</span>
+            <span>
+              Surprise me
+              <small>A gallery from another period</small>
+            </span>
+          </button>
         </div>
       )}
 

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import gsap from "gsap";
 import { INSPECT_SHEET_BREAKPOINT, type Placement } from "./layout";
 import { displayTitle } from "./exhibit-placard";
-import { wikiFilePage } from "@/lib/img";
+import { inspectTexturePx, paintingTextureUrl, wikiFilePage } from "@/lib/img";
 import type { Painting } from "@/lib/types";
 import styles from "./museum.module.css";
 
@@ -100,6 +101,135 @@ function Credits({ painting: p }: { painting: Painting }) {
   );
 }
 
+/** More about the work (src/lib/rooms.ts workAbout), fetched when it is inspected. */
+interface WorkAbout {
+  movement: string | null;
+  genre: string | null;
+  museums: string[];
+  sameYear: { artistSlug: string; artistName: string; slug: string; title: string }[];
+}
+const aboutCache = new Map<string, Promise<WorkAbout | null>>();
+function fetchAbout(artist: string, slug: string): Promise<WorkAbout | null> {
+  const key = `${artist}/${slug}`;
+  let p = aboutCache.get(key);
+  if (!p) {
+    p = fetch(`/api/work/${artist}/${encodeURIComponent(slug)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<WorkAbout>) : null))
+      .catch(() => null);
+    aboutCache.set(key, p);
+  }
+  return p;
+}
+
+/** The work in context: its movement, genre and museum; the artist's works hung before and after it (a click
+ *  goes to them); what others painted the same year. */
+function About({
+  painting: p,
+  artistSlug,
+  artistName,
+  before,
+  after,
+  onPick,
+}: {
+  painting: Painting;
+  artistSlug: string;
+  artistName: string;
+  before: Placement | null;
+  after: Placement | null;
+  onPick: (pl: Placement) => void;
+}) {
+  const [about, setAbout] = useState<WorkAbout | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setAbout(null);
+    fetchAbout(artistSlug, p.slug).then((a) => alive && setAbout(a));
+    return () => {
+      alive = false;
+    };
+  }, [artistSlug, p.slug]);
+  const facts: [string, string][] = [];
+  if (about?.movement) facts.push(["Movement", about.movement]);
+  if (about?.genre) facts.push(["Genre", about.genre]);
+  if (about?.museums.length) facts.push([about.museums.length > 1 ? "Collections" : "Collection", about.museums.join(", ")]);
+  const step = (pl: Placement | null, label: string) =>
+    pl && (
+      <button type="button" className={styles.aboutStep} onClick={() => onPick(pl)}>
+        <small>{label}</small>
+        {displayTitle(pl.painting.title, artistName)}
+        {pl.painting.year ? `, ${pl.painting.year}` : ""}
+      </button>
+    );
+  if (!facts.length && !before && !after && !about?.sameYear.length) return null;
+  return (
+    <div className={styles.about}>
+      <h3>About this work</h3>
+      {facts.length > 0 && (
+        <dl>
+          {facts.map(([k, v]) => (
+            <div key={k}>
+              <dt>{k}</dt>
+              <dd>{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {(before || after) && (
+        <div className={styles.aboutSteps}>
+          {step(before, `Before it, by ${artistName}`)}
+          {step(after, `After it, by ${artistName}`)}
+        </div>
+      )}
+      {about && about.sameYear.length > 0 && p.year && (
+        <div className={styles.aboutYear}>
+          <small>Painted the same year, {p.year}</small>
+          <ul>
+            {about.sameYear.map((w) => (
+              <li key={`${w.artistSlug}/${w.slug}`}>
+                <i>{w.title}</i> by {w.artistName}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The image as it is: flat on the screen, no room light, weave or varnish (Esc or a click closes it). */
+function Original({ painting: p, title, onClose }: { painting: Painting; title: string; onClose: () => void }) {
+  const url = paintingTextureUrl(p, inspectTexturePx(p));
+  const page = p.imageCredit?.page || (p.imageUrl ? wikiFilePage(p.imageUrl) : null);
+  useEffect(() => {
+    // before the gallery's own Esc (which would leave the painting)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+  if (!url) return null;
+  return createPortal(
+    <div className={styles.original} role="dialog" aria-label={`${title}: the original image`} onClick={onClose}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt={title} decoding="async" />
+      <div className={styles.originalBar} onClick={(e) => e.stopPropagation()}>
+        <span>{title}</span>
+        {page && (
+          <a href={page} {...ext}>
+            The file ↗
+          </a>
+        )}
+        <button type="button" onClick={onClose} autoFocus>
+          Close
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 /** The story card beside an inspected painting: a right-hand column on wide
  *  screens, a bottom sheet on narrow ones (see inspectPanelInset in layout.ts,
  *  which the inspect camera uses to frame the painting in the free area). */
@@ -108,12 +238,21 @@ export function InspectPanel({
   onClose,
   touch = false,
   artistName = "",
+  artistSlug = "",
+  around,
+  onPick,
 }: {
   placement: Placement | null;
   onClose: () => void;
   touch?: boolean;
   /** Used to drop Wikipedia's "(Artist)" disambiguator from titles, as the wall labels do. */
   artistName?: string;
+  /** The work's artist (the gallery's, or in a custom room the work's own). */
+  artistSlug?: string;
+  /** The artist's works hung before and after this one, by year. */
+  around?: { before: Placement | null; after: Placement | null };
+  /** Inspect another work (the camera flies there). */
+  onPick?: (pl: Placement) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -121,6 +260,7 @@ export function InspectPanel({
   const [shown, setShown] = useState<Placement | null>(null);
   const placementRef = useRef(placement);
   const visible = useRef(false);
+  const [original, setOriginal] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     placementRef.current = placement;
@@ -176,6 +316,7 @@ export function InspectPanel({
   );
 
   const p = (placement ?? shown)?.painting;
+  const title = p ? displayTitle(p.title, artistName) : "";
 
   return (
     <div
@@ -203,7 +344,7 @@ export function InspectPanel({
                 © In copyright
               </div>
             )}
-            <h2 className="insp-title">{displayTitle(p.title, artistName)}</h2>
+            <h2 className="insp-title">{title}</h2>
             {p.year && <div className="insp-year">{p.year}</div>}
             <p className="insp-story">{p.story}</p>
             {p.facts.length > 0 && (
@@ -216,6 +357,11 @@ export function InspectPanel({
                 ))}
               </div>
             )}
+            {p.imageUrl && !p.copyrighted && (
+              <button type="button" className={`insp-wiki ${styles.originalBtn}`} onClick={() => setOriginal(p.slug)}>
+                View the original image
+              </button>
+            )}
             {p.wikipediaUrl && p.copyrighted && !p.imageUrl && (
               <a className={`insp-wiki ${styles.wikiView}`} href={p.wikipediaUrl} target="_blank" rel="noreferrer">
                 View on Wikipedia ↗
@@ -226,8 +372,21 @@ export function InspectPanel({
                 Source · Wikipedia
               </a>
             )}
+            {artistSlug && onPick && (
+              <About
+                painting={p}
+                artistSlug={artistSlug}
+                artistName={artistName}
+                before={placement ? (around?.before ?? null) : null}
+                after={placement ? (around?.after ?? null) : null}
+                onPick={onPick}
+              />
+            )}
             <Credits painting={p} />
           </div>
+          {placement && original === p.slug && (
+            <Original painting={p} title={title} onClose={() => setOriginal(null)} />
+          )}
           <div className="insp-zoom-hint">
             {touch ? "Pinch to lean in · ✕ to step back" : "Scroll to lean in · Esc to step back"}
           </div>

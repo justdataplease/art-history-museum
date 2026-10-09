@@ -429,3 +429,50 @@ export async function searchWorks(q: string, artist?: string | null, limit = 12)
   hits.sort((x, y) => y[7] - x[7]);
   return previewWorks(hits.slice(0, limit));
 }
+
+/** What the inspect panel adds about a work (item 9): its movement and genre, the museums that hold it, and the
+ *  best known works other artists painted the same year. */
+export interface WorkAbout {
+  movement: string | null;
+  genre: string | null;
+  museums: string[];
+  sameYear: { artistSlug: string; artistName: string; slug: string; title: string }[];
+}
+
+/** Every dated work by year, best known first (built on first use). */
+let worksOfYear: Map<number, IndexWork[]> | null = null;
+
+export async function workAbout(artist: string, slug: string): Promise<WorkAbout | null> {
+  const ix = readIndex();
+  const w = ix && workByKey!.get(`${artist}/${slug}`);
+  if (!ix || !w) return null;
+  const term = (id: string | null) => (id ? (termById!.get(id)?.name ?? null) : null);
+  const museums = [...new Set((w[8] ?? []).map((i) => ix.museums?.[i]?.name).filter((n): n is string => !!n))];
+  const year = w[6];
+  let sameYear: WorkAbout["sameYear"] = [];
+  if (year != null) {
+    if (!worksOfYear) {
+      worksOfYear = new Map();
+      for (const x of ix.works) if (x[6] != null) (worksOfYear.get(x[6]) ?? worksOfYear.set(x[6], []).get(x[6])!).push(x);
+      for (const list of worksOfYear.values()) list.sort((a, b) => b[7] - a[7]);
+    }
+    // one work each from up to three other artists
+    const seen = new Set([artist]);
+    const picks: IndexWork[] = [];
+    for (const x of worksOfYear.get(year) ?? []) {
+      if (seen.has(x[0])) continue;
+      seen.add(x[0]);
+      picks.push(x);
+      if (picks.length === 3) break;
+    }
+    const found = await Promise.all(
+      picks.map(async (x) => {
+        const a = await getArtist(x[0]);
+        const p = a?.paintings.find((q) => q.slug === x[1]);
+        return a && p ? { artistSlug: a.slug, artistName: a.name, slug: p.slug, title: p.title } : null;
+      })
+    );
+    sameYear = found.filter((x): x is NonNullable<typeof x> => !!x);
+  }
+  return { movement: term(w[4]), genre: term(w[5]), museums, sameYear };
+}

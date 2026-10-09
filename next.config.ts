@@ -34,15 +34,21 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
 
-  // Read by path at run time, so the standalone trace would miss them: the custom rooms' index (src/lib/rooms.ts)
-  // and the audio guide's scripts (archive/guide.py, served by /api/guide/<artist>). Written by archive/site.py
-  // and archive/guide.py; data/site/museum.json is traced from src/lib/data.ts.
+  // Read by path at run time, so the standalone trace would miss them: the custom rooms' index (src/lib/rooms.ts;
+  // the timeline reads its artists' nationalities too, src/lib/data.ts) and the audio guide's scripts
+  // (archive/guide.py, served by /api/guide/<artist>). Written by archive/site.py, archive/guide.py and archive/phases.py;
+  // data/site/museum.json is traced from src/lib/data.ts.
   outputFileTracingIncludes: {
+    "/": ["./data/site/rooms.json"],
     "/room": ["./data/site/rooms.json"],
     "/rooms": ["./data/site/rooms.json"],
     "/api/room": ["./data/site/rooms.json"],
     "/api/room/works": ["./data/site/rooms.json"],
     "/api/guide/*": ["./data/site/guide/*.json"],
+    // an artist's phases (archive/phases.py, src/lib/phases.ts) when a gallery regenerates; a work's details
+    // for the inspect panel (/api/work/<artist>/<work>, src/lib/rooms.ts workAbout)
+    "/museum/*": ["./data/site/phases.json"],
+    "/api/work/*/*": ["./data/site/rooms.json"],
   },
 
   // No images config: painting textures and portraits load straight from

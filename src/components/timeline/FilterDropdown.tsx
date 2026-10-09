@@ -3,8 +3,10 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import type { Artist, Period } from "@/lib/types";
+import { CONTINENTS, type Continent } from "@/lib/countries";
 import { wikiSrcSet } from "@/lib/img";
 import { WelcomeHint, WELCOME_SEEN_KEY } from "./WelcomeHint";
+import { findNames, nameEntry, spaced } from "./artist-search";
 
 export type Filter =
   | { type: "period"; slug: string }
@@ -60,36 +62,19 @@ function groupPeriods(periods: Period[]): { label: string; items: Period[] }[] {
   return groups.map((g) => ({ label: centuryLabel(g), items: g.items }));
 }
 
-/** Case- and accent-insensitive ("Dürer" matches "durer", "Gérôme" "gerome"). */
-const fold = (s: string) =>
-  s
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+/** Close matches of a search: the better known first (more works hung). */
+const moreWorks = (a: Artist, b: Artist) => b.paintingCount - a.paintingCount;
 
-/** Hyphens and dashes, apostrophes and quotes, periods and commas. */
-const PUNCT = /[-‐-―−'‘’ʼ`´".,]/g;
+/** Continent chips: the long names shortened to fit a phone. */
+const SHORT: Partial<Record<Continent, string>> = { "North America": "N. America", "South America": "S. America" };
 
-/** Punctuation as word breaks: "Jean-Léon" → "jean leon", "J. M. W." → "j m w". */
-const spaced = (s: string) => fold(s).replace(PUNCT, " ").replace(/\s+/g, " ").trim();
-/** Punctuation dropped: "O'Keeffe" → "okeeffe", "Jean-Léon" → "jeanleon". */
-const joined = (s: string) => fold(s).replace(PUNCT, "").replace(/\s+/g, " ").trim();
-/** No spaces at all: "J. M. W. Turner" → "jmwturner". */
-const squashed = (s: string) => joined(s).replace(/ /g, "");
-
-/**
- * Search keys for a name. It matches where one of its words starts with the
- * query ("gogh", "van g"), however the visitor types the punctuation:
- * "jean-léon", "jean leon", "o'keeffe", "okeeffe", "o keeffe", "j.m.w.
- * turner", "jmw turner". The query is normalised the same three ways ("|"
- * keeps one variant from running on into the next).
- */
-const nameKey = (name: string) => ` ${spaced(name)} | ${joined(name)} | ${squashed(name)} |`;
-const queryKeys = (q: string) => {
-  const out = new Set<string>();
-  for (const k of [spaced(q), joined(q), squashed(q)]) if (k) out.add(" " + k);
-  return [...out];
-};
+/** A list group: a period's artists matching the search, or the close matches after them. */
+interface ArtistGroup {
+  key: string;
+  label: string;
+  color: string | null;
+  items: Artist[];
+}
 
 export const FilterDropdown = memo(function FilterDropdown({
   periods,
@@ -113,6 +98,9 @@ export const FilterDropdown = memo(function FilterDropdown({
   const welcomeRequested = useRef(false);
   const [tab, setTab] = useState<"periods" | "artists">("periods");
   const [query, setQuery] = useState("");
+  // where the listed artists are from (kept while the panel is closed, unlike the search text)
+  const [pickedContinent, setContinent] = useState<Continent | null>(null);
+  const [pickedCountry, setCountry] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -253,21 +241,67 @@ export const FilterDropdown = memo(function FilterDropdown({
       .filter((p) => by.has(p.slug))
       .map((p) => {
         const items = [...by.get(p.slug)!].sort((a, b) => birth(a) - birth(b) || a.name.localeCompare(b.name));
-        return { p, items, keys: items.map((a) => nameKey(a.name)) };
+        return { p, items };
       });
   }, [periods, artists]);
 
+  // every artist in that order, with what its name is searched by
+  const ordered = useMemo(() => artistGroups.flatMap((g) => g.items), [artistGroups]);
+  const entries = useMemo(() => ordered.map((a) => nameEntry(a.name)), [ordered]);
+  const found = useMemo(() => findNames(ordered, entries, query, moreWorks), [ordered, entries, query]);
+
+  // the continents and countries on offer: those of the artists listed, whatever the search
+  const places = useMemo(() => {
+    const countries = new Map<string, Continent>();
+    for (const a of artists) if (a.country && a.continent) countries.set(a.country, a.continent);
+    return {
+      continents: CONTINENTS.filter((c) => [...countries.values()].includes(c)),
+      countries: [...countries.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+    };
+  }, [artists]);
+  // a pick the listed artists no longer offer (Featured after All) lapses
+  const continent = pickedContinent && places.continents.includes(pickedContinent) ? pickedContinent : null;
+  const country = pickedCountry && places.countries.some(([k]) => k === pickedCountry) ? pickedCountry : null;
+
+  // how many of the artists the search finds are from each
+  const counts = useMemo(() => {
+    const all = [...found.exact, ...found.close];
+    const continents = new Map<string, number>();
+    const countries = new Map<string, number>();
+    for (const a of all) {
+      if (a.continent) continents.set(a.continent, (continents.get(a.continent) ?? 0) + 1);
+      if (a.country) countries.set(a.country, (countries.get(a.country) ?? 0) + 1);
+    }
+    return { all: all.length, continents, countries };
+  }, [found]);
+
   const q = spaced(query);
   const shown = useMemo(() => {
-    const ks = queryKeys(query);
-    return artistGroups
-      .map((g) => ({
-        p: g.p,
-        items: ks.length ? g.items.filter((_, i) => ks.some((k) => g.keys[i].includes(k))) : g.items,
-      }))
+    const here = (a: Artist) => (!continent || a.continent === continent) && (!country || a.country === country);
+    const exact = new Set(found.exact.filter(here));
+    const groups: ArtistGroup[] = artistGroups
+      .map((g) => ({ key: g.p.slug, label: g.p.name, color: g.p.color, items: g.items.filter((a) => exact.has(a)) }))
       .filter((g) => g.items.length);
-  }, [artistGroups, query]);
+    const close = found.close.filter(here);
+    if (close.length) groups.push({ key: "close", label: "Close matches", color: null, items: close });
+    return groups;
+  }, [artistGroups, found, continent, country]);
   const matches = shown.reduce((n, g) => n + g.items.length, 0);
+  const place = country ?? continent;
+
+  const pickPlace = (c: Continent | null, k: string | null) => {
+    setContinent(c);
+    setCountry(k);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  };
+  const countryOptions = (c: Continent) =>
+    places.countries
+      .filter(([, of]) => of === c)
+      .map(([k]) => (
+        <option key={k} value={k}>
+          {k} ({counts.countries.get(k) ?? 0})
+        </option>
+      ));
 
   const pickArtist = (a: Artist) => {
     onChange({ type: "artist", slug: a.slug });
@@ -361,6 +395,54 @@ export const FilterDropdown = memo(function FilterDropdown({
             </div>
           )}
 
+          {tab === "artists" && places.continents.length > 0 && (
+            <div className="filter-places" role="group" aria-label="Where the artists are from">
+              <button
+                type="button"
+                className="filter-chip"
+                aria-pressed={!place}
+                onClick={() => pickPlace(null, null)}
+              >
+                All <span className="count">{counts.all}</span>
+              </button>
+              {places.continents.map((c) => {
+                const n = counts.continents.get(c) ?? 0;
+                return (
+                  <button
+                    type="button"
+                    key={c}
+                    className={`filter-chip${n ? "" : " none"}`}
+                    aria-pressed={continent === c}
+                    aria-label={`${c}, ${n}`}
+                    onClick={() => (continent === c ? pickPlace(null, null) : pickPlace(c, null))}
+                  >
+                    {SHORT[c] ?? c} <span className="count">{n}</span>
+                  </button>
+                );
+              })}
+              <select
+                className={`filter-country${country ? " active" : ""}`}
+                aria-label="Country"
+                value={country ?? ""}
+                onChange={(e) => {
+                  const k = e.target.value || null;
+                  pickPlace(k ? (places.countries.find(([name]) => name === k)?.[1] ?? null) : continent, k);
+                }}
+              >
+                <option value="">
+                  {continent ? `All of ${continent}` : "Every country"} ({continent ? (counts.continents.get(continent) ?? 0) : counts.all})
+                </option>
+                {continent
+                  ? countryOptions(continent)
+                  : places.continents.map((c) => (
+                      <optgroup key={c} label={c}>
+                        {countryOptions(c)}
+                      </optgroup>
+                    ))}
+              </select>
+            </div>
+          )}
+
           <div className="filter-list" ref={listRef}>
             {tab === "periods"
               ? periodGroups.map((g) => (
@@ -390,10 +472,10 @@ export const FilterDropdown = memo(function FilterDropdown({
                   </section>
                 ))
               : shown.map((g) => (
-                  <section key={g.p.slug} className="filter-group" aria-label={g.p.name}>
+                  <section key={g.key} className="filter-group" aria-label={g.label}>
                     <h3 className="filter-group-h" aria-hidden>
-                      <span className="chip" style={{ background: g.p.color }} />
-                      {g.p.name}
+                      {g.color ? <span className="chip" style={{ background: g.color }} /> : <span className="fi-near">≈</span>}
+                      {g.label}
                     </h3>
                     {g.items.map((a) => (
                       <button
@@ -419,7 +501,10 @@ export const FilterDropdown = memo(function FilterDropdown({
                             {a.name.replace(/^(el|fra)\s+/i, "")[0] ?? "?"}
                           </span>
                         )}
-                        <span className="fi-name">{a.name}</span>
+                        <span className="fi-main">
+                          <span className="fi-name">{a.name}</span>
+                          {a.country && !country && <span className="fi-country">{a.country}</span>}
+                        </span>
                         <span className="fi-sub">
                           {a.birthYear ?? "?"} – {a.deathYear ?? "today"}
                         </span>
@@ -429,10 +514,30 @@ export const FilterDropdown = memo(function FilterDropdown({
                 ))}
             {tab === "artists" && !shown.length && (
               <p className="filter-empty">
-                {showAll ? "No artist by that name." : <>No match in Featured. <button type="button" className="filter-all" onClick={() => {
-                  onCollection(true);
-                  document.getElementById(searchId)?.focus();
-                }}>Search all artists</button></>}
+                {!showAll ? (
+                  <>
+                    No match in Featured{place ? ` from ${place}` : ""}.{" "}
+                    <button
+                      type="button"
+                      className="filter-all"
+                      onClick={() => {
+                        onCollection(true);
+                        document.getElementById(searchId)?.focus();
+                      }}
+                    >
+                      Search all artists
+                    </button>
+                  </>
+                ) : place ? (
+                  <>
+                    No artist {q ? "by that name " : ""}from {place}.{" "}
+                    <button type="button" className="filter-all" onClick={() => pickPlace(null, null)}>
+                      Search everywhere
+                    </button>
+                  </>
+                ) : (
+                  "No artist by that name."
+                )}
               </p>
             )}
           </div>

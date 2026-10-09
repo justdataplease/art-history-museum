@@ -21,6 +21,7 @@ import {
   type SeatSpot,
 } from "./layout";
 import { setInspectFlying, setMoving } from "./renderer-motion";
+import { getSettings, PACE_SPEED, TAP_PACE_SPEED } from "./settings";
 
 // Camera behaviour: the entry walk, first-person movement (pointer lock on
 // desktop, drag-to-look + tap-to-walk on touch), and the inspect fly-to.
@@ -30,10 +31,9 @@ import { setInspectFlying, setMoving } from "./renderer-motion";
 // after an idle stretch R3F's clock reports the whole gap as one delta.
 
 const MAX_DT = 1 / 30;
-const WALK_SPEED = 3.1; // m/s
-const RUN_SPEED = WALK_SPEED * 2;
+// walking pace: the visitor's setting (settings.ts, Slow / Normal / Fast); holding W runs at twice it
+const RUN_FACTOR = 2;
 const RUN_AFTER_MS = 3000;
-const TAP_WALK_SPEED = 2.4; // m/s
 const AIM_RANGE = 9; // m: furthest a crosshair click can inspect from
 const TAP_RANGE = 16; // m: furthest a tap can inspect from
 const TAP_SLOP = 9; // px a touch may wander and still count as a tap
@@ -594,7 +594,8 @@ export function Player({
     if (_dir.lengthSq() > 0) {
       const running = mz < 0 && pressed.current.has("KeyW") && forwardSince.current !== null
         && performance.now() - forwardSince.current >= RUN_AFTER_MS && !b.crouch && b.k === 0;
-      _dir.normalize().multiplyScalar((running ? RUN_SPEED : WALK_SPEED) * THREE.MathUtils.lerp(1, CROUCH_SPEED, smooth(b.k)));
+      const walk = PACE_SPEED[getSettings().pace];
+      _dir.normalize().multiplyScalar((running ? walk * RUN_FACTOR : walk) * THREE.MathUtils.lerp(1, CROUCH_SPEED, smooth(b.k)));
     }
     // in the air: the take-off's momentum, no steering
     if (!b.airborne) vel.current.lerp(_dir, 1 - Math.exp(-10 * dt));
@@ -799,7 +800,8 @@ export function TouchPlayer({
       return;
     }
     // full pace past waypoints; ease out over the last metre or so
-    const pace = last ? Math.min(TAP_WALK_SPEED, dist * 2.2 + 0.35) : TAP_WALK_SPEED;
+    const tapSpeed = TAP_PACE_SPEED[getSettings().pace];
+    const pace = last ? Math.min(tapSpeed, dist * 2.2 + 0.35) : tapSpeed;
     const step = Math.min(dist, pace * dt);
     const px = p.x;
     const pz = p.z;

@@ -448,3 +448,318 @@
   letter-spacing: 0.24em;
   opacity: 0.92;
 }
+
+/* The settings (SettingsPanel.tsx): a button top-left under the audio guide's, a centred card. */
+.hudTools {
+  position: absolute;
+  left: 24px;
+  top: 128px;
+  z-index: 35;
+  display: flex;
+  gap: 8px;
+}
+.hudTool {
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(233, 229, 226, 0.8);
+  border: 1px solid rgba(233, 229, 226, 0.25);
+  border-radius: 999px;
+  background: rgba(10, 9, 8, 0.5);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+.hudTool kbd {
+  margin-left: 8px;
+  font: inherit;
+  color: var(--gold-soft);
+}
+/* with the controls hidden: one faint button to bring them back */
+.hudBack {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 35;
+  opacity: 0.55;
+}
+.hudBack:hover,
+.hudBack:focus-visible {
+  opacity: 1;
+}
+@media (max-width: 720px) {
+  .hudTools {
+    left: 12px;
+    top: 106px;
+  }
+}
+.hudOff :global(.mus-top),
+.hudOff :global(.mus-hint),
+.hudOff :global(.mus-guide),
+.hudOff :global(.mus-music),
+.hudOff .lift,
+.hudOff .hudTools {
+  display: none;
+}
+
+.settingsBack {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(5, 4, 3, 0.35);
+}
+.settings {
+  width: min(420px, 100%);
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  padding: 22px 24px 20px;
+  color: var(--light);
+  border: 1px solid rgba(199, 169, 122, 0.4);
+  border-radius: 16px;
+  background: rgba(12, 11, 9, 0.92);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.settings h2 {
+  margin: 0 0 14px;
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--gold-soft);
+}
+.settings section + section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(199, 169, 122, 0.18);
+}
+.settings h3 {
+  margin: 0 0 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(233, 229, 226, 0.75);
+}
+.settings p {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: rgba(233, 229, 226, 0.62);
+}
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.seg button {
+  flex: 1 1 auto;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: rgba(233, 229, 226, 0.85);
+  border: 1px solid rgba(233, 229, 226, 0.22);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+.seg button:hover {
+  background: rgba(199, 169, 122, 0.12);
+}
+.seg button[aria-pressed="true"] {
+  color: #15110c;
+  border-color: var(--gold-soft);
+  background: var(--gold-soft);
+}
+.seg button:focus-visible,
+.settingsDone:focus-visible,
+.hudTool:focus-visible {
+  outline: 2px solid var(--gold-soft);
+  outline-offset: 2px;
+}
+.settingsDone {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  padding: 10px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--gold-soft);
+  border: 1px solid var(--gold-soft);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Inspect: the image as it is (InspectPanel's Original), flat on a dark ground, above everything. */
+.originalBtn.originalBtn {
+  display: block;
+  padding: 0 0 2px;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  border: 0;
+  border-bottom: 1px solid rgba(165, 127, 70, 0.4);
+  background: none;
+  cursor: pointer;
+}
+.originalBtn.originalBtn:hover,
+.originalBtn.originalBtn:focus-visible {
+  color: var(--ink);
+  border-bottom-color: var(--gold-ink);
+}
+.original {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 24px 24px 76px;
+  background: #0b0a09;
+  cursor: zoom-out;
+}
+.original img {
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 100px);
+  max-height: calc(100dvh - 100px);
+  object-fit: contain;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+.originalBar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px 8px 20px;
+  font-size: 12px;
+  color: rgba(233, 229, 226, 0.85);
+  border: 1px solid rgba(233, 229, 226, 0.2);
+  border-radius: 999px;
+  background: rgba(20, 18, 16, 0.85);
+  transform: translateX(-50%);
+  cursor: default;
+}
+.originalBar span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--serif);
+  font-size: 15px;
+}
+.originalBar a {
+  flex: none;
+  color: var(--gold-soft);
+  text-decoration: none;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 10.5px;
+}
+.originalBar button {
+  flex: none;
+  padding: 7px 16px;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gold-soft);
+  border: 1px solid var(--gold-soft);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Inspect panel: about this work (movement, genre, collection; before and after; the same year). */
+.about {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(165, 127, 70, 0.22);
+}
+.about h3 {
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--gold-ink);
+}
+.about dl {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+.about dl div {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+.about dt {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+}
+.about dd {
+  margin: 0;
+  color: var(--ink);
+}
+.aboutSteps {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.aboutStep {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font: inherit;
+  font-family: var(--serif);
+  font-size: 15px;
+  text-align: left;
+  color: var(--ink);
+  border: 1px solid rgba(165, 127, 70, 0.3);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+.aboutStep:hover,
+.aboutStep:focus-visible {
+  border-color: var(--gold-ink);
+  background: rgba(165, 127, 70, 0.08);
+}
+.aboutStep small {
+  display: block;
+  margin-bottom: 2px;
+  font-family: var(--sans, inherit);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.aboutYear {
+  margin-top: 14px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.aboutYear small {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.aboutYear ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}

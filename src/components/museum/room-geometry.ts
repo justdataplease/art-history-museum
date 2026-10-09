@@ -553,6 +553,41 @@ function doorCase(trim: GeoBatch, z: number, facing: 1 | -1, dw: number, dh: num
   }
 }
 
+/**
+ * A closed pair of door leaves standing on a wall face at z (the room on its +z side), centred at x = cx, cased
+ * like the entrance doors: an artist's gallery's doors to the artists before and after (layout.exits).
+ */
+function exitDoor(trim: GeoBatch, cx: number, z: number, dw: number, dh: number, classical: boolean) {
+  const leafW = dw - 0.004;
+  const zLeaf = z + 0.03;
+  for (const t of [-1, 1]) {
+    const x = cx + t * (leafW / 2 + 0.002);
+    trim.roundedBox(leafW, dh - 0.01, 0.05, x, dh / 2, zLeaf, 0.004, 1);
+    if (classical) {
+      const pw = leafW - 0.16;
+      const upper = (dh - 0.38) * 0.62;
+      const lower = dh - 0.38 - upper;
+      trim.roundedBox(pw, upper, 0.02, x, dh - 0.12 - upper / 2, zLeaf + 0.03, 0.006, 1);
+      trim.roundedBox(pw, lower, 0.02, x, 0.14 + lower / 2, zLeaf + 0.03, 0.006, 1);
+      trim.roundedBox(0.03, 0.26, 0.035, cx + t * 0.07, 1.05, zLeaf + 0.045, 0.01, 1);
+    } else {
+      trim.roundedBox(0.022, 0.6, 0.04, cx + t * 0.06, 1.05, zLeaf + 0.045, 0.008, 1);
+    }
+  }
+  if (classical) {
+    for (const t of [-1, 1]) {
+      const x = cx + t * (dw + 0.065);
+      trim.roundedBox(0.13, dh + 0.065, 0.06, x, (dh + 0.065) / 2, z + 0.03, 0.008, 2);
+      trim.roundedBox(0.16, 0.26, 0.075, x, 0.13, z + 0.0375, 0.006, 1); // plinth block
+    }
+    trim.roundedBox(2 * dw + 0.26, 0.1, 0.06, cx, dh + 0.05, z + 0.03, 0.008, 2);
+    trim.roundedBox(2 * dw + 0.5, 0.07, 0.11, cx, dh + 0.17, z + 0.055, 0.012, 2);
+  } else {
+    for (const t of [-1, 1]) trim.box(0.04, dh, 0.07, cx + t * (dw + 0.02), dh / 2, z + 0.035);
+    trim.box(2 * dw + 0.08, 0.04, 0.07, cx, dh + 0.02, z + 0.035);
+  }
+}
+
 /** Top of a door case above the floor (its cornice / frame). */
 export function doorCaseTop(dh: number, classical: boolean): number {
   return classical ? dh + 0.205 : dh + 0.04;
@@ -703,6 +738,12 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     doorCase(trim, L / 2, -1, dw, dh, classical);
   }
 
+  // ---- an artist's gallery: doors to the artists before and after in the far end wall
+  if (layout.exits) {
+    const { x, halfWidth, height } = layout.exits;
+    for (const s of [-1, 1]) exitDoor(rooms[last].trim, s * x, -L / 2, halfWidth, height, classical);
+  }
+
   // ---- cross walls between the rooms of a suite: a doorway on the hall
   // axis, both faces cased, the reveals lined (classical) or plain (modern).
   // The face toward the entrance belongs to the room before, the other face
@@ -804,6 +845,21 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     { a: V(DOOR.width / 2 + 0.2, 0, L / 2), b: V(W / 2, 0, L / 2), n: V(0, 0, -1) },
   ];
   const nearFull: Run = { a: V(-W / 2, 0, L / 2), b: V(W / 2, 0, L / 2), n: V(0, 0, -1) };
+  // the skirting stops at the far wall's doors (an artist's gallery)
+  const skirtingRuns = (ri: number): Run[] => {
+    const runs = runsOf(ri);
+    const ex = layout.exits;
+    if (ri !== last || !ex) return runs;
+    const edge = ex.halfWidth + 0.15;
+    const z = -L / 2;
+    const n = V(0, 0, 1);
+    return [
+      ...runs.slice(0, -1),
+      { a: V(-W / 2, 0, z), b: V(-ex.x - edge, 0, z), n },
+      { a: V(-ex.x + edge, 0, z), b: V(ex.x - edge, 0, z), n },
+      { a: V(ex.x + edge, 0, z), b: V(W / 2, 0, z), n },
+    ];
+  };
   // the cross-wall faces each room has: full width (cornice, picture rail)
   // and either side of the doorway (skirting)
   const crossFaces = (ri: number): { full: Run[]; split: Run[] } => {
@@ -827,7 +883,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     const { trim } = rooms[ri];
     const cross = crossFaces(ri);
     if (classical) {
-      for (const q of [...runsOf(ri), ...(ri === 0 ? nearRuns : []), ...cross.split]) {
+      for (const q of [...skirtingRuns(ri), ...(ri === 0 ? nearRuns : []), ...cross.split]) {
         trim.sweep(SKIRTING, q.a, q.b, q.n);
       }
     }
