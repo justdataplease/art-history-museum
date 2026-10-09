@@ -944,9 +944,10 @@ export const PERIODS: SeedPeriod[] = [
 // Yannis Tsarouchis, Yiannis Moralis, Spyridon Vikatos (d. 1960); Spyros Papaloukas (public domain from 2028). Nikolaos Xydias Typaldos has
 // no sourced works yet.
 
-// Catalogues released on Commons under a free licence by an artist's rights holders, for artists still in
-// copyright: their works hang with images (ingest.ts commonsCatalogue). Keys are seed titles; a language
-// prefix ("fr:") names an artist without an English article.
+// Commons categories whose freely licensed files are an artist's works (ingest.ts commonsCatalogue): a catalogue
+// released under a free licence by the rights holders of an artist still in copyright, or the photographs of a
+// public-domain artist's works that Wikidata does not link to them (a thin gallery; see the recreate-a-space
+// skill). Keys are seed titles; a language prefix ("fr:") names an artist without an English article.
 export const COMMONS_CATALOGUES: Record<string, string[]> = {
   // catalogue raisonné released CC BY-SA 4.0 by Loretta Gaïtis (VRT permission confirmed)
   "fr:Yannis Gaïtis": ["Category:Paintings by Yannis Gaïtis"],

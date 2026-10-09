@@ -34,9 +34,10 @@ you can visit, freely, without an account.
   labels show recorded dimensions when available and whether the display is at
   original scale, reduced or enlarged.
 
-On a computer, use **W A S D** to walk and the mouse to look (hold **W** to
-run), **Space** to jump, **C** to sit, **G** for the audio guide and **O** for
-the settings: walking speed, the canvas texture, and hiding the controls (**H**).
+On a computer, use **W A S D** to move (at a run; the settings have walking
+speeds) and the mouse to look, **Space** to jump, **C** to sit, **G** for the
+audio guide and **O** for the settings: speed, the canvas texture, and hiding
+the controls (**H**).
 On a phone, drag to look and tap the floor to walk. Click or tap a painting to
 inspect it. **Explore → How to explore** brings back the short guide on the
 timeline.

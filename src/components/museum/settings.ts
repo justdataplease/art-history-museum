@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore } from "react";
 
-export type Pace = "slow" | "normal" | "fast";
+export type Pace = "slow" | "normal" | "fast" | "run";
 
 export interface MuseumSettings {
   pace: Pace;
@@ -14,22 +14,30 @@ export interface MuseumSettings {
   hud: boolean;
 }
 
-/** Walking speed, m/s (a museum stroll is 1.0–1.4); holding W runs at twice it. */
-export const PACE_SPEED: Record<Pace, number> = { slow: 1.3, normal: 2.0, fast: 3.1 };
-/** Tap-to-walk on touch, a little slower than walking. */
-export const TAP_PACE_SPEED: Record<Pace, number> = { slow: 1.1, normal: 1.7, fast: 2.4 };
+/** Speed, m/s (a museum stroll is 1.0–1.4): a run by default; at a walking speed, holding W runs at twice it. */
+export const PACE_SPEED: Record<Pace, number> = { slow: 1.3, normal: 2.0, fast: 3.1, run: 4.0 };
+/** Tap-to-walk on touch, a little slower. */
+export const TAP_PACE_SPEED: Record<Pace, number> = { slow: 1.1, normal: 1.7, fast: 2.4, run: 3.0 };
 
 const KEY = "timeline-museum:settings";
-const DEFAULTS: MuseumSettings = { pace: "normal", surface: true, hud: true };
+const DEFAULTS: MuseumSettings = { pace: "run", surface: true, hud: true };
+
+/** As saved: the speed is `walk`, so a `pace` saved before running was the default (by any setting saved, H
+ *  included) gives way to it once. */
+interface Saved {
+  walk?: Pace;
+  surface?: boolean;
+  hud?: boolean;
+}
 
 let current: MuseumSettings | null = null;
 const listeners = new Set<() => void>();
 
 function load(): MuseumSettings {
   try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<MuseumSettings>;
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Saved;
     return {
-      pace: saved.pace && saved.pace in PACE_SPEED ? saved.pace : DEFAULTS.pace,
+      pace: saved.walk && saved.walk in PACE_SPEED ? saved.walk : DEFAULTS.pace,
       surface: typeof saved.surface === "boolean" ? saved.surface : DEFAULTS.surface,
       hud: typeof saved.hud === "boolean" ? saved.hud : DEFAULTS.hud,
     };
@@ -46,7 +54,8 @@ export function getSettings(): MuseumSettings {
 export function setSettings(patch: Partial<MuseumSettings>) {
   current = { ...getSettings(), ...patch };
   try {
-    localStorage.setItem(KEY, JSON.stringify(current));
+    const saved: Saved = { walk: current.pace, surface: current.surface, hud: current.hud };
+    localStorage.setItem(KEY, JSON.stringify(saved));
   } catch {
     // no storage: the setting lasts this visit
   }

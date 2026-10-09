@@ -31,7 +31,7 @@ import { getSettings, PACE_SPEED, TAP_PACE_SPEED } from "./settings";
 // after an idle stretch R3F's clock reports the whole gap as one delta.
 
 const MAX_DT = 1 / 30;
-// walking pace: the visitor's setting (settings.ts, Slow / Normal / Fast); holding W runs at twice it
+// pace: the visitor's setting (settings.ts; a run by default); at a walking pace, holding W runs at twice it
 const RUN_FACTOR = 2;
 const RUN_AFTER_MS = 3000;
 const AIM_RANGE = 9; // m: furthest a crosshair click can inspect from
@@ -47,6 +47,8 @@ const MAX_PITCH = 1.25; // rad
 const GRAVITY = 9.8; // m/s²
 const JUMP_HEIGHT = 0.6; // m
 const JUMP_SPEED = Math.sqrt(2 * GRAVITY * JUMP_HEIGHT); // ~2.97 m/s
+// A hop carries at most a walking pace (m/s): from a run it lands on the bench, not over it.
+const JUMP_CARRY = 2.0;
 const LAND_DIP = 0.05; // m, at full landing speed
 const LAND_DIP_TAU = 0.07; // s: the dip is deepest then, gone after ~6x
 // Crouch: the eye eases down to CROUCH_EYE, walking slows. The lowest
@@ -406,6 +408,7 @@ export function Player({
           b.airborne = true;
           b.vy = JUMP_SPEED;
           b.dipT = -1;
+          vel.current.clampLength(0, JUMP_CARRY);
         }
         invalidate();
         return;
@@ -592,9 +595,10 @@ export function Player({
     _right.crossVectors(_fwd, _UP);
     _dir.set(0, 0, 0).addScaledVector(_fwd, -mz).addScaledVector(_right, mx);
     if (_dir.lengthSq() > 0) {
-      const running = mz < 0 && pressed.current.has("KeyW") && forwardSince.current !== null
+      const pace = getSettings().pace;
+      const running = pace !== "run" && mz < 0 && pressed.current.has("KeyW") && forwardSince.current !== null
         && performance.now() - forwardSince.current >= RUN_AFTER_MS && !b.crouch && b.k === 0;
-      const walk = PACE_SPEED[getSettings().pace];
+      const walk = PACE_SPEED[pace];
       _dir.normalize().multiplyScalar((running ? walk * RUN_FACTOR : walk) * THREE.MathUtils.lerp(1, CROUCH_SPEED, smooth(b.k)));
     }
     // in the air: the take-off's momentum, no steering

@@ -8,9 +8,10 @@ import { setSettings, useSettings, type Pace } from "./settings";
 import styles from "./museum.module.css";
 
 const PACES: { key: Pace; label: string }[] = [
-  { key: "slow", label: "Slow" },
-  { key: "normal", label: "Normal" },
-  { key: "fast", label: "Fast" },
+  { key: "slow", label: "Stroll" },
+  { key: "normal", label: "Walk" },
+  { key: "fast", label: "Brisk" },
+  { key: "run", label: "Run" },
 ];
 
 function Choice<T extends string | boolean>({
@@ -52,9 +53,9 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
       >
         <h2>Settings</h2>
         <section>
-          <h3>Walking speed</h3>
+          <h3>Speed</h3>
           <Choice value={s.pace} options={PACES} onPick={(pace) => setSettings({ pace })} />
-          <p>{touch ? "Tap the floor to walk there." : "Hold W for a few seconds to run."}</p>
+          <p>{touch ? "Tap the floor to go there." : s.pace === "run" ? "You run by default." : "Hold W for a few seconds to run."}</p>
         </section>
         <section>
           <h3>Canvas surface</h3>

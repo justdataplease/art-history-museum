@@ -52,6 +52,30 @@ nationality from `data/site/rooms.json` (`museums` gives the id and position; ea
 a short Python script. Plan the floors around what is there: a floor of the real museum with almost nothing of
 ours merges with its neighbour (say so in its wall text) rather than standing empty.
 
+### When the museum's works are thin here, fill them in per artist
+
+A recreation is only as rich as our holdings: the room hangs works of the site's artists (`scripts/seed.ts`), and
+an artist who is not on WikiArt has only what Wikidata links to them (the National Gallery of Greece first came
+out at 67 works of its roughly 300 on Commons: Rizos, Prosalentis and Roilos had one work each). Measure before
+writing the room:
+
+- the museum on Wikidata: a SPARQL query for works with `wdt:P195 wd:<museum QID>`, with their `P18` image and
+  the creator's `P570` death date (public domain: died more than 70 years ago, before 1956 in 2026);
+- the museum on Commons: walk `Category:Paintings in <museum>` (and its subcategories) and list the painters;
+- per painter, our gallery (`data/site/museum.json`: works with an image) against their Commons category
+  (`Category:Paintings by <name>`).
+
+Then, per painter, the existing process does the rest (metadata only; the images stay on Commons):
+
+- not in the seed: add their English Wikipedia title to the right period's `artists` in `scripts/seed.ts` (they
+  get a gallery on the timeline too);
+- in the seed but thin: add their Commons category to `COMMONS_CATALOGUES` in `scripts/seed.ts` (the ingest takes
+  its freely licensed files as works) and delete their cache file `data/wikipedia/artists/<slug>.json`;
+- died after 1955: leave them out, their works are still in copyright here.
+
+Rebuild: `npm run ingest`, `npm run repair-data`, then the archive steps in `docs/DEVELOPMENT.md`
+(`archive.warehouse build`, `archive.site`, `archive.guide build`, `archive.phases`), and count again.
+
 A work hangs on the first floor of the plan whose years and nationalities (`who`) hold it, so a floor kept for
 foreign schools (`who: ["Flemish", "French", ...]`) can come first; leave out a nationality that also matches a
 home artist (El Greco is "Spanish" too). An undated work goes to a floor without years, else to the floor of its

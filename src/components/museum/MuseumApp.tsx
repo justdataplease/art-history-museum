@@ -805,7 +805,7 @@ export function MuseumApp({
 
       {canSettle && (
         <div className={styles.hudTools}>
-          <button type="button" className={styles.hudTool} onClick={openSettings} title="Walking speed, canvas surface, on-screen controls (O)">
+          <button type="button" className={styles.hudTool} onClick={openSettings} title="Speed, canvas surface, on-screen controls (O)">
             <span aria-hidden>⚙</span> Settings{!touch && <kbd>O</kbd>}
           </button>
           {touch && (
