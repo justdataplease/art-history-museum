@@ -151,7 +151,7 @@ export interface TimelineData {
 }
 
 /** A film about an artist (archive/films.py: the videos their Wikipedia articles point to), played from where it
- *  lives in the gallery's screening room. "file" and "hls" are projected (a video texture that lights the room)
+ *  lives, in the gallery's films corner. "file" and "hls" are projected (a video texture that lights the room)
  *  when their host lets another site read them; "youtube", "vimeo" and "dailymotion" play in their own player. */
 export type FilmKind = "file" | "hls" | "youtube" | "vimeo" | "dailymotion";
 
@@ -189,7 +189,7 @@ export interface ArtistWithPaintings extends Artist {
   periodName: string;
   periodColor: string;
   paintings: Painting[];
-  /** Films about the artist, for the gallery's screening room. */
+  /** Films about the artist, for the gallery's films corner. */
   films?: Film[];
   /** Present when this "artist" is a custom room (works by several artists). */
   room?: RoomInfo;

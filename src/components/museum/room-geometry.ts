@@ -12,10 +12,8 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import {
   columnsOf,
   ENTRANCE_DOOR,
-  roomAt,
   TRACK_DROP,
   TRACK_INSET,
-  turnedHalf,
   type Doorway,
   type Furnishing,
   type GalleryLayout,
