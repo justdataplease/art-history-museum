@@ -12,6 +12,7 @@ import Link from "next/link";
 import {
   EMPTY_SELECTION,
   MAX_WORKS,
+  hasFilters,
   parsePin,
   parseSelection,
   pinText,
@@ -162,6 +163,9 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
   }, [query]);
 
   const update = (patch: Partial<Selection>) => setSel((s) => ({ ...s, ...patch }));
+  // nothing chosen, the room shows the collection's highlights: a work kept, moved or added joins them (with
+  // nothing else chosen, kept works alone would otherwise be the room)
+  const joinHighlights = () => (!hasFilters(sel) && !sel.include.length ? { highlights: true } : {});
   const addTerm = (id: string) => id && !sel.terms.includes(id) && update({ terms: [...sel.terms, id] });
   /** Keep works (add them to the room): on a plan floor (1-based) when given, a kept work moving there. */
   const keep = (ws: PreviewWork[], floor: number | null = null) => {
@@ -173,7 +177,8 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
       if (!had) pins.set(w.key, { key: w.key, floor, place: null });
       else if (floor && floor !== had.floor) pins.set(w.key, { ...had, floor, place: null });
     }
-    update({ include: [...pins.values()].map(pinText), exclude: sel.exclude.filter((x) => !ws.some((w) => w.key === x)) });
+    update({ include: [...pins.values()].map(pinText), exclude: sel.exclude.filter((x) => !ws.some((w) => w.key === x)),
+      ...joinHighlights() });
   };
   const pin = (w: PreviewWork) => keep([w]);
   const unpin = (key: string) => update({ include: sel.include.filter((x) => workKey(x) !== key) });
@@ -206,7 +211,8 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
       });
     setPreview({ ...preview, floors });
     setTitles((t) => ({ ...t, [w.key]: w.title }));
-    update({ include: [...pins.values()].map(pinText), exclude: sel.exclude.filter((x) => x !== w.key) });
+    update({ include: [...pins.values()].map(pinText), exclude: sel.exclude.filter((x) => x !== w.key),
+      ...joinHighlights() });
   };
   const dragWork = useDragSort({
     scope: "works",
@@ -453,6 +459,12 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
             {workFloor(k) && plan ? ` · floor ${floorNo(workFloor(k)! - 1)}` : ""} ×
           </button>
         ))}
+        {!hasFilters(sel) && sel.include.length > 0 && (
+          <label className={styles.highlights}>
+            <input type="checkbox" checked={sel.highlights} onChange={(e) => update({ highlights: e.target.checked })} />
+            With the collection&apos;s highlights
+          </label>
+        )}
         {anything ? (
           <button type="button" className={styles.clear} onClick={() => setSel(EMPTY_SELECTION)}>Clear all</button>
         ) : (

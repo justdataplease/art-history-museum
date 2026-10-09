@@ -12,8 +12,10 @@
 //   from   to    the work's year      q     words that must all be in the title
 //   w      works hung whatever else is chosen (artist/painting, comma-separated; "artist/painting@2" hangs it on the
 //          floor plan's second floor, "artist/painting:5" fifth on its floor, "@2:5" both): with nothing else
-//          chosen, the room hangs exactly these. Only the works the visitor moved carry a place; the rest hang in
-//          the room's order around them
+//          chosen, the room hangs exactly these (unless hl). Only the works the visitor moved carry a place; the
+//          rest hang in the room's order around them
+//   hl     1: with nothing else chosen, the collection's highlights hang too, around the works in w (a visitor who
+//          keeps, moves or adds a work in the highlights keeps the highlights)
 //   max    works (12 to 240; 60)      title the room's name      f    floor (1-based)
 // and the room's design:
 //   style  a room style (theme.ts ROOM_STYLES: old-master, postwar ...; default: each floor its era's)
@@ -69,6 +71,8 @@ export interface Selection {
   firstFloor: number;
   intro: string | null;
   exclude: string[];
+  /** With nothing else chosen, the collection's highlights hang around the kept works (else only those). */
+  highlights: boolean;
 }
 
 export const MAX_DEFAULT = 60;
@@ -77,7 +81,7 @@ export const MAX_WORKS = 240;
 export const EMPTY_SELECTION: Selection = {
   terms: [], artists: [], nationalities: [], museums: [], from: null, to: null, words: [], include: [],
   max: MAX_DEFAULT, title: null, floor: 1, style: null, wall: null, ground: null, order: "year", floors: "era", plan: [],
-  firstFloor: 1, intro: null, exclude: [],
+  firstFloor: 1, intro: null, exclude: [], highlights: false,
 };
 
 type Params = Record<string, string | string[] | undefined>;
@@ -184,6 +188,7 @@ export function parseSelection(p: Params): Selection {
     firstFloor: Number.isFinite(fs) ? Math.min(9, Math.max(-2, fs)) : 1,
     intro: one(p.intro).trim().slice(0, 400) || null,
     exclude: list(p.x, 150).filter((x) => WORK_KEY.test(x)),
+    highlights: one(p.hl) === "1",
   };
 }
 
@@ -209,6 +214,7 @@ export function selectionQuery(s: Selection, floor?: number): string {
   if (s.firstFloor !== 1) q.set("fs", String(s.firstFloor));
   if (s.intro) q.set("intro", s.intro);
   if (s.exclude.length) q.set("x", s.exclude.join(","));
+  if (s.highlights && s.include.length && !hasFilters(s)) q.set("hl", "1");
   if (floor && floor > 1) q.set("f", String(floor));
   return q.toString().replace(/%2C/g, ",").replace(/%3A/g, ":").replace(/%2F/g, "/").replace(/%7C/g, "|").replace(/%7E/g, "~").replace(/%40/g, "@");
 }

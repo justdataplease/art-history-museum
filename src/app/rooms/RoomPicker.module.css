@@ -148,6 +148,17 @@
   font-size: 14px;
   color: var(--ink-soft);
 }
+.highlights {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.highlights input {
+  accent-color: var(--gold-deep);
+}
 
 .go {
   position: fixed;

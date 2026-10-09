@@ -174,8 +174,8 @@ export function selectWorks(s: Selection): { works: IndexWork[]; floors: Floor[]
     if (w && (fits(w) || (plan.length && (pinnedFloor.get(key) ?? -1) in plan)))
       picked.push({ work: w, score: Infinity, pinned: true });
   }
-  // with only works picked by hand, the room hangs exactly those
-  if (hasFilters(s) || !pinned.size) {
+  // with only works picked by hand, the room hangs exactly those (unless the highlights hang around them)
+  if (hasFilters(s) || !pinned.size || s.highlights) {
     for (const w of idx.works) {
       const [artist, , era, period, movement, genre, y] = w;
       if (pinned.has(`${artist}/${w[1]}`)) continue;
@@ -288,7 +288,7 @@ export function describeSelection(s: Selection, artistName: (slug: string) => st
   ] as string[];
   if (s.from != null || s.to != null) parts.push(`${s.from ?? "…"}–${s.to ?? "…"}`);
   if (s.words.length) parts.push(`“${s.words.join(" ")}”`);
-  if (!parts.length && s.include.length) parts.push("Chosen works");
+  if (!parts.length && s.include.length && !s.highlights) parts.push("Chosen works");
   return parts.join(" · ") || "Highlights of the collection";
 }
 
