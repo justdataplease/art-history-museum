@@ -80,3 +80,67 @@
     font-size: 15px;
   }
 }
+
+/* the painting's sheet (narrow screens): the words above it, not on it */
+@media (max-width: 760px) {
+  .subtitle[data-inspecting="true"] {
+    bottom: calc(min(50vh, 480px) + 10px);
+  }
+}
+
+/* phones, upright: under the room navigator (museum.module.css lays out the rows above: keep in step), the label
+   short, the buttons wrapping rather than running off the screen; the words above the walking stick and the
+   music's card (MuseumAudio.module.css) */
+@media (max-width: 640px) {
+  .guide {
+    top: 126px;
+    left: 12px;
+    right: 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .toggle,
+  .small {
+    padding: 7px 12px;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+  }
+  .long {
+    display: none;
+  }
+  .subtitle:not([data-inspecting="true"]) {
+    bottom: calc(196px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* phones on their side: under the way back, narrow enough to clear the room navigator (its extra buttons wrap);
+   the words low, between the walking stick and the music */
+@media (max-height: 500px) and (pointer: coarse) {
+  .guide {
+    top: 54px;
+    left: 12px;
+    max-width: 27vw;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .toggle,
+  .small {
+    padding: 7px 12px;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+  }
+  .long {
+    display: none;
+  }
+  .subtitle:not([data-inspecting="true"]) {
+    bottom: 14px;
+    width: min(560px, calc(100vw - 300px));
+    padding: 8px 14px;
+    font-size: 14px;
+  }
+}
+
+/* the guide's words take the controls hint's place while they show */
+:global(.mus-root):has(.subtitle) :global(.mus-hint) {
+  visibility: hidden;
+}

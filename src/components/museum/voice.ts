@@ -1,10 +1,11 @@
 // The audio guide's voices. Two engines, one interface (speak lines, one at a time, with the line being read):
-// - the natural voice: Kokoro, a neural text-to-speech model, run in a worker on this device's graphics card
-//   (public/voice/kokoro-worker.js). It sounds like a person reading. It needs WebGPU and a one-time ~330 MB
-//   download (kept by the browser), which only the visitor starts (Settings → Audio guide → Natural); while it
-//   loads, and where it cannot run, the browser's voice reads;
 // - the browser's own voice (Web Speech API), the most natural of those it offers: Edge's "Natural" voices,
-//   Safari's Premium and Enhanced ones, Google's, never the novelty voices.
+//   Safari's Premium and Enhanced ones, Android's network (neural) voices, Google's, never the novelty voices.
+//   The guide's voice unless the visitor chooses the AI one;
+// - the natural voice: Kokoro, a neural text-to-speech model, run in a worker on this device's graphics card
+//   (public/voice/kokoro-worker.js). It sounds like a person reading, but it is heavy: it needs WebGPU and a
+//   one-time ~330 MB download (kept by the browser), and it loads only when the visitor chooses it (Settings →
+//   Audio guide → Natural), never by itself; while it loads, and where it cannot run, the browser's voice reads.
 // Both read at the guide's speed (settings.ts guideSpeed); sentences are a breath apart.
 
 export type NaturalState = "unsupported" | "idle" | "loading" | "ready" | "error";
@@ -43,8 +44,8 @@ class NaturalVoice {
   state: NaturalState = "idle";
   /** Download progress while loading, 0..1. */
   progress = 0;
-  /** The model is in this browser already (downloaded once, by choosing the natural voice): loading it then
-   *  downloads nothing, so Auto uses it. Null until `checkDevice()` answers. */
+  /** The model is in this browser already (downloaded once, by choosing the natural voice): choosing it again
+   *  downloads nothing. Null until `checkDevice()` answers. */
   onDevice: boolean | null = null;
   private worker: Worker | null = null;
   private supported: Promise<boolean> | null = null;
@@ -223,6 +224,7 @@ function rank(v: SpeechSynthesisVoice): number {
   let r = 0;
   if (/natural|neural/i.test(v.name)) r += 10; // Edge's online voices: nearly human
   if (/premium|enhanced|siri/i.test(v.name)) r += 8; // Apple's downloaded voices
+  if (/-network\b/i.test(v.name) || /-network\b/i.test(v.voiceURI)) r += 9; // Android's neural (online) voices
   if (/google/i.test(v.name)) r += 5;
   if (/online/i.test(v.name)) r += 2;
   if (/\b(samantha|daniel|karen|moira|serena|tessa|ava|allison|susan)\b/i.test(v.name)) r += 2;
@@ -239,6 +241,23 @@ export function browserVoices(): SpeechSynthesisVoice[] {
     .getVoices()
     .filter((v) => v.lang.toLowerCase().startsWith("en") && !NOVELTY.test(v.name))
     .sort((a, b) => rank(b) - rank(a));
+}
+
+/** The browser's voices, once it has listed them (Chrome lists them a moment after the page loads: speaking
+ *  before then reads with the system's default voice, the most mechanical). At most `wait` ms. */
+export function voicesReady(wait = 1500): Promise<void> {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return Promise.resolve();
+  const synth = window.speechSynthesis;
+  if (synth.getVoices().length) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      synth.removeEventListener?.("voiceschanged", done);
+      clearTimeout(t);
+      resolve();
+    };
+    const t = setTimeout(done, wait);
+    synth.addEventListener?.("voiceschanged", done);
+  });
 }
 
 /** The voice to read with: the one chosen (by its URI), else the best. */

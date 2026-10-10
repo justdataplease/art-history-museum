@@ -196,3 +196,23 @@
     width: calc(100vw - 24px);
   }
 }
+
+/* phones: clear of the walking stick (bottom left): upright, above it (and out of the audio guide's words' way
+   while they show); on their side, beside it */
+@media (max-width: 640px) {
+  .nowShowing,
+  .dim.dim {
+    bottom: calc(148px + env(safe-area-inset-bottom, 0px));
+  }
+  :global(.mus-root):has([data-guide-words]) .nowShowing {
+    visibility: hidden;
+  }
+}
+@media (max-height: 500px) and (pointer: coarse) {
+  .nowShowing,
+  .dim.dim {
+    left: 132px;
+    bottom: 14px;
+    max-width: calc(100vw - 280px);
+  }
+}

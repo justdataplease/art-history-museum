@@ -47,10 +47,11 @@ you can visit, freely, without an account.
 On a computer, use **W A S D** to move (at a run; the settings have walking
 speeds) and the mouse to look, **Space** to jump, **C** to sit, **G** for the
 audio guide and **O** for the settings: speed, the canvas texture, the audio
-guide's voice (the browser's, or a natural AI voice run on your computer, a
-one-time 330 MB download you choose) and
+guide's voice (the browser's most natural one, or, if you choose it, an AI voice
+run on your computer: a one-time 330 MB download, heavy on a slower machine) and
 reading speed, and hiding the controls (**H**).
-On a phone, drag to look and tap the floor to walk. Click or tap a painting to
+On a phone, drag to look and push the stick (bottom left) to walk, or double-tap
+the floor to go there. Click or tap a painting to
 inspect it. **Explore → How to explore** brings back the short guide on the
 timeline.
 

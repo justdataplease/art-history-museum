@@ -34,6 +34,7 @@ import { createSettleTracker, type SettleTracker } from "./renderer-motion";
 import styles from "./museum.module.css";
 import { SourceLink } from "@/components/timeline/SourceLink";
 import { ScreeningHud, useScreening } from "@/components/cinema/ScreeningHud";
+import { TouchStick } from "./TouchStick";
 
 const FOV = 55;
 /** Let the title on the doors register before they part. */
@@ -792,6 +793,8 @@ export function MuseumApp({
         />
       )}
 
+      {touch && engaged && walkEnabled && !inspect && <TouchStick />}
+
       {engaged && walkEnabled && inFilmRoom && (
         <div className={`mus-hint ${styles.hint}`}>
           {touch ? (
@@ -800,7 +803,7 @@ export function MuseumApp({
                 <b>Drag</b> look
               </span>
               <span>
-                <b>Tap floor</b> walk
+                <b>Stick</b> walk
               </span>
               <span>
                 <b>Films</b> the list
@@ -839,7 +842,7 @@ export function MuseumApp({
                 <b>Drag</b> look
               </span>
               <span>
-                <b>Tap floor</b> walk
+                <b>Stick</b> walk
               </span>
               <span>
                 <b>Tap painting</b> inspect
@@ -933,11 +936,18 @@ export function MuseumApp({
 
       {canSettle && (
         <div className={styles.hudTools}>
-          <button type="button" className={styles.hudTool} onClick={openSettings} title="Speed, canvas surface, on-screen controls (O)">
-            <span aria-hidden>⚙</span> Settings{!touch && <kbd>O</kbd>}
+          <button
+            type="button"
+            className={styles.hudTool}
+            onClick={openSettings}
+            title="Speed, canvas surface, on-screen controls (O)"
+            aria-label="Settings"
+          >
+            <span aria-hidden>⚙</span> <span className={styles.toolLabel}>Settings</span>
+            {!touch && <kbd>O</kbd>}
           </button>
           {touch && (
-            <button type="button" className={styles.hudTool} onClick={() => setSettings({ hud: false })}>
+            <button type="button" className={`${styles.hudTool} ${styles.hideTool}`} onClick={() => setSettings({ hud: false })}>
               Hide controls
             </button>
           )}

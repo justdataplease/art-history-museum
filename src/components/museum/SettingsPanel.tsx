@@ -45,7 +45,8 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true });
   }, []);
-  // the AI voice: whether this device runs it, whether it is here already, and its download (only "Natural" starts it)
+  // the AI voice: whether this device runs it, whether it is here already, and its download (only choosing it starts
+  // it; Auto never uses it)
   const natural = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getState, () => "idle" as const);
   const progress = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getProgress, () => 0);
   const onDevice = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getOnDevice, () => null);
@@ -66,7 +67,7 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
     sample.current?.stop();
     const g = getSettings();
     const o = { speed: g.guideSpeed, onLine: () => {}, onEnd: () => {} };
-    const wants = g.guideVoice === "natural" || (g.guideVoice === "auto" && onDevice === true);
+    const wants = g.guideVoice === "natural";
     if (wants) void naturalVoice.load();
     sample.current = wants && natural === "ready"
       ? naturalVoice.speak([SAMPLE], g.naturalVoice, o)
@@ -79,9 +80,9 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
         ? `The natural voice is downloading: ${Math.round(progress * 100)}% (about 330 MB, once; the browser keeps it). The browser's voice reads meanwhile.`
         : natural === "error"
           ? "The natural voice would not start here: the browser's voice reads."
-          : natural === "ready" || onDevice
-            ? "The natural voice is on this device: Auto and Natural read with it."
-            : "Auto reads with the browser's best voice. Natural is a neural voice that sounds like a person reading: choosing it downloads it (about 330 MB, once; the browser keeps it) and runs it on this device. Nothing downloads unless you choose it.";
+          : s.guideVoice === "natural" && (natural === "ready" || onDevice)
+            ? "The natural voice reads, run on this device: it sounds like a person, but it is heavy on a slower computer. Auto reads with the browser's own voice."
+            : "Auto reads with the browser's most natural voice (Edge's Natural voices are the best; on a phone, the system's neural voices). Natural (AI) runs a neural voice on this device: choosing it downloads it (about 330 MB, once) and it is heavy to run. Nothing downloads unless you choose it.";
   return (
     <div className={styles.settingsBack} onClick={() => onClose(true)}>
       <div
@@ -96,7 +97,13 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
         <section>
           <h3>Speed</h3>
           <Choice value={s.pace} options={PACES} onPick={(pace) => setSettings({ pace })} />
-          <p>{touch ? "Tap the floor to go there." : s.pace === "run" ? "You run by default." : "Hold W for a few seconds to run."}</p>
+          <p>
+            {touch
+              ? "Push the stick (bottom left) to walk, as far as you push it, that fast; double-tap the floor to go there."
+              : s.pace === "run"
+                ? "You run by default."
+                : "Hold W for a few seconds to run."}
+          </p>
         </section>
         <section>
           <h3>Canvas surface</h3>
@@ -137,7 +144,7 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
             }}
           />
           <p>{voiceNote}</p>
-          {canRun !== false && (s.guideVoice === "natural" || (s.guideVoice === "auto" && onDevice)) && (
+          {canRun !== false && s.guideVoice === "natural" && (
             <div className={styles.seg} style={{ marginTop: 10 }}>
               {NATURAL_VOICES.map((v) => (
                 <button key={v.id} type="button" aria-pressed={s.naturalVoice === v.id} onClick={() => setSettings({ naturalVoice: v.id })}>
@@ -146,7 +153,7 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
               ))}
             </div>
           )}
-          {voices.length > 0 && (s.guideVoice === "browser" || canRun === false || natural !== "ready") && (
+          {voices.length > 0 && s.guideVoice !== "natural" && (
             <select
               className={styles.voiceSelect}
               value={s.browserVoice}

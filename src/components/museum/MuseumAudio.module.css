@@ -178,3 +178,24 @@
     transition: none;
   }
 }
+
+/* phones: the bottom left is the walking stick's (TouchStick); the music takes the bottom right, its card rising
+   above it from that side */
+@media (max-width: 640px), (max-height: 500px) and (pointer: coarse) {
+  .root {
+    right: calc(16px + env(safe-area-inset-right, 0px));
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    left: auto;
+  }
+  .credit {
+    right: 0;
+    left: auto;
+    max-width: min(300px, calc(100vw - 32px));
+  }
+}
+@media (max-width: 640px) {
+  /* clear of the walking stick on its left */
+  .credit {
+    max-width: calc(100vw - 172px);
+  }
+}

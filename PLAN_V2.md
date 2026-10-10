@@ -23,6 +23,9 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
   - [x] Settings (O, or the Settings button): Slow 1.3 m/s, Normal 2.0 m/s, Fast 3.1 m/s, kept in the browser.
   - [x] The default is slower (2.0 m/s, was 3.1); holding W still runs at twice the pace.
   - [x] Tap-to-walk on phones follows the same setting.
+  - [x] Phones: a walking stick (bottom left; as far as it is pushed, that fast), drag to look, a double tap on
+    the floor to go there (a single tap walked by accident); the controls laid out in rows that never overlap,
+    upright and on the side. 2026-10-10.
 - [x] **3. Switch off the canvas effect** (frmfrm). Local.
   - [x] Settings → Canvas surface → "Plain image": no linen weave, no varnish sheen, matte.
   - [x] "View the original image" in the painting's panel: the file itself, flat on the screen, no room light.
@@ -91,8 +94,9 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
   - [x] G cycles: famous works (starts by itself at them), every work, off; captions on screen.
   - [x] A script per artist and per work: what you see in the picture first, then its story.
   - [x] A natural voice: Kokoro (a neural text-to-speech model) runs in the visitor's browser on WebGPU, about
-    330 MB downloaded once, only when the visitor chooses Natural (Auto reads with the browser's best voice, and
-    with the natural one once it is on the device). Settings → Audio guide: the voice,
+    330 MB downloaded once, only when the visitor chooses Natural. Auto always reads with the browser's most
+    natural voice (Edge's Natural voices, Android's neural ones, Safari's Enhanced): the AI voice made a slower
+    browser lag, so it never loads by itself (changed 2026-10-10). Settings → Audio guide: the voice,
     five natural voices, the browser's voices, a reading speed (0.85× to 1.5×) and "Hear it". Live 2026-10-09.
   - [ ] Recorded narration in place of the browser's voice.
   - [ ] Greek names said the Greek way (the voices are English).

@@ -425,6 +425,9 @@ async function tapAndTrack(page, x, z, ms = 9000) {
     };
     requestAnimationFrame(tick);
   });
+  // a floor tap walks when doubled
+  await page.touchscreen.tap(s.x, s.y);
+  await page.waitForTimeout(120);
   await page.touchscreen.tap(s.x, s.y);
   await page.waitForTimeout(ms);
   return { screen: s, path: await page.evaluate(() => window.__path), end: await cam(page) };
@@ -477,6 +480,8 @@ await section("touch: tap a cross wall", async () => {
     },
     { x: d.x - d.halfWidth - 0.5, z: d.z + d.thickness / 2 }
   );
+  await tp.touchscreen.tap(wall.x, wall.y);
+  await tp.waitForTimeout(120);
   await tp.touchscreen.tap(wall.x, wall.y);
   await tp.waitForTimeout(6000);
   const e = await cam(tp);

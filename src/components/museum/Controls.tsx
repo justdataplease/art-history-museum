@@ -24,7 +24,8 @@ import { setInspectFlying, setMoving } from "./renderer-motion";
 import { getSettings, PACE_SPEED, TAP_PACE_SPEED } from "./settings";
 
 // Camera behaviour: the entry walk, first-person movement (pointer lock on
-// desktop, drag-to-look + tap-to-walk on touch), and the inspect fly-to.
+// desktop; on touch, drag to look, the walking stick, a double tap on the floor
+// to go there), and the inspect fly-to.
 //
 // The canvas renders on demand, so everything here that moves the camera
 // calls invalidate() while it is still changing. Frame deltas are clamped:
@@ -38,6 +39,16 @@ const AIM_RANGE = 9; // m: furthest a crosshair click can inspect from
 const TAP_RANGE = 16; // m: furthest a tap can inspect from
 const TAP_SLOP = 9; // px a touch may wander and still count as a tap
 const TAP_MAX_MS = 450;
+/** A floor tap walks only when doubled (a single one is too easily a look that barely moved): within this long
+ *  and this near the first. */
+const DOUBLE_TAP_MS = 380;
+const DOUBLE_TAP_SLOP = 36;
+/** The walking stick's dead centre (of its reach, 0..1). */
+const STICK_DEAD = 0.12;
+
+/** The walking stick's push (TouchStick, outside the canvas): x to the right, y forward, each -1..1. `wake` asks
+ *  for a frame (the canvas renders on demand); TouchPlayer sets it. */
+export const stick = { x: 0, y: 0, active: false, wake: null as (() => void) | null };
 const LOOK_SPEED = 0.0042; // rad per px of drag
 const MAX_PITCH = 1.25; // rad
 // Jump: a plain ballistic hop (~0.6 m peak, ~0.7 s in the air), no air
@@ -641,9 +652,10 @@ export function Player({
 
 // ------------------------------------------------------------ TouchPlayer
 
-/** Touch first-person: drag to look, tap the floor to walk there, tap a
- *  painting to inspect it. Raycasts are done here from the tap position
- *  (drei's PointerLockControls is not mounted, so R3F events stay uncentred). */
+/** Touch first-person: drag to look, the walking stick (TouchStick) to walk, a
+ *  double tap on the floor to walk there, a tap on a painting to inspect it.
+ *  Raycasts are done here from the tap position (drei's PointerLockControls is
+ *  not mounted, so R3F events stay uncentred). */
 export function TouchPlayer({
   layout,
   registry,
@@ -675,6 +687,13 @@ export function TouchPlayer({
   // The flag is module state: leaving mid-walk must not carry it into the
   // next gallery (adaptive resolution would sample its idle frames).
   useEffect(() => () => setMoving(false), []);
+  useEffect(() => {
+    stick.wake = invalidate;
+    return () => {
+      stick.wake = null;
+    };
+  }, [invalidate]);
+  const sticking = useRef(false);
 
   useEffect(() => {
     const el = (gl.domElement.parentElement ?? gl.domElement) as HTMLElement;
@@ -690,6 +709,7 @@ export function TouchPlayer({
       t0: number;
       moved: boolean;
     } | null = null;
+    let lastTap = { t: -Infinity, x: 0, y: 0 };
 
     const tap = (cx: number, cy: number) => {
       const rect = el.getBoundingClientRect();
@@ -706,6 +726,10 @@ export function TouchPlayer({
         return;
       }
       if (floor) {
+        const now = performance.now();
+        const twice = now - lastTap.t < DOUBLE_TAP_MS && Math.hypot(cx - lastTap.x, cy - lastTap.y) < DOUBLE_TAP_SLOP;
+        lastTap = twice ? { t: -Infinity, x: 0, y: 0 } : { t: now, x: cx, y: cy };
+        if (!twice) return;
         _flat.x = floor.x;
         _flat.z = floor.z;
         // a tap on a wall: walk up to the foot of the wall instead
@@ -790,6 +814,28 @@ export function TouchPlayer({
       route.current = [];
       setMoving(false);
     }
+    // the walking stick: that way (forward, back, aside, as the camera faces), as fast as it is pushed
+    const push = stick.active && enabled.current ? Math.min(1, Math.hypot(stick.x, stick.y)) : 0;
+    if (push > STICK_DEAD) {
+      route.current = [];
+      const dt = Math.min(rawDt, MAX_DT);
+      camera.getWorldDirection(_fwd);
+      _fwd.y = 0;
+      if (_fwd.lengthSq() < 1e-8) _fwd.set(0, 0, -1);
+      _fwd.normalize();
+      _right.crossVectors(_fwd, _UP);
+      _dir.set(0, 0, 0).addScaledVector(_fwd, stick.y).addScaledVector(_right, stick.x).multiplyScalar(1 / push);
+      const speed = TAP_PACE_SPEED[getSettings().pace] * ((push - STICK_DEAD) / (1 - STICK_DEAD));
+      placeOnFloor(camera, p.x + _dir.x * speed * dt, p.z + _dir.z * speed * dt, layout);
+      if (!sticking.current) setMoving((sticking.current = true));
+      invalidate();
+      return;
+    }
+    if (sticking.current) {
+      sticking.current = false;
+      setMoving(false);
+    }
+    if (stick.active) invalidate();
     const t = route.current[0];
     if (!t) return;
     const dt = Math.min(rawDt, MAX_DT);

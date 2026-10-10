@@ -2340,11 +2340,13 @@ button {
   display: none;
 }
 
+/* above the handles (their top at 46.5%), however many lines it runs to */
 .doors-name {
   position: absolute;
   left: 50%;
-  top: 44%;
-  transform: translate(-50%, -50%);
+  bottom: calc(53.5% + 36px);
+  width: min(92vw, 900px);
+  transform: translateX(-50%);
   z-index: 5;
   text-align: center;
   color: var(--light);

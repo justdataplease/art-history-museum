@@ -20,7 +20,7 @@ import type { GuideArtist, Painting } from "@/lib/types";
 import type { Placement } from "./layout";
 import { duckMusic } from "./MuseumAudio";
 import { GUIDE_SPEEDS, getSettings, setSettings, useSettings } from "./settings";
-import { naturalVoice, pickBrowserVoice, speakBrowser, type Speaking } from "./voice";
+import { naturalVoice, pickBrowserVoice, speakBrowser, voicesReady, type Speaking } from "./voice";
 import styles from "./AudioGuide.module.css";
 
 const STORAGE_KEY = "timeline-museum:audio-guide";
@@ -96,12 +96,10 @@ function toSentences(lines: string[]): string[] {
   ).filter((s) => s.length > 1);
 }
 
-/** The AI voice for this visitor: chosen in Settings (which downloads it, once), or (auto) when it is on this
- *  device already. It never downloads by itself. */
+/** The AI voice, only when chosen in Settings (which downloads it, once): it is heavy to run, so it never loads
+ *  by itself, even when it is on this device already. */
 function wantsNatural(): boolean {
-  const s = getSettings();
-  if (s.guideVoice === "browser") return false;
-  return s.guideVoice === "natural" || naturalVoice.onDevice === true;
+  return getSettings().guideVoice === "natural";
 }
 const speedLabel = (s: number) => `${s}×`;
 
@@ -166,13 +164,9 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
     };
   }, []);
 
-  // the AI voice warms up in the background while the browser's reads: when chosen in Settings (downloaded once,
-  // kept by the browser), or on Auto when it is on this device already
+  // the AI voice warms up in the background while the browser's reads, when chosen in Settings
   useEffect(() => {
-    if (!on) return;
-    void naturalVoice.checkDevice().then(() => {
-      if (wantsNatural()) void naturalVoice.load();
-    });
+    if (on && wantsNatural()) void naturalVoice.load();
   }, [on, settings.guideVoice]);
 
   // the gallery's scripts, ahead of the first painting
@@ -249,8 +243,12 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
           onEnd: () => current.current === key && done(),
         };
         if (wantsNatural() && naturalVoice.state === "ready") speech.current = naturalVoice.speak(lines, s.naturalVoice, o);
-        else if ("speechSynthesis" in window) speech.current = speakBrowser(lines, pickBrowserVoice(s.browserVoice), o);
-        else done();
+        else if ("speechSynthesis" in window) {
+          // with the browser's best voice, not its default (its list can come a moment late)
+          void voicesReady().then(() => {
+            if (current.current === key) speech.current = speakBrowser(lines, pickBrowserVoice(s.browserVoice), o);
+          });
+        } else done();
       };
       next(0);
     },
@@ -376,7 +374,8 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
           aria-pressed={on}
           title="Audio guide (G): famous works (it starts by itself at them), every work, or off"
         >
-          <span aria-hidden>🎧</span> Audio guide: {MODE_LABEL[mode]}
+          <span aria-hidden>🎧</span> <span className={styles.long}>Audio guide: </span>
+          {MODE_LABEL[mode]}
           {!touch && <kbd>G</kbd>}
         </button>
         {on && (
@@ -407,7 +406,7 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
         )}
       </div>
       {on && line && (
-        <div className={styles.subtitle} role="status" aria-live="polite">
+        <div className={styles.subtitle} data-inspecting={!!inspect} data-guide-words role="status" aria-live="polite">
           {line}
           {credit && <small className={styles.credit}>{credit}</small>}
         </div>

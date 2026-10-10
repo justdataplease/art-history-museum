@@ -823,3 +823,154 @@
   text-transform: uppercase;
   color: var(--ink-soft);
 }
+
+/* ---- the walking stick (TouchStick): bottom left, in the thumb's reach ---- */
+.stick {
+  position: absolute;
+  left: calc(18px + env(safe-area-inset-left, 0px));
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  z-index: 36;
+  display: grid;
+  place-items: center;
+  width: 116px;
+  height: 116px;
+  border: 1px solid rgba(233, 229, 226, 0.28);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(10, 9, 8, 0.2) 0%, rgba(10, 9, 8, 0.5) 100%);
+  backdrop-filter: blur(6px);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.stickKnob {
+  width: 50px;
+  height: 50px;
+  border: 1px solid rgba(199, 169, 122, 0.75);
+  border-radius: 50%;
+  background: rgba(233, 229, 226, 0.2);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  transition: transform 0.14s ease-out;
+  pointer-events: none;
+}
+.stick[data-active="true"] .stickKnob {
+  background: rgba(199, 169, 122, 0.35);
+  transition: none;
+}
+
+/* on a touch screen the controls hint says its piece and goes (it would stay over the room) */
+@media (pointer: coarse) {
+  .hint.hint {
+    animation: hintAway 0.8s ease 12s forwards;
+  }
+}
+@keyframes hintAway {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* ---- phones, upright: the top in rows that never overlap: the way back and the films on the left, the
+   settings on the right; the title on a line of its own; the room navigator under it; the audio guide under
+   that (AudioGuide.module.css, top 126px: keep in step), and the hint under that, while it shows. The walking
+   stick and the music take the bottom corners, the guide's words the space above them. ---- */
+@media (max-width: 640px) {
+  .top.top {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 10px 12px;
+  }
+  .topSide.topSide {
+    gap: 6px;
+  }
+  .topSide.topSide :global(.mus-back) {
+    padding: 8px 14px;
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+  }
+  .topRight.topRight {
+    order: 4;
+    flex: 1 0 100%;
+    justify-content: center;
+  }
+  .topRight.topRight:empty {
+    display: none;
+  }
+  .placard.placard {
+    order: 3;
+    flex: 1 0 100%;
+    min-width: 0;
+    padding: 6px 12px;
+  }
+  .placard.placard h1 {
+    overflow: hidden;
+    font-size: 13px;
+    letter-spacing: 0.22em;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .placard.placard p {
+    display: none;
+  }
+  .hudTools {
+    top: 10px;
+    right: 12px;
+    left: auto;
+  }
+  .hudTool.hudTool {
+    padding: 7px 12px;
+  }
+  .toolLabel,
+  .hideTool {
+    display: none;
+  }
+  .hint.hint {
+    top: 172px;
+    bottom: auto;
+    max-width: calc(100vw - 48px);
+    padding: 8px 16px;
+    column-gap: 14px;
+    font-size: 9.5px;
+  }
+}
+
+/* ---- phones on their side: one slim bar (the title a single line), the settings beside the source link, the
+   guide under the way back (AudioGuide.module.css), the stick and the music low in the corners, the hint
+   between them ---- */
+@media (max-height: 500px) and (pointer: coarse) {
+  .top.top {
+    padding: 8px 12px;
+  }
+  .placard.placard {
+    padding: 5px 14px;
+  }
+  .placard.placard h1 {
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .placard.placard p {
+    display: none;
+  }
+  .hudTools {
+    top: 20px;
+    right: 68px;
+    left: auto;
+  }
+  .hudTool.hudTool {
+    padding: 7px 12px;
+  }
+  .toolLabel,
+  .hideTool {
+    display: none;
+  }
+  .stick {
+    left: calc(16px + env(safe-area-inset-left, 0px));
+    bottom: 14px;
+    width: 100px;
+    height: 100px;
+  }
+  .hint.hint {
+    bottom: 14px;
+    max-width: calc(100vw - 300px);
+  }
+}

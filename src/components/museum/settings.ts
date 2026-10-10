@@ -6,8 +6,8 @@
 import { useSyncExternalStore } from "react";
 
 export type Pace = "slow" | "normal" | "fast" | "run";
-/** auto: the browser's own voice where it has a natural one (Edge, Safari), else the AI voice on a desktop that
- *  can run it; natural: the AI voice wherever it runs; browser: the browser's voice always. */
+/** auto and browser: the browser's own voice, the most natural it has (auto: the best; browser: the one chosen
+ *  from its list); natural: the AI voice (voice.ts), heavy, only when chosen. */
 export type GuideVoice = "auto" | "natural" | "browser";
 export const GUIDE_SPEEDS = [0.85, 1, 1.15, 1.3, 1.5] as const;
 
