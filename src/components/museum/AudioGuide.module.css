@@ -61,14 +61,6 @@
   pointer-events: none;
 }
 
-.credit {
-  display: block;
-  margin-top: 6px;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(233, 229, 226, 0.55);
-}
 
 @media (max-width: 720px) {
   .guide {

@@ -123,7 +123,6 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
   const on = mode !== "off";
   const famous = useMemo(() => famousOf(placements), [placements]);
   const [line, setLine] = useState<string | null>(null);
-  const [credit, setCredit] = useState<string | null>(null);
   const [speaking, setSpeaking] = useState(false);
   const [paused, setPaused] = useState(false);
   const current = useRef<string | null>(null);
@@ -209,8 +208,6 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
       setSpeaking(true);
       setPaused(false);
       duckMusic(0.25, 0.8);
-      const credits = [...new Set(queue.flatMap((s) => s.sources.filter((x) => x.name === "Wikipedia").map(() => "Wikipedia, CC BY-SA 4.0")))];
-      setCredit(credits.length ? `Text: ${credits.join(" · ")}` : null);
       const next = (i: number) => {
         if (current.current !== key) return;
         if (i >= queue.length) return finished(key);
@@ -436,7 +433,6 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
       {on && line && (
         <div className={styles.subtitle} data-inspecting={!!inspect} data-guide-words role="status" aria-live="polite">
           {line}
-          {credit && <small className={styles.credit}>{credit}</small>}
         </div>
       )}
     </>
