@@ -1,19 +1,19 @@
 "use client";
 
 // DOM side of the studio, loaded once the access phrase is given: the
-// palette (tools, colours, brush sizes, the marker's hopper, the
-// conservator, putting everything down), a small tally of what has been
-// done this visit, and a ring round the crosshair showing what is in hand.
-// Keyboard while the palette is out: 1–5 pick a tool, 0 puts it down, C
-// turns through the colours, [ / ] change the brush size, R refills the
-// marker; with a tool in hand and the cursor captured the wheel steps
-// through the tools.
+// palette (tools, colours, brush and spray sizes, the foods, the marker's
+// hopper, the conservator, putting everything down), a small tally of what
+// has been done this visit, and a ring round the crosshair showing what is
+// in hand. Keyboard while the palette is out: 1–7 pick a tool, 0 puts it
+// down, C turns through the colours, [ / ] change the brush or spray size
+// (or the food), R refills the marker; with a tool in hand and the cursor
+// captured the wheel steps through the tools.
 
 import { useEffect, useState, type CSSProperties } from "react";
 import type { FxAudioBridge } from "./Gate";
 import { latch } from "./latch";
 import { setSfxMutedSource } from "./sfx";
-import { armed, BRUSH_SIZES, fx, isHeld, PAINT_COLORS, useFx, useTally, type Tool } from "./store";
+import { armed, BRUSH_SIZES, fx, FOODS, isHeld, PAINT_COLORS, SPRAY_SIZES, useFx, useTally, type Food, type Tool } from "./store";
 import styles from "./hud.module.css";
 
 function isTypingTarget(t: EventTarget | null): boolean {
@@ -25,9 +25,11 @@ function isTypingTarget(t: EventTarget | null): boolean {
 const TOOLS: { id: Tool; label: string; key: string }[] = [
   { id: "paint", label: "Paint", key: "1" },
   { id: "brush", label: "Brush", key: "2" },
-  { id: "egg", label: "Eggs", key: "3" },
-  { id: "marker", label: "Marker", key: "4" },
-  { id: "sword", label: "Sword", key: "5" },
+  { id: "spray", label: "Spray", key: "3" },
+  { id: "food", label: "Food", key: "4" },
+  { id: "dart", label: "Darts", key: "5" },
+  { id: "marker", label: "Marker", key: "6" },
+  { id: "sword", label: "Sword", key: "7" },
 ];
 
 const TEAM_SWATCH = "conic-gradient(from 20deg, #ff5a14, #ff2d87, #a23cff, #1e7bff, #39d353, #f5e600, #ff5a14)";
@@ -55,6 +57,34 @@ function ToolIcon({ id }: { id: Tool }) {
       </svg>
     );
   }
+  if (id === "spray") {
+    // the can, its nozzle and a puff of mist
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path {...common} d="M6.5 9.5h6v10.2a.8.8 0 0 1-.8.8H7.3a.8.8 0 0 1-.8-.8z" />
+        <path {...common} d="M7.4 9.5c0-1.6.9-2.6 2.1-2.6s2.1 1 2.1 2.6M8.6 6.9V5.2h1.8v1.7" />
+        <path {...common} d="M6.5 13.5h6" />
+        <circle fill="currentColor" cx="14.2" cy="4.6" r="0.8" />
+        <circle fill="currentColor" cx="16.6" cy="3.4" r="0.7" />
+        <circle fill="currentColor" cx="16.9" cy="5.9" r="0.9" />
+        <circle fill="currentColor" cx="19.4" cy="4.4" r="0.7" />
+        <circle fill="currentColor" cx="19.2" cy="7.4" r="0.6" />
+        <circle fill="currentColor" cx="21" cy="5.9" r="0.5" />
+      </svg>
+    );
+  }
+  if (id === "food") return <FoodIcon id="burger" />;
+  if (id === "dart") {
+    // a dart in flight: point, barrel, flights
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path {...common} d="M3.5 20.5 10 14" />
+        <path {...common} d="m10 14 2.4-2.4 2 2-2.4 2.4z" />
+        <path {...common} d="m14.4 11.6 2.4-2.4" />
+        <path {...common} d="M16.8 9.2 20.5 3.5l-1.2 4.4 4.2-1.2-5.6 3.8z" />
+      </svg>
+    );
+  }
   if (id === "marker") {
     // body, hopper on top, tank behind
     return (
@@ -73,6 +103,51 @@ function ToolIcon({ id }: { id: Tool }) {
         <path {...common} d="M19.5 3.5 20 6l-9.5 9.5-2-2L18 4z" />
         <path {...common} d="m6.5 13.5 4 4M7.6 16.4l-3.1 3.1" />
         <circle fill="currentColor" cx="4" cy="20" r="1" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path {...common} d="M12 3.5c3.4 0 6 5 6 9.2 0 3.7-2.7 6.3-6 6.3s-6-2.6-6-6.3c0-4.2 2.6-9.2 6-9.2z" />
+      <path {...common} d="m7.4 11.6 2 1.4 1.8-1.6 1.7 1.7 1.9-1.5 1.8 1.2" />
+    </svg>
+  );
+}
+
+function FoodIcon({ id }: { id: Food }) {
+  const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (id === "pizza") {
+    // a slice, crust up, with its toppings
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path {...common} d="M4 6.5c5-2.4 11-2.4 16 0L12 21z" />
+        <path {...common} d="M4.9 8.6c4.6-2 9.6-2 14.2 0" />
+        <circle fill="currentColor" cx="10" cy="11.4" r="1.2" />
+        <circle fill="currentColor" cx="14.3" cy="12" r="1" />
+        <circle fill="currentColor" cx="12" cy="15.6" r="1" />
+      </svg>
+    );
+  }
+  if (id === "burger") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path {...common} d="M4 11c0-3.6 3.6-6 8-6s8 2.4 8 6z" />
+        <path {...common} d="M3.5 13.4c1.4-1 2.6 1 4 0s2.6 1 4 0 2.6 1 4 0 2.6 1 4.9 0" />
+        <path {...common} d="M4 16h16" />
+        <path {...common} d="M4.5 16.5c0 1.8 1.3 2.5 3 2.5h9c1.7 0 3-.7 3-2.5" />
+        <circle fill="currentColor" cx="9" cy="7.8" r="0.5" />
+        <circle fill="currentColor" cx="12.5" cy="7.2" r="0.5" />
+        <circle fill="currentColor" cx="15" cy="8.4" r="0.5" />
+      </svg>
+    );
+  }
+  if (id === "icecream") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path {...common} d="M8 11.5 12 21l4-9.5" />
+        <path {...common} d="M7.3 11.5a4.7 4.7 0 1 1 9.4 0z" />
+        <path {...common} d="m9.4 14.2 4.8-1.6M10.6 17.2l2.8-1" />
+        <path {...common} d="M11.5 4.6c.3-1 1-1.6 2-1.6" />
       </svg>
     );
   }
@@ -124,8 +199,8 @@ function Palette({ enabled }: { enabled: boolean }) {
       const tool = TOOLS.find((x) => x.key === e.key);
       if (tool) fx.setTool(tool.id);
       else if (e.key === "0") fx.putDown();
-      else if (e.key === "[") fx.setBrush(fx.get().brush - 1);
-      else if (e.key === "]") fx.setBrush(fx.get().brush + 1);
+      else if (e.key === "[") fx.stepSize(-1);
+      else if (e.key === "]") fx.stepSize(1);
       else if (e.key === "r" || e.key === "R") fx.requestRefill();
       else if (e.key === "c" || e.key === "C") fx.cycleColor(e.shiftKey ? -1 : 1);
       else return;
@@ -156,12 +231,12 @@ function Palette({ enabled }: { enabled: boolean }) {
   }, [open]);
 
   const custom = !s.team && !PAINT_COLORS.some((c) => c.hex === s.color);
-  const colored = s.tool === "paint" || s.tool === "brush" || s.tool === "marker";
+  const colored = s.tool === "paint" || s.tool === "brush" || s.tool === "spray" || s.tool === "marker";
   const tab = open ? 0 : -1;
 
   return (
     <div className={styles.palette} data-open={open} aria-hidden={!open}>
-      <TallyCard show={open} inline />
+      <TallyCard />
       <div className={styles.section}>
         <div className={styles.eyebrow}>Tools</div>
         <div className={styles.tools}>
@@ -244,6 +319,54 @@ function Palette({ enabled }: { enabled: boolean }) {
                 tabIndex={tab}
               >
                 <span style={{ width: 5 + i * 5, height: 5 + i * 5 }} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {s.tool === "spray" && (
+        <div className={styles.section}>
+          <div className={styles.eyebrow}>
+            Nozzle <small>[ ]</small>
+          </div>
+          <div className={styles.sizes}>
+            {SPRAY_SIZES.map((b, i) => (
+              <button
+                key={b.label}
+                type="button"
+                className={`${styles.size} ${styles.mist}`}
+                aria-label={`${b.label} spray`}
+                data-active={s.spray === i}
+                style={{ "--c": s.color } as CSSProperties}
+                onClick={() => fx.setSpray(i)}
+                tabIndex={tab}
+              >
+                <span style={{ width: 7 + i * 6, height: 7 + i * 6 }} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {s.tool === "food" && (
+        <div className={styles.section}>
+          <div className={styles.eyebrow}>
+            Menu <small>[ ]</small>
+          </div>
+          <div className={styles.foods}>
+            {FOODS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className={styles.food}
+                title={f.label}
+                aria-label={f.label}
+                data-active={s.food === f.id}
+                onClick={() => fx.setFood(f.id)}
+                tabIndex={tab}
+              >
+                <FoodIcon id={f.id} />
               </button>
             ))}
           </div>
@@ -342,20 +465,23 @@ function RestoredToast() {
 function tallyRows(t: ReturnType<typeof useTally>): [string, string][] {
   const rows: [string, string][] = [
     ["Paint", String(t.paint)],
-    ["Eggs", String(t.egg)],
+    ["Food", String(t.food)],
     ["Brush", `${t.brush.toFixed(1)} m`],
-    ["Works", String(t.works)],
   ];
-  if (t.ball > 0) rows.splice(3, 0, ["Balls", String(t.ball)]);
-  if (t.cut > 0) rows.splice(rows.length - 1, 0, ["Cuts", String(t.cut)]);
+  // the rest once used, so the card stays short
+  if (t.spray > 0) rows.push(["Spray", `${t.spray.toFixed(1)} m`]);
+  if (t.dart > 0) rows.push(["Darts", String(t.dart)]);
+  if (t.ball > 0) rows.push(["Balls", String(t.ball)]);
+  if (t.cut > 0) rows.push(["Cuts", String(t.cut)]);
+  rows.push(["Works", String(t.works)]);
   return rows;
 }
 
-/** What has been done this visit: real counts, nothing else. */
-function TallyCard({ show, inline = false }: { show: boolean; inline?: boolean }) {
+/** What has been done this visit: real counts, nothing else (at the top of the palette). */
+function TallyCard() {
   const t = useTally();
   return (
-    <div className={inline ? styles.tallyInline : styles.tally} data-show={show} aria-hidden={!show}>
+    <div className={styles.tally}>
       {tallyRows(t).map(([k, v]) => (
         <div key={k} className={styles.cell}>
           <span>{k}</span>
@@ -402,11 +528,10 @@ export default function Hud({
 
   const ring = s.open && s.tool !== null && enabled && !touch && locked;
   const held = isHeld(s.tool);
-  const ringColor = s.tool === "egg" ? "#f1e9da" : held ? "#f4ede0" : s.color;
+  const ringColor = s.tool === "food" || s.tool === "dart" ? "#f1e9da" : held ? "#f4ede0" : s.color;
   return (
     <>
       <Palette enabled={enabled} />
-      <TallyCard show={s.open && enabled} />
       <Caption show={s.open && enabled} />
       <RestoredToast />
       <div

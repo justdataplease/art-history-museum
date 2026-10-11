@@ -6,7 +6,7 @@
 import { useSyncExternalStore } from "react";
 import type { GraphicsChoice } from "./quality";
 
-export type Pace = "walk" | "run" | "sprint";
+export type Pace = "walk" | "run";
 /** auto and browser: the browser's own voice, the most natural it has (auto: the best; browser: the one chosen
  *  from its list); natural: the AI voice (voice.ts), downloaded and run on this device, only when chosen. */
 export type GuideVoice = "auto" | "natural" | "browser";
@@ -29,12 +29,12 @@ export interface MuseumSettings {
   guideSpeed: number;
 }
 
-/** Speed, m/s: a run by default, a sprint twice a run; walking, holding W runs (twice the walk). */
-export const PACE_SPEED: Record<Pace, number> = { walk: 2.0, run: 4.0, sprint: 8.0 };
+/** Speed, m/s: a run by default, twice the walk; walking, holding W runs. */
+export const PACE_SPEED: Record<Pace, number> = { walk: 4.0, run: 8.0 };
 /** Tap-to-walk and the stick on touch, a little slower. */
-export const TAP_PACE_SPEED: Record<Pace, number> = { walk: 1.7, run: 3.0, sprint: 6.0 };
-/** The four speeds before the three (Stroll, Walk, Brisk, Run), as saved. */
-const OLD_PACE: Record<string, Pace> = { slow: "walk", normal: "walk", fast: "run" };
+export const TAP_PACE_SPEED: Record<Pace, number> = { walk: 3.0, run: 6.0 };
+/** Speeds saved before the two (Stroll, Walk, Brisk, Run; then Sprint). */
+const OLD_PACE: Record<string, Pace> = { slow: "walk", normal: "walk", fast: "run", sprint: "run" };
 
 const KEY = "timeline-museum:settings";
 const DEFAULTS: MuseumSettings = {

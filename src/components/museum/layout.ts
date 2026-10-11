@@ -160,7 +160,7 @@ export interface GalleryLayout {
   seats: SeatSpot[];
   /** A custom room's elevator (LayoutOptions.elevator). */
   elevator: ElevatorSpot | null;
-  /** An artist's gallery's doors to the artists before and after (LayoutOptions.exits). */
+  /** An artist's gallery's doors to two related artists (LayoutOptions.exits). */
   exits: ExitDoors | null;
   /** Entrance room first; a single-room gallery has exactly one. */
   rooms: SuiteRoom[];
@@ -345,7 +345,7 @@ export interface LayoutOptions {
   arches?: "columns" | "plain";
   /** An elevator beside the entrance doors (a custom room with more than one floor). */
   elevator?: boolean;
-  /** Doors to the artists before and after in the far end wall (an artist's gallery). */
+  /** Doors to two related artists in the far end wall (an artist's gallery). */
   exits?: boolean;
   /** The phases of the artist's life, in order (each painting's `phase` indexes them): rooms split where a phase
    *  ends, each named after its phase, instead of evenly by year. */
@@ -624,7 +624,7 @@ export function buildLayout(paintings: Painting[], opts: LayoutOptions = {}): Ga
       opts.elevator ? ELEVATOR_HALL_WIDTH : 0,
       // a palace gallery's arches want breadth
       opts.arches ? ARCHED_HALL_WIDTH : 0,
-      // the doors to the artists before and after, either side of the flagship
+      // the doors to two related artists, either side of the flagship
       opts.exits ? 2 * (exitInner(overture, a.w / 2 + reach(a.w, a.h)) + exitWidth + EXIT_CORNER) : 0
     )) / 10
   );

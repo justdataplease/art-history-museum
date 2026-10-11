@@ -11,6 +11,9 @@
 //     sharing one atlas and one draw call.
 // A splat is defined once in splat space and rasterized into every surface
 // it overlaps, so paint crossing a frame edge continues onto the frame.
+// Free strokes (the brush, the spray can) paint off the works into square
+// decal patches; as a stroke nears a patch's edge it carries on into the next
+// (an existing one that covers it, or a new one set ahead of it).
 //
 // The room: on activation the lights dip for a beat (tone-mapping exposure,
 // a uniform); sustained mess raises the "heat", and past a point a distant
@@ -22,17 +25,22 @@
 import * as THREE from "three";
 import { BrushStroke, type Grain } from "./brush";
 import { CutRun, cutExtent, stampGouge, type CutSpec, type SurfaceKind } from "./cuts";
+import { DART_COLORS, DartSystem, buildPuncture } from "./darts";
+import { FoodDebris } from "./debris";
 import { DecalManager, type SplatFrame } from "./decals";
 import { DripRun } from "./drip";
+import { buildFoodSplat, flavourOf, flecks, sliceAngle, type FoodKind } from "./food";
 import { patchCanvasMaterial, unbindCanvas, type OverlayUniforms } from "./materials";
 import { smoothstep } from "./noise";
-import { Particles } from "./particles";
-import { ProjectileSystem, type ProjectileKind } from "./projectiles";
+import { Particles, Shape } from "./particles";
+import { ProjectileSystem, type SplatKind } from "./projectiles";
 import { Rig, SWORD_CUT, type HeldKind } from "./rig";
 import { sfx } from "./sfx";
 import { ShardSystem } from "./shards";
-import { buildEggSplat, buildPaintSplat, buildPaintballSplat, stampShape, type Bounds, type Receiver, type RGB, type SplatPlan } from "./splat";
-import { PaintSurface } from "./surface";
+import { buildEggSplat, buildPaintSplat, buildPaintballSplat, stampShape, type Bounds, type DripSpec, type Receiver, type RGB, type SplatPlan } from "./splat";
+import { SPRAY_LIMITS, SprayCan, type SprayTarget } from "./spray";
+import type { Food } from "./store";
+import { PaintSurface, type Rect } from "./surface";
 
 export type Quality = "high" | "low";
 
@@ -52,13 +60,19 @@ const REFILL_S = 0.9;
 const BALL_SPEED = 30;
 
 /** Per-hit size factor: [min, max] spread and the typical impact speed (m/s). */
-const SHOT_SIZE: Record<ProjectileKind, { min: number; max: number; speed: number }> = {
+const SHOT_SIZE: Record<SplatKind, { min: number; max: number; speed: number }> = {
   paint: { min: 0.5, max: 1.7, speed: 9 },
   egg: { min: 0.7, max: 1.4, speed: 9 },
   ball: { min: 0.55, max: 1.8, speed: BALL_SPEED },
+  // a slice is a slice: its print must stay under it
+  pizza: { min: 0.9, max: 1.15, speed: 9 },
+  burger: { min: 0.8, max: 1.3, speed: 9 },
+  icecream: { min: 0.8, max: 1.35, speed: 9 },
 };
+/** Darts fly flat and fast: flight time (s) = base + perM × distance, within [min, max]. */
+const DART_T = { base: 0.06, perM: 0.04, min: 0.12, max: 0.3 };
 
-function shotScale(seed: number, kind: ProjectileKind, speed: number): number {
+function shotScale(seed: number, kind: SplatKind, speed: number): number {
   const { min, max, speed: v0 } = SHOT_SIZE[kind];
   // two independent draws from the seed, averaged: a bell around the middle
   const h = Math.imul(seed ^ 0x9e3779b9, 0x85ebca6b) >>> 0;
@@ -91,8 +105,8 @@ export const TEAM_COLORS = ["#ff5a14", "#ff2d87", "#f5e600", "#39d353", "#1e7bff
 
 export interface StatEvent {
   /** "work": a painting was touched for the first time this visit (`work` is its key) */
-  kind: "paint" | "egg" | "ball" | "brush" | "cut" | "work";
-  /** throws / balls / cuts / works: 1; brush: metres */
+  kind: "paint" | "food" | "dart" | "ball" | "brush" | "spray" | "cut" | "work";
+  /** throws / balls / cuts / works: 1; brush, spray: metres */
   amount: number;
   work?: string;
 }
@@ -245,17 +259,70 @@ interface Hit {
   distance: number;
 }
 
+/**
+ * Side of the square decal patches free strokes paint into off the works (m):
+ * the brush's crisp; the spray's soft mist takes a coarser, larger one.
+ */
+const PATCH = { brush: 1.1, spray: 1.3 };
+/** A new patch is centred this far (share of its side) ahead of where the stroke is heading. */
+const PATCH_AHEAD = 0.25;
+/** Room a spray patch keeps below the can on a wall, for the runs (m). */
+const RUN_ROOM = 0.12;
+/** A stroke jumping further than this between frames (a depth edge) lifts instead of carrying on (m). */
+const STROKE_JUMP = 0.3;
+/** The can rattles when it has not been shaken or used for this long (s). */
+const SHAKE_S = 3;
+
+/** A square of wall (floor, frame, bench) a free stroke paints into: a decal cell, projected along `frame`. */
+interface Patch {
+  /** origin at frame.origin */
+  rcv: Receiver;
+  frame: SplatFrame;
+}
+
+/** Where the brush paints this frame: a work's overlay or a patch, the point in its pixels. */
+interface StrokeTarget {
+  s: PaintSurface;
+  e: CanvasEntry | null;
+  patch: Patch | null;
+  x: number;
+  y: number;
+  /** px per metre, and the pixels the stroke may paint */
+  sx: number;
+  sy: number;
+  clip: Rect;
+}
+
 interface BrushState {
   ndc: THREE.Vector2;
   color: RGB;
   width: number;
   reach: number;
   stroke: BrushStroke | null;
+  /** what the stroke paints: a work, or a patch of anything else */
+  on: CanvasEntry | null;
+  patch: Patch | null;
+  /** the plane it has been moving in (kept across a frame's mouldings) */
+  plane: THREE.Vector3 | null;
   load: number;
   lastPoint: THREE.Vector3 | null;
   lastT: number;
   speed: number;
   seed: number;
+  /** metres not yet reported */
+  pending: number;
+}
+
+interface SprayState {
+  ndc: THREE.Vector2;
+  can: SprayCan;
+  /** the patch of wall around the works it last sprayed into, and the plane it has been moving in */
+  patch: Patch | null;
+  plane: THREE.Vector3 | null;
+  /** the colour of the mist in the air (linear) */
+  mist: THREE.Color;
+  puff: number;
+  lastPoint: THREE.Vector3 | null;
   /** metres not yet reported */
   pending: number;
 }
@@ -303,12 +370,19 @@ export class FxEngine {
   private readonly decals: DecalManager;
   private readonly projectiles = new ProjectileSystem();
   private readonly shards: ShardSystem;
+  private readonly debris: FoodDebris;
+  private readonly darts: DartSystem;
+  /** darts thrown (their flights come in sets of three) */
+  private dartsThrown = 0;
   private readonly particles: Particles;
   private readonly rig = new Rig();
   private readonly beacon: THREE.PointLight;
   private runs: DripRun[] = [];
   private cuts: CutRun[] = [];
   private brush: BrushState | null = null;
+  private spray: SprayState | null = null;
+  /** when the can was last shaken or used (s) */
+  private shaken = -Infinity;
   private active = false;
   private last = 0;
   private wet = false;
@@ -346,6 +420,12 @@ export class FxEngine {
     this.projectiles.layer = PROP_LAYER;
     for (const o of [this.decals.mesh, this.projectiles.group, this.shards.group, this.particles.points]) o.layers.set(PROP_LAYER);
     this.shards.group.traverse((c) => c.layers.set(PROP_LAYER));
+    const low = opts.quality === "low";
+    this.debris = new FoodDebris(low);
+    this.debris.onLand = (p, sound, speed) => sfx.foodLand(this.spatial(p), sound, speed);
+    this.debris.onPeel = (p) => sfx.peel(this.spatial(p));
+    this.darts = new DartSystem(low);
+    for (const o of [this.debris.group, this.darts.group]) o.traverse((c) => c.layers.set(PROP_LAYER));
     // the alarm beacon: in the scene from activation on, dark at rest
     this.beacon = new THREE.PointLight(AMBER, 0, 16, 2);
     this.beacon.name = "fx-beacon";
@@ -427,6 +507,8 @@ export class FxEngine {
     for (const e of this.canvases.values()) this.bindCanvas(e);
     const { scene } = this.o;
     scene.add(this.decals.mesh, this.projectiles.group, this.shards.group, this.particles.points, this.beacon, ...this.rig.objects);
+    // (their instanced meshes draw nothing until used, but compile now)
+    scene.add(this.debris.group, this.darts.group);
     this.rig.warmup(true);
     // stand-ins so every material is in the scene for the compile
     const warm = this.projectiles.warmupObjects();
@@ -482,6 +564,8 @@ export class FxEngine {
         s.refreshLive(0);
       }
     }
+    const can = new SprayCan([40, 120, 220], 0.07, 4, SPRAY_LIMITS.high);
+    for (let i = 0; i < 6; i++) can.spray([{ rcv, feather: true }], 0.03, 1 / 60, i % 2 ? { x: -0.03, y: 0.01 } : null);
     s.dispose();
   }
 
@@ -495,10 +579,12 @@ export class FxEngine {
 
   dispose(): void {
     this.endStroke();
+    this.spray = null;
     if (this.dipT !== null) this.o.renderer.toneMappingExposure = this.baseExposure;
     sfx.setAlarm(0);
     const { scene } = this.o;
     scene.remove(this.decals.mesh, this.projectiles.group, this.shards.group, this.particles.points, this.beacon, ...this.rig.objects);
+    scene.remove(this.debris.group, this.darts.group);
     for (const e of this.canvases.values()) {
       e.surface?.dispose();
       if (e.uniforms) unbindCanvas(e.uniforms);
@@ -509,10 +595,13 @@ export class FxEngine {
     this.decals.dispose();
     this.projectiles.dispose();
     this.shards.dispose();
+    this.debris.dispose();
+    this.darts.dispose();
     this.particles.dispose();
     this.rig.dispose();
     this.beacon.dispose();
     sfx.brushStop();
+    sfx.sprayStop();
   }
 
   // ---------------------------------------------------------- picking
@@ -565,25 +654,30 @@ export class FxEngine {
     if (!this.active || this.cleanT !== null) return false;
     const hit = this.pick(ndc);
     if (!hit) return false;
-    const cam = this.o.camera;
-    const m = cam.matrixWorld;
-    const right = new THREE.Vector3().setFromMatrixColumn(m, 0);
-    const up = new THREE.Vector3().setFromMatrixColumn(m, 1);
-    const fwd = new THREE.Vector3().setFromMatrixColumn(m, 2).negate();
-    const from = cam.position.clone().addScaledVector(right, 0.17).addScaledVector(up, -0.2).addScaledVector(fwd, 0.28);
+    const from = this.hand();
     const dist = from.distanceTo(hit.point);
     const T = THREE.MathUtils.clamp(0.2 + dist * 0.055, 0.25, 0.5);
     const seed = this.nextSeed(0x5bd1e995);
     this.projectiles.launch(kind, from, hit.point, T, colorHex, (vel) => this.impact(kind, hit, vel, colorHex, seed));
-    this.o.onStat?.({ kind, amount: 1 });
+    this.o.onStat?.({ kind: kind === "egg" ? "food" : "paint", amount: 1 });
     this.addHeat(1);
     sfx.whoosh(T);
     this.o.invalidate();
     return true;
   }
 
+  /** Where a throw leaves the hand: low and to the right of the eye. */
+  private hand(): THREE.Vector3 {
+    const cam = this.o.camera;
+    const m = cam.matrixWorld;
+    const right = new THREE.Vector3().setFromMatrixColumn(m, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(m, 1);
+    const fwd = new THREE.Vector3().setFromMatrixColumn(m, 2).negate();
+    return cam.position.clone().addScaledVector(right, 0.17).addScaledVector(up, -0.2).addScaledVector(fwd, 0.28);
+  }
+
   /** Splat directly at a hit (no flight): for tests and the harness. */
-  splatAt(ndc: THREE.Vector2, kind: ProjectileKind, colorHex: string, vel?: THREE.Vector3, seed?: number, shellHex?: string): boolean {
+  splatAt(ndc: THREE.Vector2, kind: SplatKind, colorHex: string, vel?: THREE.Vector3, seed?: number, shellHex?: string): boolean {
     const hit = this.pick(ndc);
     if (!hit) return false;
     const v = vel ?? hit.point.clone().sub(this.o.camera.position).normalize().multiplyScalar(6);
@@ -591,7 +685,7 @@ export class FxEngine {
     return true;
   }
 
-  private impact(kind: ProjectileKind, hit: Hit, vel: THREE.Vector3, colorHex: string, seed: number, shellHex?: string): void {
+  private impact(kind: SplatKind, hit: Hit, vel: THREE.Vector3, colorHex: string, seed: number, shellHex?: string): void {
     if (hit.canvas && !this.canvases.has(hit.canvas.mesh)) return; // the work left meanwhile
     if (this.cleanT !== null) return;
     const now = this.last || performance.now() / 1000;
@@ -624,9 +718,9 @@ export class FxEngine {
       });
     } else if (kind === "ball") {
       plan = buildPaintballSplat({ seed, dirX, dirY, oblique, vertical, color: hexRgb(colorHex), shell: hexRgb(shellHex ?? colorHex), scale: size });
-    } else {
+    } else if (kind === "egg") {
       plan = buildEggSplat({ seed, dirX, dirY, oblique, vertical, scale: size });
-    }
+    } else plan = buildFoodSplat(kind, { seed, dirX, dirY, oblique, vertical, scale: size });
 
     const receivers = this.receivers(frame, plan.extent, hit, kind === "ball");
     for (const s of plan.shapes) for (const rcv of receivers) stampShape(s, rcv, now);
@@ -644,9 +738,9 @@ export class FxEngine {
     } else if (kind === "ball") {
       this.particles.mist(hit.point, n, seed, new THREE.Color(colorHex));
       sfx.ballHit(sp);
-    } else {
+    } else if (kind === "paint") {
       sfx.splat(sp, 0.7);
-    }
+    } else this.foodLanded(kind, hit, frame, vel, seed, size);
     if (hit.canvas) this.touchWork(hit.canvas.key);
     this.markDamaged();
     this.o.invalidate();
@@ -821,6 +915,9 @@ export class FxEngine {
       width,
       reach,
       stroke: null,
+      on: null,
+      patch: null,
+      plane: null,
       load: 1,
       lastPoint: null,
       lastT: 0,
@@ -852,43 +949,67 @@ export class FxEngine {
     return this.brush !== null;
   }
 
-  private endStroke(): void {
+  /** Lift the brush (`lift` false: it slides on onto another surface) and mark what its last stamps changed. */
+  private endStroke(lift = true): void {
     const b = this.brush;
     if (!b?.stroke) return;
-    b.load = b.stroke.load;
-    b.stroke.end();
+    const st = b.stroke;
+    b.load = st.load;
+    st.end(lift);
+    const r = st.takeChanged();
+    if (r) st.surface.touch(r, this.last || performance.now() / 1000);
     b.stroke = null;
   }
 
   private sampleBrush(now: number): void {
     const b = this.brush;
     if (!b) return;
+    // the patch it was painting gave its cell to something else: stop there
+    if (b.stroke && !b.on && b.patch && !this.decals.keep(b.patch.rcv, now)) {
+      b.stroke.cancel();
+      b.stroke = null;
+    }
     const hit = this.pick(b.ndc);
-    const e = hit?.canvas;
-    if (!hit || !e || !hit.uv || !hit.front) {
+    const at = hit && this.brushAt(hit, b);
+    if (!hit || !at) {
       this.endStroke();
       sfx.brush(0);
       b.lastPoint = null;
+      b.plane = null;
       return;
     }
-    const s = this.ensureSurface(e);
-    if (!s) return;
-    if (b.stroke && b.stroke.surface !== s) this.endStroke();
-    if (!b.stroke) {
-      const grain = grainOf((e.mesh.material as THREE.MeshStandardMaterial).map, s.w, s.h);
-      b.stroke = new BrushStroke(s, s.w / e.w, s.h / e.h, { color: b.color, width: b.width, reach: b.reach, seed: b.seed++ }, b.load, grain);
+    const { s, e, patch } = at;
+    let from: BrushStroke | null = null;
+    if (b.stroke && (e ? b.on !== e : b.on !== null || b.patch !== patch)) {
+      // onto another surface: right next to the last point the brush slides
+      // on without lifting; across a depth edge it lifts
+      from = b.lastPoint && b.lastPoint.distanceTo(hit.point) < STROKE_JUMP ? b.stroke : null;
+      this.endStroke(!from);
     }
-    b.stroke.add(hit.uv.x * s.w, (1 - hit.uv.y) * s.h, now);
+    b.on = e;
+    if (patch) b.patch = patch;
+    if (!b.stroke) {
+      const grain = e ? grainOf((e.mesh.material as THREE.MeshStandardMaterial).map, s.w, s.h) : null;
+      const spec = { color: b.color, width: b.width, reach: b.reach, seed: b.seed++ };
+      b.stroke = new BrushStroke(s, at.sx, at.sy, spec, b.load, grain, { clip: at.clip, from });
+      // start where the last stroke stopped (as seen: a frame stands proud of
+      // the work), so the line runs on unbroken
+      if (from && b.lastPoint) {
+        const [lx, ly] = this.strokePx(at, this.onPlane(b.lastPoint, hit.point, b.plane ?? hit.normal));
+        b.stroke.add(lx, ly, b.lastT);
+      }
+    }
+    b.stroke.add(at.x, at.y, now);
     const changed = b.stroke.takeChanged();
     if (changed) {
       s.touch(changed, now);
-      this.touchWork(e.key);
+      if (e) this.touchWork(e.key);
       this.markDamaged();
     }
     if (b.lastPoint && now > b.lastT) {
       const d = hit.point.distanceTo(b.lastPoint);
       b.speed = b.speed * 0.7 + (d / (now - b.lastT)) * 0.3;
-      if (changed) {
+      if (changed && d < STROKE_JUMP) {
         b.pending += d;
         this.addHeat(d * 0.6);
         if (b.pending > 0.25) {
@@ -900,6 +1021,381 @@ export class FxEngine {
     b.lastPoint = hit.point.clone();
     b.lastT = now;
     sfx.brush(b.speed);
+  }
+
+  /**
+   * Where the brush paints at a hit: the work's own overlay, else a patch
+   * around the point (x, y in that surface's pixels; sx, sy px per metre).
+   * A work's edge or back takes no paint.
+   */
+  private brushAt(hit: Hit, b: BrushState): StrokeTarget | null {
+    const e = hit.canvas;
+    if (e) {
+      if (!hit.front || !hit.uv) return null;
+      const s = this.ensureSurface(e);
+      if (!s) return null;
+      b.plane = this.planeAt(hit, null, null);
+      return { s, e, patch: null, x: hit.uv.x * s.w, y: (1 - hit.uv.y) * s.h, sx: s.w / e.w, sy: s.h / e.h, clip: s.full };
+    }
+    const n = (b.plane = this.planeAt(hit, b.plane, b.lastPoint));
+    const patch = this.patchAt(hit, n, b.patch, { margin: b.width * 0.6 + 0.01, side: PATCH.brush, prev: b.lastPoint });
+    if (!patch) return null;
+    const [x, y] = this.patchPx(patch, hit.point);
+    const r = patch.rcv;
+    return { s: r.surface, e: null, patch, x, y, sx: r.sx, sy: r.sy, clip: r.clip };
+  }
+
+  /** A world point in a stroke target's pixels (outside a work's rectangle is fine: the stroke clips). */
+  private strokePx(t: StrokeTarget, p: THREE.Vector3): [number, number] {
+    if (!t.e) return this.patchPx(t.patch!, p);
+    const o = _v.copy(p).applyMatrix4(_inv.copy(t.e.mesh.matrixWorld).invert());
+    return [(o.x / t.e.w + 0.5) * t.s.w, (0.5 - o.y / t.e.h) * t.s.h];
+  }
+
+  /**
+   * Where the line of sight through `p` meets the plane through `at` with
+   * normal `n`: a point carried onto a nearer or further surface without a
+   * jump on screen.
+   */
+  private onPlane(p: THREE.Vector3, at: THREE.Vector3, n: THREE.Vector3): THREE.Vector3 {
+    const eye = new THREE.Vector3().setFromMatrixPosition(this.o.camera.matrixWorld);
+    const d = p.clone().sub(eye);
+    const den = d.dot(n);
+    if (Math.abs(den) < 1e-6) return p.clone();
+    return eye.addScaledVector(d, _v.subVectors(at, eye).dot(n) / den);
+  }
+
+  // ---- off the works: patches
+
+  /**
+   * The plane a free stroke paints in at a hit: a work's own; else the one
+   * it has been moving in (from `last`) while the surface only turns gently
+   * (a frame's mouldings) or the point stays close to that plane (a small
+   * face turned sideways); else, close to a work, the wall it hangs on.
+   */
+  private planeAt(hit: Hit, prev: THREE.Vector3 | null, last: THREE.Vector3 | null): THREE.Vector3 {
+    if (hit.canvas) return new THREE.Vector3().setFromMatrixColumn(hit.canvas.mesh.matrixWorld, 2).normalize();
+    const n = hit.normal;
+    if (prev && (prev.dot(n) > 0.5 || (last && Math.abs(_v.subVectors(hit.point, last).dot(prev)) < 0.05))) return prev;
+    for (const e of this.canvases.values()) {
+      const m = e.mesh.matrixWorld;
+      const cn = new THREE.Vector3().setFromMatrixColumn(m, 2).normalize();
+      if (cn.dot(n) < 0.5) continue;
+      _v.setFromMatrixPosition(m).sub(hit.point);
+      if (Math.abs(_v.dot(cn)) < 0.2 && _v.length() < Math.hypot(e.w, e.h) / 2 + 0.4) return cn;
+    }
+    return n.clone();
+  }
+
+  /**
+   * The patch a free stroke paints into at a hit (on plane `n`): the current
+   * one while the point stays `margin` m inside it (`below` m more at the
+   * bottom), else an existing one covering it as well, else a new one of
+   * `side` m, set ahead of where the stroke is heading (from `prev`).
+   */
+  private patchAt(
+    hit: Hit,
+    n: THREE.Vector3,
+    cur: Patch | null,
+    { margin, below = 0, side, prev }: { margin: number; below?: number; side: number; prev: THREE.Vector3 | null },
+  ): Patch | null {
+    const now = this.last || performance.now() / 1000;
+    if (cur && this.decals.keep(cur.rcv, now) && this.patchHolds(cur, hit.point, n, margin, below)) return cur;
+    const box = { x0: -margin, y0: -margin, x1: margin, y1: margin + below };
+    const re = this.decals.reuse(hit.point, n, box, { tol: 0.13, minDot: 0.9, minSide: PATCH.brush * 0.7 });
+    if (re && this.decals.keep(re.rcv, now)) return re;
+    const frame = this.frameAt(hit.point, n, hit.point.clone().sub(this.o.camera.position));
+    // hung a little lower when there must be room below (the spray's runs),
+    // and shifted toward where the stroke is going: fewer patches per stroke
+    let ax = 0;
+    let ay = below;
+    if (prev) {
+      _v.subVectors(hit.point, prev);
+      const x = _v.dot(frame.right);
+      const y = _v.dot(frame.down);
+      const l = Math.hypot(x, y);
+      if (l > 1e-4) {
+        const lim = side / 2 - margin - below - 0.02;
+        ax = THREE.MathUtils.clamp((x / l) * PATCH_AHEAD * side, -lim, lim);
+        ay = THREE.MathUtils.clamp(below + (y / l) * PATCH_AHEAD * side, -lim, lim);
+      }
+    }
+    const sq = { x0: ax - side / 2, y0: ay - side / 2, x1: ax + side / 2, y1: ay + side / 2 };
+    const targets = this.decalTargets(frame, sq);
+    const rcv = targets.length ? this.decals.add(frame, sq, targets, now, 0.32, side) : null;
+    return rcv ? { rcv, frame } : null;
+  }
+
+  /** Whether a point on plane `n` lies on a patch, `margin` m inside its edges (`below` m more at the bottom). */
+  private patchHolds(p: Patch, point: THREE.Vector3, n: THREE.Vector3, margin: number, below: number): boolean {
+    const f = p.frame;
+    // a frame's mouldings and the wall behind lie within the projection's depth
+    if (f.normal.dot(n) < 0.9 || Math.abs(_v.subVectors(point, f.origin).dot(f.normal)) > 0.13) return false;
+    const [x, y] = this.patchPx(p, point);
+    const c = p.rcv.clip;
+    const mx = margin * p.rcv.sx;
+    const my = margin * p.rcv.sy;
+    return x - mx > c.x0 && x + mx < c.x1 && y - my > c.y0 && y + my + below * p.rcv.sy < c.y1;
+  }
+
+  /** A world point in a patch's atlas pixels (projected along the patch's normal). */
+  private patchPx(p: Patch, point: THREE.Vector3): [number, number] {
+    const f = p.frame;
+    _v.subVectors(point, f.origin);
+    return [p.rcv.ox + _v.dot(f.right) * p.rcv.sx, p.rcv.oy + _v.dot(f.down) * p.rcv.sy];
+  }
+
+  /** A patch's receiver with its origin at a point on it (splat space around that point). */
+  private patchRcv(p: Patch, point: THREE.Vector3): Receiver {
+    const [ox, oy] = this.patchPx(p, point);
+    const r = p.rcv;
+    return { surface: r.surface, ox, oy, sx: r.sx, sy: r.sy, clip: r.clip };
+  }
+
+  // ------------------------------------------------------------- food
+
+  /** Throw a food at a screen point (NDC): an egg, a slice of pizza, a burger, an ice cream. False if nothing is there. */
+  throwFood(ndc: THREE.Vector2, food: Food): boolean {
+    if (food === "egg") return this.throwAt(ndc, "egg", "#ffffff");
+    if (!this.active || this.cleanT !== null) return false;
+    const hit = this.pick(ndc);
+    if (!hit) return false;
+    const from = this.hand();
+    // a slice floats a little, like a frisbee
+    const T = THREE.MathUtils.clamp(0.2 + from.distanceTo(hit.point) * 0.055, 0.25, 0.5) * (food === "pizza" ? 1.12 : 1);
+    const seed = this.nextSeed(0x7feb352d);
+    // the flavour comes from the seed, so the scoop in the air matches its splat
+    const look = food === "icecream" ? flavourOf(seed).id : "";
+    this.projectiles.launch(food, from, hit.point, T, look, (vel) => this.impact(food, hit, vel, look, seed));
+    this.o.onStat?.({ kind: "food", amount: 1 });
+    this.addHeat(1);
+    sfx.whoosh(T);
+    this.o.invalidate();
+    return true;
+  }
+
+  /** After a pizza, a burger or an ice cream has splatted: what falls off it, a few flecks, its sound. */
+  private foodLanded(kind: FoodKind, hit: Hit, frame: SplatFrame, vel: THREE.Vector3, seed: number, size: number): void {
+    const n = frame.normal;
+    // pieces lie on the top they hit (a floor, a bench), else they fall to the floor
+    const floor = n.y > 0.55 ? hit.point.y : (this.o.floorY ?? 0);
+    const low = this.o.quality === "low";
+    const sp = this.spatial(hit.point);
+    if (kind === "pizza") {
+      this.debris.slice(hit.point, frame, sliceAngle(seed, Math.abs(n.y) < 0.55), vel, size, floor, seed);
+      sfx.pizza(sp);
+    } else if (kind === "burger") {
+      this.debris.burger(hit.point, n, vel, floor, seed, low);
+      sfx.burger(sp);
+    } else {
+      this.debris.cone(hit.point, n, vel, floor, seed);
+      sfx.icecream(sp);
+    }
+    const colors = flecks(kind, seed).map((c) => new THREE.Color().setRGB(c[0] / 255, c[1] / 255, c[2] / 255, THREE.SRGBColorSpace));
+    this.particles.crumbs(hit.point, n, seed, colors, (kind === "pizza" ? 6 : 14) >> (low ? 1 : 0));
+  }
+
+  // ------------------------------------------------------------ darts
+
+  /** Throw a dart at a screen point (NDC): it sticks where it lands. False if nothing is there. */
+  throwDart(ndc: THREE.Vector2): boolean {
+    if (!this.active || this.cleanT !== null) return false;
+    const hit = this.pick(ndc);
+    if (!hit) return false;
+    const from = this.hand();
+    const T = THREE.MathUtils.clamp(DART_T.base + from.distanceTo(hit.point) * DART_T.perM, DART_T.min, DART_T.max);
+    const seed = this.nextSeed(0x2c1b3c6d);
+    const hex = DART_COLORS[Math.floor(this.dartsThrown++ / 3) % DART_COLORS.length];
+    this.projectiles.launch("dart", from, hit.point, T, hex, (vel) => this.dartLanded(hit, vel, hex, seed));
+    this.o.onStat?.({ kind: "dart", amount: 1 });
+    this.addHeat(0.3);
+    sfx.dartThrow();
+    this.o.invalidate();
+    return true;
+  }
+
+  /** The dart bites: stuck a little way in along its flight, a puncture under its point. */
+  private dartLanded(hit: Hit, vel: THREE.Vector3, hex: string, seed: number): void {
+    if (hit.canvas && !this.canvases.has(hit.canvas.mesh)) return; // the work left meanwhile
+    if (this.cleanT !== null) return;
+    const now = this.last || performance.now() / 1000;
+    const n = hit.normal.clone();
+    if (n.dot(vel) > 0) n.negate();
+    const dir = vel.clone().normalize();
+    // a grazing dart still bites: never flatter than ~20° to the surface
+    const into = -dir.dot(n);
+    if (into < 0.35) dir.addScaledVector(n, into - 0.35).normalize();
+    const kind = this.surfaceKind(hit.object, hit.canvas, n);
+    const depth = kind === "canvas" ? 0.018 : kind === "gilt" ? 0.008 : kind === "wood" ? 0.016 : 0.012;
+    this.darts.stick(hit.point.clone().addScaledVector(dir, depth), dir, hex, seed);
+    const frame = this.frameAt(hit.point, n, vel);
+    const vt = dir.clone().addScaledVector(n, -dir.dot(n));
+    const sinI = vt.length();
+    const tl = sinI || 1;
+    const plan = buildPuncture(seed, vt.dot(frame.right) / tl, vt.dot(frame.down) / tl, smoothstep(0.3, 0.97, sinI) * 0.85, kind === "canvas");
+    for (const rcv of this.receivers(frame, plan.extent, hit, true)) for (const s of plan.shapes) stampShape(s, rcv, now);
+    sfx.dartHit(this.spatial(hit.point), kind);
+    if (hit.canvas) this.touchWork(hit.canvas.key);
+    this.markDamaged();
+    this.o.invalidate();
+  }
+
+  // ------------------------------------------------------------ spray
+
+  /** Start spraying at a screen point (NDC) with the can's cone (`radius`, m at arm's length). */
+  sprayDown(ndc: THREE.Vector2, colorHex: string, radius: number): void {
+    if (!this.active || this.cleanT !== null) return;
+    this.sprayUp();
+    const now = this.last || performance.now() / 1000;
+    // a can left alone for a while gets a shake first
+    if (now - this.shaken > SHAKE_S) sfx.sprayShake();
+    this.shaken = now;
+    this.spray = {
+      ndc: ndc.clone(),
+      can: new SprayCan(hexRgb(colorHex), radius, this.nextSeed(0x2c1b3c6d), SPRAY_LIMITS[this.o.quality ?? "high"]),
+      patch: null,
+      plane: null,
+      mist: new THREE.Color(colorHex),
+      puff: 0,
+      lastPoint: null,
+      pending: 0,
+    };
+    this.o.invalidate();
+  }
+
+  sprayMove(ndc: THREE.Vector2): void {
+    if (!this.spray) return;
+    this.spray.ndc.copy(ndc);
+    this.o.invalidate();
+  }
+
+  sprayUp(): void {
+    const sp = this.spray;
+    if (!sp) return;
+    if (sp.pending > 0) this.o.onStat?.({ kind: "spray", amount: sp.pending });
+    this.spray = null;
+    this.shaken = this.last || performance.now() / 1000;
+    sfx.sprayStop();
+    this.o.invalidate();
+  }
+
+  get spraying(): boolean {
+    return this.spray !== null;
+  }
+
+  /** One frame of the can: mist on everything the cone covers, paint building up into runs, the hiss. */
+  private sampleSpray(now: number, dt: number): void {
+    const sp = this.spray;
+    if (!sp) return;
+    const hit = this.pick(sp.ndc);
+    const carry = hit ? sp.can.carry(hit.distance) : 0;
+    // into the air, or at the edge of a work (which takes no paint): only the hiss
+    if (!hit || carry <= 0 || (hit.canvas && !hit.front)) {
+      sp.lastPoint = null;
+      sp.plane = null;
+      sfx.spray(0);
+      return;
+    }
+    const sigma = sp.can.sigma(hit.distance);
+    const reach = sp.can.reach(sigma);
+    const n = (sp.plane = this.planeAt(hit, sp.plane, sp.lastPoint));
+    const frame = this.frameAt(hit.point, n, hit.point.clone().sub(this.o.camera.position));
+    const vertical = Math.abs(n.y) < 0.55;
+    // where the axis was a frame ago, as seen on this surface (the mist is
+    // laid along the way); a jump is a fresh start
+    let back: { x: number; y: number } | null = null;
+    if (sp.lastPoint && sp.lastPoint.distanceTo(hit.point) < STROKE_JUMP) {
+      _v.subVectors(this.onPlane(sp.lastPoint, hit.point, n), hit.point);
+      back = { x: _v.dot(frame.right), y: _v.dot(frame.down) };
+    }
+    // the works the cone reaches, and unless one takes all of it the patch of wall around
+    const bx = back?.x ?? 0;
+    const by = back?.y ?? 0;
+    const ext = { x0: Math.min(bx, 0) - reach, y0: Math.min(by, 0) - reach, x1: Math.max(bx, 0) + reach, y1: Math.max(by, 0) + reach };
+    const targets: SprayTarget[] = [];
+    const works: (CanvasEntry | null)[] = [];
+    let held = false;
+    for (const e of this.canvases.values()) {
+      const r = this.canvasReceiver(e, frame, ext, hit);
+      if (!r) continue;
+      targets.push({ rcv: r.rcv, feather: false });
+      works.push(e);
+      if (r.contained) held = true;
+    }
+    if (!held) {
+      const p = this.patchAt(hit, n, sp.patch, { margin: Math.min(reach, 0.3), below: vertical ? RUN_ROOM : 0, side: PATCH.spray, prev: back && sp.lastPoint });
+      if (p) {
+        sp.patch = p;
+        targets.push({ rcv: this.patchRcv(p, hit.point), feather: true });
+        works.push(null);
+      }
+    }
+    const k = dt * carry;
+    const changed = sp.can.spray(targets, sigma, k, back);
+    let painted = false;
+    for (let i = 0; i < targets.length; i++) {
+      const r = changed[i];
+      if (!r) continue;
+      targets[i].rcv.surface.touch(r, now);
+      const e = works[i];
+      if (e) this.touchWork(e.key);
+      painted = true;
+    }
+    if (painted) {
+      this.markDamaged();
+      if (vertical) this.sprayRuns(sp.can.build(hit.point, frame.right, frame.down, sigma, k), targets, now);
+      this.addHeat(dt * 0.15);
+      if (sp.lastPoint) {
+        const d = hit.point.distanceTo(sp.lastPoint);
+        if (d < STROKE_JUMP) {
+          sp.pending += d;
+          this.addHeat(d * 0.5);
+        }
+        if (sp.pending > 0.25) {
+          this.o.onStat?.({ kind: "spray", amount: sp.pending });
+          sp.pending = 0;
+        }
+      }
+    }
+    sp.lastPoint = hit.point.clone();
+    // a faint cloud of the colour hangs where the can is aimed
+    if (this.o.quality !== "low" && (sp.puff += dt) > 0.05) {
+      sp.puff = 0;
+      const r = Math.random;
+      this.particles.emit({
+        pos: hit.point.clone().addScaledVector(n, 0.02 + 0.04 * r()),
+        vel: n.clone().multiplyScalar(0.1 + 0.1 * r()).add(new THREE.Vector3(r() - 0.5, r() - 0.4, r() - 0.5).multiplyScalar(0.12)),
+        life: 0.6 + 0.5 * r(),
+        size0: sigma * 1.5,
+        size1: sigma * 3.5,
+        color: sp.mist,
+        alpha: 0.05 * carry,
+        gravity: 0,
+        drag: 2.5,
+        shape: Shape.Soft,
+      });
+    }
+    sfx.spray(1 - smoothstep(0.5, 3.5, hit.distance));
+  }
+
+  /** Start the runs where the paint has built up, on every surface the cone covers. */
+  private sprayRuns(specs: DripSpec[], targets: SprayTarget[], now: number): void {
+    // over a wall patch the run carries on past a work's lower edge onto the
+    // frame and wall; otherwise it ends before the edge of what it runs down
+    const walled = targets.some((t) => t.feather);
+    for (const spec of specs) {
+      let room = Infinity;
+      for (const t of targets) {
+        if (walled && !t.feather) continue;
+        const r = t.rcv;
+        room = Math.min(room, (r.clip.y1 - 2 - (r.oy + spec.y * r.sy)) / r.sy - spec.bead * 1.5);
+      }
+      if (room < 0.01) continue;
+      spec.len = Math.min(spec.len, room);
+      const run = new DripRun(spec);
+      for (const t of targets) t.rcv.surface.addLive(run.view(t.rcv), now);
+      this.runs.push(run);
+    }
   }
 
   // ------------------------------------------------- held: marker, sword
@@ -1279,6 +1775,7 @@ export class FxEngine {
   clean(): void {
     if (this.cleanT !== null) return;
     this.brushUp();
+    this.sprayUp();
     this.triggerUp();
     this.sword = null;
     this.trigger = null;
@@ -1297,6 +1794,10 @@ export class FxEngine {
     for (const c of this.decals.centres()) items.push({ d: c.at.distanceTo(cam), set: (t) => (decalSeq[c.id] = t), at: c.at, work: false });
     const shardSeq: number[] = [];
     this.shards.positions().forEach((p, i) => items.push({ d: p.distanceTo(cam) + 0.5, set: (t) => (shardSeq[i] = t), at: p, work: false }));
+    const debrisSeq: number[] = [];
+    this.debris.positions().forEach((p, i) => items.push({ d: p.distanceTo(cam) + 0.5, set: (t) => (debrisSeq[i] = t), at: p, work: false }));
+    const dartSeq: number[] = [];
+    this.darts.positions().forEach((p, i) => items.push({ d: p.distanceTo(cam) + 0.3, set: (t) => (dartSeq[i] = t), at: p, work: false }));
     items.sort((a, b) => a.d - b.d);
     // a beat for the alarm to ring out, then one item after another
     const lead = this.alarm > 0.05 ? 0.6 : 0.25;
@@ -1310,6 +1811,8 @@ export class FxEngine {
     this.decals.setSequence((id) => decalSeq[id] ?? lead);
     this.decals.uniforms.uOvlSeqDur.value = CLEAN_ITEM_S;
     this.shards.setSequence((i) => shardSeq[i] ?? lead, CLEAN_ITEM_S * 0.8);
+    this.debris.setSequence((i) => debrisSeq[i] ?? lead, CLEAN_ITEM_S * 0.8);
+    this.darts.setSequence((i) => dartSeq[i] ?? lead, CLEAN_ITEM_S * 0.6);
     this.cleanEnd = lead + Math.max(0, items.length - 1) * step + CLEAN_ITEM_S + 0.15;
     this.cleanT = 0;
     this.particles.clear();
@@ -1329,6 +1832,8 @@ export class FxEngine {
     }
     this.decals.uniforms.uOvlSeqT.value = t;
     this.shards.setClock(t);
+    this.debris.setClock(t);
+    this.darts.setClock(t);
     for (const q of this.cleanQueue) {
       if (!q.done && t >= q.at) {
         q.done = true;
@@ -1354,6 +1859,8 @@ export class FxEngine {
     this.cuts = [];
     this.projectiles.clear();
     this.shards.clear();
+    this.debris.clear();
+    this.darts.clear();
     this.particles.clear();
     this.cleanQueue = [];
     this.wet = false;
@@ -1373,6 +1880,8 @@ export class FxEngine {
     let busy = false;
     if (this.projectiles.update(dt)) busy = true;
     if (this.shards.update(dt)) busy = true;
+    if (this.debris.update(dt)) busy = true;
+    if (this.darts.update(dt)) busy = true;
     if (this.particles.update(dt)) busy = true;
     if (this.runs.length) {
       for (const r of this.runs) r.step(dt);
@@ -1382,6 +1891,10 @@ export class FxEngine {
     }
     if (this.brush) {
       this.sampleBrush(now);
+      busy = true;
+    }
+    if (this.spray) {
+      this.sampleSpray(now, dt);
       busy = true;
     }
     if (this.updateHeld(dt, now)) busy = true;
@@ -1417,6 +1930,8 @@ export class FxEngine {
       parked: this.parked.size,
       decals: this.decals.count,
       shards: this.shards.count,
+      debris: this.debris.count,
+      darts: this.darts.count,
       runs: this.runs.length,
       cuts: this.cuts.length,
       heat: this.heat,

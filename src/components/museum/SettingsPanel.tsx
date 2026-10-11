@@ -25,7 +25,6 @@ const SAMPLE =
 const PACES: { key: Pace; label: string }[] = [
   { key: "walk", label: "Walk" },
   { key: "run", label: "Run" },
-  { key: "sprint", label: "Sprint" },
 ];
 
 function Choice<T extends string | boolean>({
@@ -157,11 +156,9 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
           <p>
             {touch
               ? "Push the stick (bottom left) to walk, as far as you push it, that fast; double-tap the floor to go there."
-              : s.pace === "sprint"
-                ? "Twice a run: the rooms go by fast."
-                : s.pace === "run"
-                  ? "You run by default."
-                  : "Hold W for a few seconds to run."}
+              : s.pace === "run"
+                ? "You run by default."
+                : "Hold W for a few seconds to run."}
           </p>
         </section>
         <section>

@@ -108,8 +108,8 @@ const _ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const _sp = new THREE.Vector3();
 const _sq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
 
-/** A soft round falloff for the contact shadows. */
-function shadowTexture(): THREE.DataTexture {
+/** A soft round falloff for the contact shadows (food debris uses it too). */
+export function shadowTexture(): THREE.DataTexture {
   const S = 64;
   const d = new Uint8Array(S * S * 4);
   for (let y = 0; y < S; y++) {

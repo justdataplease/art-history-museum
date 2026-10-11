@@ -106,13 +106,17 @@ export interface WorkAbout {
   sameYear: { artistSlug: string; artistName: string; slug: string; title: string }[];
 }
 
-/** The artist before or after in the timeline's order: an artist's gallery ends at doors to both. */
+/** A related artist: an artist's gallery ends at doors to two (or, when none is known, to the artists before and
+ *  after in the timeline's order). */
 export interface GalleryLink {
   slug: string;
   name: string;
   birthYear: number | null;
   deathYear: number | null;
   periodName: string;
+  /** What relates them, e.g. "Impressionism" or "Delft School" (src/lib/rooms.ts relatedArtists); absent for the
+   *  timeline's neighbours, "" when nothing names it. */
+  why?: string;
 }
 
 /** One floor of a custom room (rooms spanning eras get one floor per era, joined by an elevator). */

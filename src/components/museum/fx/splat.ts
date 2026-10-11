@@ -1183,3 +1183,7 @@ export function buildPaintballSplat(p: BallHit): SplatPlan {
   }
   return { shapes: [fill, shell], drips, extent: planExtent([fill, shell], drips) };
 }
+
+// the primitives and helpers, for the food (food.ts) and the darts' punctures
+export { BODY, CAPSULE, POLY, bodyTable, bodyRadiusAt, biasedAngle, ellipseAlong, bottomAt, planExtent, shardOutline };
+export type { Prim, BodyPrim };

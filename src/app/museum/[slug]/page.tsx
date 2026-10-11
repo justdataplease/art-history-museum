@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getArtist, getArtistSlugs, getTimeline } from "@/lib/data";
 import { withPhases } from "@/lib/phases";
+import { relatedArtists } from "@/lib/rooms";
 import type { GalleryLink } from "@/lib/types";
 import { FLAGSHIP_THUMB_PX, paintingTextureUrl, wallTexturePx } from "@/lib/img";
 import { buildLayout, entryPreloads } from "@/components/museum/layout";
@@ -37,14 +38,33 @@ const loadArtist = cache(async (slug: string) => {
   return a && withPhases(a);
 });
 
-/** The artists before and after this one in the timeline's order (by period, then birth): the doors at the end
- *  of the gallery. The first and the last lead back to the timeline. */
+/** The two artists most related to this one (src/lib/rooms.ts relatedArtists): the doors at the end of the
+ *  gallery. Without the room index, the artists before and after in the timeline's order (by period, then birth),
+ *  the first and the last leading back to the timeline. */
 async function neighbours(slug: string): Promise<{ prev: GalleryLink | null; next: GalleryLink | null }> {
   const { periods, artists } = await getTimeline();
   const order = new Map(periods.map((p, i) => [p.slug, i]));
   const names = new Map(periods.map((p) => [p.slug, p.name]));
-  const list = artists
-    .filter((a) => a.paintingCount > 0)
+  const hung = artists.filter((a) => a.paintingCount > 0);
+  const bySlug = new Map(hung.map((a) => [a.slug, a]));
+  const kin = relatedArtists(slug, hung).flatMap((r) => {
+    const a = bySlug.get(r.slug);
+    return a ? [{ a, why: r.why }] : [];
+  });
+  if (kin.length === 2) {
+    const [prev, next] = kin.map(
+      ({ a, why }): GalleryLink => ({
+        slug: a.slug,
+        name: a.name,
+        birthYear: a.birthYear,
+        deathYear: a.deathYear,
+        periodName: names.get(a.periodSlug) ?? "",
+        why,
+      })
+    );
+    return { prev, next };
+  }
+  const list = hung
     .sort(
       (a, b) =>
         (order.get(a.periodSlug) ?? 1e3) - (order.get(b.periodSlug) ?? 1e3) ||

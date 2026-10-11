@@ -1,11 +1,18 @@
 // What flies: a wobbling glob of paint (stretched along its path, a few
 // droplets trailing it), a tumbling egg or a paintball (a small glossy
-// gelatin sphere, drawn stretched along its path at speed), each on a
-// ballistic arc solved to land exactly on the aimed point at a chosen time.
+// gelatin sphere, drawn stretched along its path at speed), food (a slice
+// of pizza spinning flat like a frisbee, a tumbling burger, an ice cream
+// turning over) or a dart (point first, rolling slowly about its length),
+// each on a ballistic arc solved to land exactly on the aimed point at a
+// chosen time.
 
 import * as THREE from "three";
+import { dartFlightGeometry, dartMetalGeometry } from "./darts";
+import { BURGER_STACK, CONE, FLAVOURS, pieceGeometry, scoopGeometry, type Piece } from "./food";
 
-export type ProjectileKind = "paint" | "egg" | "ball";
+/** What lands as a splat. */
+export type SplatKind = "paint" | "egg" | "ball" | "pizza" | "burger" | "icecream";
+export type ProjectileKind = SplatKind | "dart";
 
 /** Gentler than real gravity: a readable arc over a few metres. */
 export const ARC_G = new THREE.Vector3(0, -6.5, 0);
@@ -44,9 +51,14 @@ function eggGeometry(): THREE.BufferGeometry {
 }
 
 const _v = new THREE.Vector3();
+const _h = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _UP = new THREE.Vector3(0, 1, 0);
+const _Z = new THREE.Vector3(0, 0, 1);
 const TRAIL = 4;
+/** The ice cream in flight: the cone's middle and the scoop's base, from the pair's middle. */
+const CONE_Y = -0.03;
+const SCOOP_Y = CONE.L / 2 - 0.006 + CONE_Y;
 
 export class ProjectileSystem {
   readonly group = new THREE.Group();
@@ -57,6 +69,13 @@ export class ProjectileSystem {
   private readonly eggGeo = eggGeometry();
   private readonly eggMat = new THREE.MeshStandardMaterial({ color: "#efe3cf", roughness: 0.48, metalness: 0 });
   private readonly paintMats = new Map<string, THREE.MeshStandardMaterial>();
+  private readonly foodGeos = new Map<Piece, THREE.BufferGeometry>();
+  private readonly scoopGeos = FLAVOURS.map(scoopGeometry);
+  private readonly foodMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0, side: THREE.DoubleSide });
+  private readonly dartMetalGeo = dartMetalGeometry();
+  private readonly dartFlightGeo = dartFlightGeometry();
+  private readonly dartMetalMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.85, roughness: 0.3 });
+  private readonly flightMats = new Map<string, THREE.MeshStandardMaterial>();
 
   /** render layer for everything that flies */
   layer = 0;
@@ -86,12 +105,34 @@ export class ProjectileSystem {
     return m;
   }
 
+  private food(p: Piece): THREE.BufferGeometry {
+    let g = this.foodGeos.get(p);
+    if (!g) {
+      g = pieceGeometry(p);
+      this.foodGeos.set(p, g);
+    }
+    return g;
+  }
+
+  private flightMat(hex: string): THREE.MeshStandardMaterial {
+    let m = this.flightMats.get(hex);
+    if (!m) {
+      m = new THREE.MeshStandardMaterial({ vertexColors: true, color: hex, metalness: 0, roughness: 0.5, side: THREE.DoubleSide });
+      m.name = "fx-dart-flight";
+      this.flightMats.set(hex, m);
+    }
+    return m;
+  }
+
   /** Meshes for every material used, so a warm-up compile can see them. */
   warmupObjects(): THREE.Object3D[] {
     const blob = new THREE.Mesh(this.blobGeo, this.paintMat("#ffffff"));
     const egg = new THREE.Mesh(this.eggGeo, this.eggMat);
     const ball = new THREE.Mesh(this.ballGeo, this.ballMat("#ffffff"));
-    return [blob, egg, ball];
+    const food = new THREE.Mesh(this.food("slice"), this.foodMat);
+    const metal = new THREE.Mesh(this.dartMetalGeo, this.dartMetalMat);
+    const flight = new THREE.Mesh(this.dartFlightGeo, this.flightMat("#ffffff"));
+    return [blob, egg, ball, food, metal, flight];
   }
 
   get active(): boolean {
@@ -99,32 +140,35 @@ export class ProjectileSystem {
   }
 
   /**
-   * Launch from `from` to land on `to` after `T` seconds.
-   * onLand receives the velocity at impact.
+   * Launch from `from` to land on `to` after `T` seconds. `look`: the paint,
+   * the ball's fill or the dart's flights (a colour), or the ice cream's
+   * flavour (its id). onLand receives the velocity at impact.
    */
-  launch(kind: ProjectileKind, from: THREE.Vector3, to: THREE.Vector3, T: number, color: string, onLand: (vel: THREE.Vector3) => void): void {
+  launch(kind: ProjectileKind, from: THREE.Vector3, to: THREE.Vector3, T: number, look: string, onLand: (vel: THREE.Vector3) => void): void {
     const g = kind === "ball" ? BALL_G : ARC_G;
     const v0 = to.clone().sub(from).divideScalar(T).addScaledVector(g, -0.5 * T);
     const obj = new THREE.Group();
     const parts: THREE.Mesh[] = [];
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, y = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.y = y;
+      m.userData.fxIgnore = true;
+      parts.push(m);
+      obj.add(m);
+    };
     if (kind === "paint") {
-      const mat = this.paintMat(color);
-      for (let i = 0; i <= TRAIL; i++) {
-        const m = new THREE.Mesh(this.blobGeo, mat);
-        m.userData.fxIgnore = true;
-        parts.push(m);
-        obj.add(m);
-      }
-    } else if (kind === "ball") {
-      const m = new THREE.Mesh(this.ballGeo, this.ballMat(color));
-      m.userData.fxIgnore = true;
-      parts.push(m);
-      obj.add(m);
+      const mat = this.paintMat(look);
+      for (let i = 0; i <= TRAIL; i++) add(this.blobGeo, mat);
+    } else if (kind === "ball") add(this.ballGeo, this.ballMat(look));
+    else if (kind === "egg") add(this.eggGeo, this.eggMat);
+    else if (kind === "pizza") add(this.food("slice"), this.foodMat);
+    else if (kind === "burger") for (const s of BURGER_STACK) add(this.food(s.piece), this.foodMat, s.y);
+    else if (kind === "icecream") {
+      add(this.food("cone"), this.foodMat, CONE_Y);
+      add(this.scoopGeos[Math.max(0, FLAVOURS.findIndex((f) => f.id === look))], this.foodMat, SCOOP_Y);
     } else {
-      const m = new THREE.Mesh(this.eggGeo, this.eggMat);
-      m.userData.fxIgnore = true;
-      parts.push(m);
-      obj.add(m);
+      add(this.dartMetalGeo, this.dartMetalMat);
+      add(this.dartFlightGeo, this.flightMat(look));
     }
     obj.userData.fxIgnore = true;
     obj.traverse((o) => o.layers.set(this.layer));
@@ -141,6 +185,27 @@ export class ProjectileSystem {
 
   private place(f: Flight, t: number): void {
     const vel = _v.copy(f.v0).addScaledVector(f.g, t);
+    if (f.kind === "pizza") {
+      // flat like a frisbee, the cheese tilted back toward the thrower, spinning, its tilt wavering
+      this.at(f, t, f.obj.position);
+      _h.set(-vel.x, 0, -vel.z);
+      if (_h.lengthSq() < 1e-6) _h.set(0, 0, 1);
+      _h.normalize().multiplyScalar(0.6).addScaledVector(_UP, 0.8).addScaledVector(f.axis, 0.18 * Math.sin((t + f.phase) * 9)).normalize();
+      f.obj.quaternion.setFromUnitVectors(_Z, _h).multiply(_q.setFromAxisAngle(_Z, (t + f.phase) * 16));
+      return;
+    }
+    if (f.kind === "dart") {
+      // point first along its path
+      this.at(f, t, f.obj.position);
+      f.obj.quaternion.setFromUnitVectors(_UP, vel.normalize()).multiply(_q.setFromAxisAngle(_UP, (t + f.phase) * 20));
+      return;
+    }
+    if (f.kind === "burger" || f.kind === "icecream") {
+      // heavier: a slower tumble than an egg's
+      this.at(f, t, f.obj.position);
+      f.obj.quaternion.setFromAxisAngle(f.axis, (t + f.phase) * (f.kind === "burger" ? 9 : 7));
+      return;
+    }
     if (f.kind === "ball") {
       // drawn as it would smear over a frame: stretched along its path
       const m = f.parts[0];
@@ -205,5 +270,12 @@ export class ProjectileSystem {
     this.eggMat.dispose();
     this.paintMats.forEach((m) => m.dispose());
     this.ballMats.forEach((m) => m.dispose());
+    this.foodGeos.forEach((g) => g.dispose());
+    this.scoopGeos.forEach((g) => g.dispose());
+    this.foodMat.dispose();
+    this.dartMetalGeo.dispose();
+    this.dartFlightGeo.dispose();
+    this.dartMetalMat.dispose();
+    this.flightMats.forEach((m) => m.dispose());
   }
 }

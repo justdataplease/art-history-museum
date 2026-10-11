@@ -114,7 +114,7 @@ export interface GalleryProps {
     /** A click on the screen or the projector. */
     onScreen: () => void;
   };
-  /** An artist's gallery: the doors to the artists before and after (layout.exits). */
+  /** An artist's gallery: the doors to two related artists (layout.exits). */
   exits?: {
     prev: GalleryLink | null;
     next: GalleryLink | null;

@@ -11,6 +11,11 @@
 // passing twice over a pixel is still one layer of paint), so the stroke
 // tracks the strongest coverage / thickness it has laid at each pixel and
 // composites only the increment.
+//
+// A stroke may be confined to part of its surface (a patch's cell of the
+// shared decal atlas). When the brush slides onto another surface without
+// lifting, the next stroke carries on from this one: same bristles, the load
+// and the distance run so far (no fresh touch-down blob).
 
 import { clamp, hash2, rng, smoothstep, vnoise } from "./noise";
 import { rectUnion, type PaintSurface, type Rect } from "./surface";
@@ -32,6 +37,13 @@ export interface BrushSpec {
   seed: number;
 }
 
+export interface StrokeOptions {
+  /** the pixels it may paint (default: the whole surface) */
+  clip?: Rect;
+  /** the stroke it carries on from (the brush slid onto this surface) */
+  from?: BrushStroke | null;
+}
+
 interface Bristle {
   off: number; // across the brush, -0.5..0.5 of the width
   r: number; // px
@@ -44,16 +56,17 @@ interface Bristle {
   id: number;
 }
 
-// One stroke at a time: the max-tracking buffers are shared and reused.
+// One stroke at a time: the max-tracking buffers (over the stroke's clip)
+// are shared and reused.
 let bufA = new Float32Array(0);
 let bufT = new Float32Array(0);
-let bufW = 0;
 let bufOwner: BrushStroke | null = null;
 
 export class BrushStroke {
   /** surface pixels touched since the last takeChanged() */
   private changed: Rect | null = null;
   private readonly surf: PaintSurface;
+  private readonly clip: Rect;
   private readonly spec: BrushSpec;
   private readonly sx: number; // px per metre
   private readonly sy: number;
@@ -67,18 +80,28 @@ export class BrushStroke {
   private readonly startLoad: number;
   private readonly seed: number;
   private readonly grain: Grain | null;
+  /** carrying on from another stroke: metres run when it took over (else −∞) */
+  private readonly joined: number = -Infinity;
+  /** share of its relief the paint lays (fades as the brush slides off onto another surface) */
+  private relief = 1;
   ended = false;
 
   /** @param startLoad 1 for a freshly loaded brush, less when a drag continues onto another work */
-  constructor(surf: PaintSurface, sx: number, sy: number, spec: BrushSpec, startLoad = 1, grain: Grain | null = null) {
+  constructor(surf: PaintSurface, sx: number, sy: number, spec: BrushSpec, startLoad = 1, grain: Grain | null = null, opts: StrokeOptions = {}) {
+    const from = opts.from;
     this.surf = surf;
+    this.clip = opts.clip ?? surf.full;
     this.grain = grain;
     this.spec = spec;
     this.sx = sx;
     this.sy = sy;
-    this.startLoad = startLoad;
-    this.seed = spec.seed;
-    const r = rng(spec.seed);
+    this.startLoad = from ? from.startLoad : startLoad;
+    this.seed = from ? from.seed : spec.seed;
+    if (from) {
+      this.dist = this.joined = from.dist;
+      this.speed = from.speed;
+    }
+    const r = rng(this.seed);
     const widthPx = spec.width * 0.5 * (sx + sy);
     // bristles clump into tufts a few millimetres apart: those are the grooves
     const n = Math.round(clamp(widthPx / 2.4, 8, 64));
@@ -88,6 +111,8 @@ export class BrushStroke {
       const off = ((i + 0.5) / n - 0.5) * (1 + 0.04 * (r() - 0.5)) + (r() - 0.5) * (0.9 / n);
       const edge = smoothstep(0.36, 0.5, Math.abs(off));
       const tone = 0.95 + 0.1 * r();
+      // carrying on at the same resolution: each bristle keeps the colour it picked up
+      const was = from?.bristles.length === n ? from.bristles[i].c : null;
       return {
         off,
         // neighbours overlap: a loaded brush leaves a solid body of paint
@@ -95,7 +120,7 @@ export class BrushStroke {
         load: 0.75 + 0.4 * r(),
         thick: (0.1 + 0.16 * r()) * (1 + 0.9 * edge),
         give: r() * r(),
-        c: [c[0] * tone, c[1] * tone, c[2] * tone],
+        c: was ? [was[0], was[1], was[2]] : [c[0] * tone, c[1] * tone, c[2] * tone],
         // the middle of the brush touches first: a rounded, ragged front
         start: widthPx * (0.22 * (1 - Math.sqrt(Math.max(0, 1 - 4 * off * off))) + 0.06 * r() * r()),
         lift: r(),
@@ -103,12 +128,11 @@ export class BrushStroke {
       };
     });
     if (bufOwner && bufOwner !== this) bufOwner.end();
-    const npx = surf.w * surf.h;
+    const npx = (this.clip.x1 - this.clip.x0) * (this.clip.y1 - this.clip.y0);
     if (bufA.length < npx) {
       bufA = new Float32Array(npx);
       bufT = new Float32Array(npx);
     }
-    bufW = surf.w;
     bufOwner = this;
   }
 
@@ -145,14 +169,17 @@ export class BrushStroke {
     if (this.pts.length > 4) this.pts.shift();
   }
 
-  /** Lift the brush: finish the last half segment and free the shared buffers. */
-  end(): void {
+  /**
+   * Lift the brush: finish the last half segment and free the shared
+   * buffers. With `lift` false the brush is not lifted but slides on onto
+   * another surface (the next stroke carries on from the last point).
+   */
+  end(lift = true): void {
     if (this.ended) return;
     const n = this.pts.length;
     if (n >= 2 && this.lastMid) {
       const last = this.pts[n - 1];
       this.curve(this.lastMid, { x: (this.lastMid.x + last.x) / 2, y: (this.lastMid.y + last.y) / 2 }, last);
-      // the lift: bristles leave the canvas one by one over a short run
       const prev = this.pts[n - 2];
       const dx = last.x - prev.x;
       const dy = last.y - prev.y;
@@ -160,25 +187,40 @@ export class BrushStroke {
       if (dl > 1e-3) {
         const tx = dx / dl;
         const ty = dy / dl;
-        const run = this.spec.width * 0.5 * (this.sx + this.sy) * 0.45;
+        const widthPx = this.spec.width * 0.5 * (this.sx + this.sy);
+        // the lift: bristles leave the canvas one by one over a short run;
+        // sliding on: it runs on a little under the next stroke's start, its
+        // relief fading out, so the hand-over leaves no ridge to catch the light
+        const run = widthPx * (lift ? 0.45 : 0.6);
         const steps = Math.max(2, Math.ceil(run / 0.5));
         for (let k = 1; k <= steps; k++) {
           const f = k / steps;
-          this.stamp(last.x + tx * run * f, last.y + ty * run * f, tx, ty, 1 - 0.5 * f, 1 - f);
+          if (lift) this.stamp(last.x + tx * run * f, last.y + ty * run * f, tx, ty, 1 - 0.5 * f, 1 - f);
+          else {
+            this.relief = 1 - f;
+            this.stamp(last.x + tx * run * f, last.y + ty * run * f, tx, ty, 1);
+          }
         }
       }
     }
+    this.cancel();
+  }
+
+  /** Stop without painting any more (its surface went away): free the shared buffers. */
+  cancel(): void {
     this.ended = true;
-    if (bufOwner === this) {
-      const b = this.bbox;
-      if (b) {
-        for (let y = b.y0; y < b.y1; y++) {
-          bufA.fill(0, y * bufW + b.x0, y * bufW + b.x1);
-          bufT.fill(0, y * bufW + b.x0, y * bufW + b.x1);
-        }
+    if (bufOwner !== this) return;
+    const b = this.bbox;
+    const c = this.clip;
+    const w = c.x1 - c.x0;
+    if (b) {
+      for (let y = b.y0; y < b.y1; y++) {
+        const row = (y - c.y0) * w - c.x0;
+        bufA.fill(0, row + b.x0, row + b.x1);
+        bufT.fill(0, row + b.x0, row + b.x1);
       }
-      bufOwner = null;
     }
+    bufOwner = null;
   }
 
   /** Pixels changed since the last call (the caller marks them dirty). */
@@ -219,7 +261,8 @@ export class BrushStroke {
     if (bufOwner !== this) return;
     const s = this.surf;
     const W = s.w;
-    const H = s.h;
+    const { x0: cx0, y0: cy0, x1: cx1, y1: cy1 } = this.clip;
+    const bw = cx1 - cx0;
     const load = this.load;
     // fast strokes skim: narrower, lighter, thinner
     const fast = smoothstep(0.35, 2.2, this.speed);
@@ -233,6 +276,9 @@ export class BrushStroke {
     let bx1 = -Infinity;
     let by1 = -Infinity;
     const distPx = this.dist * 0.5 * (this.sx + this.sy);
+    // carrying on over the last stroke's end (another surface, drawn over it):
+    // the paint's relief swells in, so its first edge leaves no ridge
+    const join = smoothstep(0, 0.6 * widthPx, distPx - this.joined * 0.5 * (this.sx + this.sy));
     for (const b of this.bristles) {
       if (distPx < b.start || b.lift > lift) continue;
       // this bristle's share of what's left, weak ones giving out first
@@ -242,9 +288,9 @@ export class BrushStroke {
       const cy = y + ny * b.off * widthPx;
       const rad = b.r;
       // pick up wet paint under the bristle
-      const ix = cx | 0;
-      const iy = cy | 0;
-      if (ix >= 0 && iy >= 0 && ix < W && iy < H) {
+      const ix = Math.floor(cx);
+      const iy = Math.floor(cy);
+      if (ix >= cx0 && iy >= cy0 && ix < cx1 && iy < cy1) {
         const i = (iy * W + ix) * 4;
         const k = 0.016 * s.mat[i + 1] * s.col[i + 3] * (1 / 65025);
         if (k > 0.001) {
@@ -254,10 +300,10 @@ export class BrushStroke {
         }
       }
       const reach = rad + 0.5;
-      const x0 = Math.max(0, Math.floor(cx - reach));
-      const x1 = Math.min(W - 1, Math.ceil(cx + reach));
-      const y0 = Math.max(0, Math.floor(cy - reach));
-      const y1 = Math.min(H - 1, Math.ceil(cy + reach));
+      const x0 = Math.max(cx0, Math.floor(cx - reach));
+      const x1 = Math.min(cx1 - 1, Math.ceil(cx + reach));
+      const y0 = Math.max(cy0, Math.floor(cy - reach));
+      const y1 = Math.min(cy1 - 1, Math.ceil(cy + reach));
       if (x1 < x0 || y1 < y0) continue;
       // as it runs dry each bristle's track thins into long, broken runs
       // (correlated along the stroke, not dashes), and what is left catches
@@ -268,7 +314,7 @@ export class BrushStroke {
       const dry = l < 0.6;
       // a toe of paint where the loaded brush first touched down
       const toe = 1 + 0.9 * Math.exp(-distPx / (0.35 * widthPx + 1)) * this.startLoad;
-      const tb = b.thick * Math.min(1, l * 1.3) * press * toe;
+      const tb = b.thick * Math.min(1, l * 1.3) * press * toe * join * this.relief;
       for (let py = y0; py <= y1; py++) {
         for (let px = x0; px <= x1; px++) {
           const dx = px + 0.5 - cx;
@@ -295,7 +341,7 @@ export class BrushStroke {
           }
           if (a <= 0.01) continue;
           const t = tb * (0.3 + 0.7 * prof) * Math.min(1, a * 1.5);
-          const i = py * W + px;
+          const i = (py - cy0) * bw + (px - cx0);
           const A = bufA[i];
           const T = bufT[i];
           const inc = a > A ? (a - A) / (1 - A + 1e-4) : 0;

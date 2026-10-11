@@ -70,9 +70,10 @@ const nextConfig: NextConfig = {
     "/api/room": ["./data/site/rooms.json"],
     "/api/room/works": ["./data/site/rooms.json"],
     "/api/guide/*": ["./data/site/guide/*.json"],
-    // an artist's phases (archive/phases.py, src/lib/phases.ts) when a gallery regenerates; a work's details
-    // for the inspect panel (/api/work/<artist>/<work>, src/lib/rooms.ts workAbout)
-    "/museum/*": ["./data/site/phases.json"],
+    // an artist's phases (archive/phases.py, src/lib/phases.ts) and the related artists behind its end doors
+    // (src/lib/rooms.ts relatedArtists) when a gallery regenerates; a work's details for the inspect panel
+    // (/api/work/<artist>/<work>, src/lib/rooms.ts workAbout)
+    "/museum/*": ["./data/site/phases.json", "./data/site/rooms.json"],
     "/api/work/*/*": ["./data/site/rooms.json"],
   },
 

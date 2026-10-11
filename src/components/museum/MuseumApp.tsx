@@ -20,7 +20,7 @@ import type { ArtistWithPaintings, GalleryLink, GuideArtist } from "@/lib/types"
 import { buildLayout, entryGate, entryZ, EYE_HEIGHT, type Placement } from "./layout";
 import { furnishSizes, furnitureOf } from "./furniture";
 import type { ElevatorApi, LiftDirection } from "./Elevator";
-import type { ExitSide } from "./ExitDoors";
+import { doorLabel, type ExitSide } from "./ExitDoors";
 import { Gallery, type LockApi, type TeleportApi, type WarmupApi } from "./Gallery";
 import { RoomNavigator } from "./RoomNavigator";
 import { InspectPanel } from "./InspectPanel";
@@ -92,7 +92,8 @@ export function MuseumApp({
   neighbours,
 }: {
   artist: ArtistWithPaintings;
-  /** An artist's gallery: the artists before and after in the timeline's order, behind the doors at its end. */
+  /** An artist's gallery: two related artists (or the artists before and after in the timeline's order), behind
+   *  the doors at its end. */
   neighbours?: { prev: GalleryLink | null; next: GalleryLink | null };
 }) {
   // a custom room may choose its room style, wall colour and hanging order (src/lib/rooms.ts)
@@ -599,7 +600,7 @@ export function MuseumApp({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [inFilmRoom, toggleFilm, nextFilm, filmDeck, toggleProgramme]);
-  // ---- an artist's gallery: the doors at its end to the artists before and after (or the timeline), and a
+  // ---- an artist's gallery: the doors at its end to two related artists (or the timeline), and a
   // surprise: another period's gallery. Walking up to a door, the HUD's buttons, or E / Q in the last room.
   const exitHref = useCallback(
     (side: ExitSide | "surprise") => {
@@ -1025,7 +1026,7 @@ export function MuseumApp({
                 <span>
                   {l ? l.name : "The timeline"}
                   <small>
-                    {l ? (side === "prev" ? "The artist before" : "The artist after") : "Back to"}
+                    {l ? (l.why ? `Related · ${l.why}` : doorLabel(side, l)) : "Back to"}
                     {touch ? "" : side === "prev" ? " · press Q" : " · press E"}
                   </small>
                 </span>

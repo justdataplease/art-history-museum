@@ -14,7 +14,12 @@
   right: 20px;
   top: 50%;
   z-index: 33;
-  width: 188px;
+  width: 216px;
+  /* a short window scrolls it rather than lose the top or the bottom */
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   padding: 14px 14px 12px;
   border: 1px solid rgba(233, 221, 194, 0.2);
   border-radius: 14px;
@@ -70,7 +75,7 @@
 
 .tools {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
 }
 
@@ -85,8 +90,8 @@
   border-radius: 10px;
   background: rgba(233, 221, 194, 0.04);
   color: rgba(233, 221, 194, 0.75);
-  font-size: 8.5px;
-  letter-spacing: 0.2em;
+  font-size: 8px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   transition:
     border-color 0.2s,
@@ -188,6 +193,47 @@
 
 .size[data-active="true"] {
   border-color: var(--gold-soft, #c9ab6e);
+}
+
+/* the spray's nozzles: a soft dot of mist */
+.mist span {
+  background: radial-gradient(circle, var(--c) 0 32%, transparent 72%);
+}
+
+.foods {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.food {
+  display: grid;
+  place-items: center;
+  height: 34px;
+  border: 1px solid rgba(233, 221, 194, 0.16);
+  border-radius: 8px;
+  background: rgba(233, 221, 194, 0.04);
+  color: rgba(233, 221, 194, 0.75);
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    color 0.2s;
+}
+
+.food svg {
+  width: 20px;
+  height: 20px;
+}
+
+.food:hover {
+  border-color: rgba(233, 221, 194, 0.42);
+  color: #f1e7cf;
+}
+
+.food[data-active="true"] {
+  border-color: var(--gold-soft, #c9ab6e);
+  background: rgba(201, 171, 110, 0.16);
+  color: #f6edd6;
 }
 
 .conservator {
@@ -439,44 +485,26 @@
 
 /* ---------------------------------------------------------------- tally */
 
-/* What has been done this visit: a slim ledger, top right. */
+/* What has been done this visit: a slim ledger at the top of the palette, four to a row (with every tool used
+   it would crowd the title card at the top of the screen). */
 .tally {
-  position: fixed;
-  top: 58px;
-  right: 24px;
-  z-index: 31;
   display: flex;
-  gap: 2px;
-  padding: 6px 4px;
-  border: 1px solid rgba(233, 221, 194, 0.16);
-  border-radius: 10px;
-  background: rgba(14, 11, 8, 0.52);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  color: #e9ddc2;
-  font-family: var(--sans, system-ui, sans-serif);
+  flex-wrap: wrap;
+  row-gap: 5px;
+  margin: 0 0 10px;
   pointer-events: none;
-  opacity: 0;
-  transform: translateY(-6px);
-  transition:
-    opacity 0.3s ease,
-    transform 0.3s ease;
-}
-
-.tally[data-show="true"] {
-  opacity: 1;
-  transform: none;
 }
 
 .cell {
   display: grid;
+  flex: 1 0 22%;
   justify-items: center;
   gap: 1px;
-  min-width: 44px;
-  padding: 0 7px;
+  min-width: 0;
+  padding: 0 4px;
 }
 
-.cell + .cell {
+.cell:not(:nth-child(4n + 1)) {
   border-left: 1px solid rgba(233, 221, 194, 0.1);
 }
 
@@ -496,17 +524,8 @@
   color: #f1e7cf;
 }
 
-.reticle[data-tool="egg"] {
+.reticle[data-tool="food"] {
   border-radius: 50% 50% 46% 46% / 58% 58% 42% 42%;
-}
-
-.tallyInline {
-  display: none;
-}
-
-.tallyInline .cell {
-  min-width: 0;
-  flex: 1;
 }
 
 /* -------------------------------------------------------------- caption */
@@ -632,15 +651,21 @@
     padding-top: 7px;
   }
   .tools {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(7, 1fr);
     gap: 4px;
   }
   .tool {
     gap: 2px;
     height: 42px;
     padding: 4px 0 3px;
-    font-size: 7px;
-    letter-spacing: 0.12em;
+    font-size: 6.5px;
+    letter-spacing: 0.06em;
+  }
+  .foods {
+    gap: 4px;
+  }
+  .food {
+    height: 30px;
   }
   .tool svg {
     width: 18px;
@@ -687,28 +712,130 @@
   .balls {
     display: none;
   }
-  /* the tally rides in the palette here (the top of the screen is the museum's) */
+  /* the strip has room for every counter in one row */
   .tally {
-    display: none;
-  }
-  .tallyInline {
-    display: flex;
     justify-content: center;
     margin: 0 0 6px;
   }
   .cell {
-    min-width: 36px;
-    padding: 0 4px;
+    flex-basis: 11%;
+  }
+  .cell:not(:nth-child(4n + 1)),
+  .cell + .cell {
+    border-left: 1px solid rgba(233, 221, 194, 0.1);
   }
   .cell b {
     font-size: 13px;
   }
 }
 
+/* ---- phones on their side (the museum's own breakpoint, museum.module.css): a compact column on the right,
+   below the museum's top bar; the tally rides in it, the caption keeps between the walking stick and it ---- */
+@media (max-height: 500px) and (pointer: coarse) {
+  .palette {
+    top: calc(env(safe-area-inset-top, 0px) + 94px);
+    right: calc(env(safe-area-inset-right, 0px) + 10px);
+    bottom: auto;
+    width: 268px;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 102px);
+    padding: 8px 10px 6px;
+    border-radius: 12px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transform: translateX(12px);
+  }
+  .palette[data-open="true"] {
+    transform: none;
+  }
+  .eyebrow,
+  .key,
+  .hint {
+    display: none;
+  }
+  .section + .section {
+    margin-top: 6px;
+    padding-top: 6px;
+  }
+  .tools {
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+  }
+  .tool {
+    gap: 1px;
+    height: 36px;
+    padding: 3px 0 2px;
+    font-size: 5.5px;
+    letter-spacing: 0.04em;
+  }
+  .tool svg {
+    width: 15px;
+    height: 15px;
+  }
+  .swatches {
+    grid-template-columns: repeat(9, 1fr);
+    gap: 3px;
+    justify-items: center;
+  }
+  .swatch {
+    width: 21px;
+    height: 21px;
+  }
+  .sizes {
+    justify-content: center;
+  }
+  .size {
+    height: 24px;
+  }
+  .food {
+    height: 26px;
+  }
+  .conservator {
+    padding: 6px 10px;
+  }
+  .down {
+    margin-top: 0;
+    padding: 3px 0;
+  }
+  .balls {
+    display: none;
+  }
+  .tally {
+    margin: 0 0 4px;
+  }
+  .cell {
+    padding: 0 3px;
+  }
+  .cell b {
+    font-size: 12px;
+  }
+  .caption {
+    align-items: flex-start;
+    padding: 20px 290px calc(env(safe-area-inset-bottom, 0px) + 12px) 140px;
+  }
+  .caption p {
+    font-size: 10.5px;
+    line-height: 1.4;
+    text-align: left;
+  }
+  .caption b {
+    font-size: 11.5px;
+  }
+  .panelOpen :global(div:has(> [data-music-toggle])) {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+/* the smallest phones on their side: the line alone */
+@media (max-height: 500px) and (max-width: 720px) and (pointer: coarse) {
+  .caption p {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .palette,
   .reticle,
-  .tally,
   .caption,
   .toast {
     transition: none;

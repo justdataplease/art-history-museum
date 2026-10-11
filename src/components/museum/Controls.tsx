@@ -32,7 +32,7 @@ import { getSettings, PACE_SPEED, TAP_PACE_SPEED } from "./settings";
 // after an idle stretch R3F's clock reports the whole gap as one delta.
 
 const MAX_DT = 1 / 30;
-// pace: the visitor's setting (settings.ts; a run by default, a sprint twice it); walking, holding W runs (twice it)
+// pace: the visitor's setting (settings.ts; a run by default, twice the walk); walking, holding W runs
 const RUN_FACTOR = 2;
 const RUN_AFTER_MS = 3000;
 const AIM_RANGE = 9; // m: furthest a crosshair click can inspect from

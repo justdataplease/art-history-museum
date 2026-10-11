@@ -535,3 +535,115 @@ export async function workAbout(artist: string, slug: string): Promise<WorkAbout
   add("country", artistOrigin(artist, ia, a?.tagline).country);
   return { tags, museums, sameYear };
 }
+
+/** What relates two artists, built on first use: each artist's own terms weighted by how rare they are (a school
+ *  or group counts more than a movement), the share of their works in each movement, their middle year and how
+ *  well known they are (their works' pageviews). */
+interface Kin {
+  terms: Map<string, number>;
+  termNorm: number;
+  movements: Map<string, number>;
+  moveNorm: number;
+  year: number | null;
+  fame: number;
+  nations: Set<string>;
+}
+let kin: Map<string, Kin> | null = null;
+const TERM_WEIGHT: Record<string, number> = { school: 1.5, group: 1.5, academy: 1.2, exhibition: 1, movement: 1, period: 1 };
+function kinOf(slug: string): Kin | null {
+  const ix = readIndex();
+  if (!ix) return null;
+  if (!kin) {
+    const moves = new Map<string, Map<string, number>>();
+    const views = new Map<string, number>();
+    for (const w of ix.works) {
+      views.set(w[0], (views.get(w[0]) ?? 0) + w[7]);
+      if (!w[4]) continue;
+      const m = moves.get(w[0]) ?? moves.set(w[0], new Map()).get(w[0])!;
+      m.set(w[4], (m.get(w[4]) ?? 0) + 1);
+    }
+    const hung = Object.keys(ix.artists).filter((s) => views.has(s));
+    const df = new Map<string, number>();
+    for (const s of hung) for (const t of ix.artists[s].terms) df.set(t, (df.get(t) ?? 0) + 1);
+    const norm = (m: Map<string, number>) => Math.sqrt([...m.values()].reduce((sum, v) => sum + v * v, 0));
+    kin = new Map();
+    for (const s of hung) {
+      const a = ix.artists[s];
+      const terms = new Map<string, number>();
+      for (const t of a.terms) {
+        const kind = termById!.get(t)?.kind;
+        if (kind) terms.set(t, Math.log((hung.length + 1) / ((df.get(t) ?? 0) + 1)) * (TERM_WEIGHT[kind] ?? 0.6));
+      }
+      const movements = moves.get(s) ?? new Map<string, number>();
+      const nations = (a.nationalities.length ? a.nationalities : a.citizenship).map((n) => n.toLowerCase());
+      kin.set(s, {
+        terms,
+        termNorm: norm(terms),
+        movements,
+        moveNorm: norm(movements),
+        year: artistYear(s),
+        fame: Math.log10((views.get(s) ?? 0) + 1),
+        nations: new Set(nations),
+      });
+    }
+  }
+  return kin.get(slug) ?? null;
+}
+
+const cosine = (a: Map<string, number>, an: number, b: Map<string, number>, bn: number) => {
+  if (!an || !bn) return 0;
+  let dot = 0;
+  for (const [k, v] of a) dot += v * (b.get(k) ?? 0);
+  return dot / (an * bn);
+};
+
+/** What two artists share, in a word or two: a school or group they belonged to, else the movement most of both
+ *  their works are in, else a movement or period they share. */
+function kinship(a: Kin, b: Kin): string | null {
+  const name = (id: string) => termById!.get(id)?.name.replace(/\s*\(.*\)$/, "") ?? null;
+  const shared = [...a.terms.keys()].filter((t) => b.terms.has(t));
+  const best = (ids: string[]) => ids.sort((x, y) => a.terms.get(y)! - a.terms.get(x)!)[0];
+  const schools = shared.filter((t) => SCHOOL_KINDS.has(termById!.get(t)?.kind ?? ""));
+  if (schools.length) return name(best(schools));
+  const an = [...a.movements.values()].reduce((s, v) => s + v, 0);
+  const bn = [...b.movements.values()].reduce((s, v) => s + v, 0);
+  let move: string | null = null;
+  let most = 0.12;
+  for (const [m, n] of a.movements) {
+    const share = Math.min(n / an, (b.movements.get(m) ?? 0) / bn);
+    if (share >= most) [move, most] = [m, share];
+  }
+  if (move) return name(move);
+  const rest = shared.filter((t) => TIME_KINDS.has(termById!.get(t)?.kind ?? ""));
+  return rest.length ? name(best(rest)) : null;
+}
+
+/** The artists most related to one (`candidates`: the galleries there are, with their timeline period): those who
+ *  share its schools, groups and movements, paint in the same movements, lived at the same time and in the same
+ *  country, the better known first among equals. Each with what relates them ("" when nothing names it). */
+export function relatedArtists(
+  slug: string,
+  candidates: { slug: string; periodSlug: string }[],
+  n = 2
+): { slug: string; why: string }[] {
+  const a = kinOf(slug);
+  if (!a) return [];
+  const period = candidates.find((c) => c.slug === slug)?.periodSlug;
+  const scored: { slug: string; score: number; k: Kin }[] = [];
+  for (const c of candidates) {
+    const b = c.slug === slug ? null : kinOf(c.slug);
+    if (!b) continue;
+    let score = 6 * cosine(a.terms, a.termNorm, b.terms, b.termNorm) + 4 * cosine(a.movements, a.moveNorm, b.movements, b.moveNorm);
+    if (c.periodSlug === period) score += 1.5;
+    if ([...a.nations].some((x) => b.nations.has(x))) score += 0.8;
+    if (a.year != null && b.year != null) {
+      const gap = Math.abs(a.year - b.year);
+      score += 2 * Math.max(0, 1 - gap / 50) - gap / 60;
+    }
+    scored.push({ slug: c.slug, score: score + 0.8 * b.fame, k: b });
+  }
+  return scored
+    .sort((x, y) => y.score - x.score)
+    .slice(0, n)
+    .map((x) => ({ slug: x.slug, why: kinship(a, x.k) ?? "" }));
+}

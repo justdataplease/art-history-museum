@@ -1,8 +1,8 @@
 "use client";
 
 // An artist's gallery ends at two doors in the far end wall, either side of the flagship (layout.exits, built in
-// room-geometry.ts): to the artist before on the left and the artist after on the right, in the timeline's order,
-// each named on a card over it. Walking up to a door goes through it (MuseumApp fades and loads that gallery);
+// room-geometry.ts): to two related artists (or, without them, the artists before and after in the timeline's
+// order: "prev" is the left door, "next" the right), each named on a card over it with what relates them. Walking up to a door goes through it (MuseumApp fades and loads that gallery);
 // near the end wall the HUD's buttons and Q / E do the same.
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +32,12 @@ const TEX_H = Math.round((TEX_W * CARD_H) / CARD_W);
 
 const years = (l: GalleryLink) => (l.birthYear != null ? `${l.birthYear}–${l.deathYear ?? ""}` : "");
 
+/** What a door is: a related painter, or the artist before or after in the timeline. */
+export function doorLabel(side: ExitSide, l: GalleryLink): string {
+  if (l.why !== undefined) return "A related painter";
+  return side === "prev" ? "The artist before" : "The artist after";
+}
+
 function drawCard(c: HTMLCanvasElement, side: ExitSide, link: GalleryLink | null) {
   const g = c.getContext("2d");
   if (!g) return;
@@ -54,7 +60,7 @@ function drawCard(c: HTMLCanvasElement, side: ExitSide, link: GalleryLink | null
   g.fillStyle = "#7a6136";
   g.font = `500 ${Math.round(TEX_H * 0.12)}px ${sans}`;
   ls("6px");
-  const eyebrow = link ? (side === "prev" ? "The artist before" : "The artist after") : "Back to";
+  const eyebrow = link ? doorLabel(side, link) : "Back to";
   g.fillText(eyebrow.toUpperCase(), mid, TEX_H * 0.27);
   ls("1px");
   g.fillStyle = "#211d18";
@@ -71,7 +77,14 @@ function drawCard(c: HTMLCanvasElement, side: ExitSide, link: GalleryLink | null
     g.fillStyle = "#3a3226";
     g.font = `500 ${Math.round(TEX_H * 0.11)}px ${sans}`;
     ls("4px");
-    g.fillText([years(link), link.periodName].filter(Boolean).join("  ·  ").toUpperCase(), mid, TEX_H * 0.84);
+    const about = [years(link), link.why || link.periodName].filter(Boolean).join("  ·  ").toUpperCase();
+    let small = Math.round(TEX_H * 0.11);
+    g.font = `500 ${small}px ${sans}`;
+    while (small > 12 && g.measureText(about).width > TEX_W - 60) {
+      small -= 1;
+      g.font = `500 ${small}px ${sans}`;
+    }
+    g.fillText(about, mid, TEX_H * 0.84);
   }
   ls("0px");
 }

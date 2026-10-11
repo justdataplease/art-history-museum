@@ -1,10 +1,13 @@
 // Synthesized sound for the studio (WebAudio, no files): the whoosh of a
 // throw, a wet paint splat with its patter of droplets, an egg's crack and
-// squelch, shell bits ticking on the floor, the swish of a loaded brush, the
-// paintball marker's air "thup" with a rattle of the hopper, a ball's pop on
-// the wall, the refill, a blade's whoosh, canvas tearing and steel scraping
-// plaster; and the room around it: a low thud as the lights dip, a distant
-// alarm bell, the conservator's solvent wipes and a closing chime.
+// squelch, shell bits ticking on the floor, a pizza's floppy slap, a burger's
+// squelchy thud, an ice cream's plop (and buns bouncing, a cone's hollow
+// tok), a dart's "fft" and its thunk and buzz, the swish of a loaded brush, a
+// spray can's rattling ball and its hiss, the paintball marker's air "thup"
+// with a rattle of the hopper, a ball's pop on the wall, the refill, a blade's
+// whoosh, canvas tearing and steel scraping plaster; and the room around it: a
+// low thud as the lights dip, a distant alarm bell, the conservator's solvent
+// wipes and a closing chime.
 //
 // Everything plays through one bus: a gentle compressor, and a send into a
 // convolution reverb whose impulse response is synthesized for a large,
@@ -48,6 +51,7 @@ class Sfx {
   private brushSrc: AudioBufferSourceNode | null = null;
   private brushGain: GainNode | null = null;
   private brushFilter: BiquadFilterNode | null = null;
+  private hiss: { srcs: AudioScheduledSourceNode[]; nozzle: GainNode; wash: GainNode; tone: BiquadFilterNode } | null = null;
   private alarm: { gain: GainNode; stop: () => void } | null = null;
   private alarmLevel = 0;
 
@@ -74,6 +78,7 @@ class Sfx {
       /* already stopped */
     }
     this.brushSrc = this.brushGain = this.brushFilter = null;
+    this.hiss = null;
     this.ctx = this.master = this.verb = null;
     this.noise = null;
     if (c && c.state !== "closed") c.close().catch(() => {});
@@ -84,7 +89,8 @@ class Sfx {
     if (this.ctx && this.ctx.state === "closed") this.close();
     if (this.ctx) return this.ctx;
     if (typeof window === "undefined") return null;
-    let c = latch.audio;
+    // (the latch's context, unless it was closed: a studio unmounted and mounted again)
+    let c = latch.audio?.state === "closed" ? null : latch.audio;
     if (!c) {
       const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AC) return null;
@@ -330,6 +336,7 @@ class Sfx {
     if (!isMuted()) return;
     if (this.alarm) this.stopAlarm();
     if (this.brushSrc) this.brushStop();
+    if (this.hiss) this.sprayStop();
   }
 
   // ------------------------------------------------------------ the tools
@@ -400,6 +407,147 @@ class Sfx {
     this.burst(c, dest, t, { type: "bandpass", freq: 3500 + Math.random() * 3500, q: 6, decay: 0.018, level: 0.25 });
   }
 
+  /** A slice of pizza: a floppy, wet double slap (its middle, then the crust) and a sticky squelch. */
+  pizza(sp: Spatial): void {
+    const c = this.ready();
+    if (!c) return;
+    const t = c.currentTime;
+    const dest = this.out(c, sp, 0.95);
+    const flap = 0.04 + Math.random() * 0.025;
+    this.burst(c, dest, t, { type: "bandpass", freq: 760, freqTo: 280, q: 1.3, decay: 0.08, level: 0.75 });
+    this.thump(c, dest, t, 140, 62, 0.09, 0.3);
+    this.burst(c, dest, t + flap, { type: "bandpass", freq: 620, freqTo: 240, q: 1.5, decay: 0.07, level: 0.45 });
+    this.thump(c, dest, t + flap, 120, 58, 0.07, 0.18);
+    this.burst(c, dest, t + 0.015, { type: "bandpass", freq: 1300, freqTo: 420, q: 6, attack: 0.012, decay: 0.17, level: 0.3 });
+    this.burst(c, dest, t + 0.005, { type: "highpass", freq: 2800, decay: 0.1, level: 0.05 });
+  }
+
+  /** The slice letting go of the wall: a sticky "schlup" rising, a soft pop. */
+  peel(sp: Spatial): void {
+    const c = this.ready();
+    if (!c) return;
+    const t = c.currentTime;
+    const dest = this.out(c, sp, 0.6, 0.1);
+    this.burst(c, dest, t, { type: "bandpass", freq: 320, freqTo: 1500, q: 7, attack: 0.05, decay: 0.09, level: 0.32 });
+    this.burst(c, dest, t + 0.13, { type: "bandpass", freq: 1800, q: 3, decay: 0.012, level: 0.15 });
+  }
+
+  /** A burger: a heavy, squelchy thud, the sauce squirting out, a few drops. */
+  burger(sp: Spatial): void {
+    const c = this.ready();
+    if (!c) return;
+    const t = c.currentTime;
+    const dest = this.out(c, sp, 1);
+    this.thump(c, dest, t, 96, 38, 0.24, 0.85);
+    this.burst(c, dest, t, { type: "lowpass", freq: 650, freqTo: 140, attack: 0.003, decay: 0.2, level: 0.55 });
+    this.burst(c, dest, t + 0.01, { type: "bandpass", freq: 950, freqTo: 230, q: 7, attack: 0.015, decay: 0.24, level: 0.42 });
+    this.burst(c, dest, t + 0.07, { type: "bandpass", freq: 480, freqTo: 1500, q: 5, attack: 0.02, decay: 0.07, level: 0.16 });
+    for (let i = 0; i < 5; i++) {
+      this.burst(c, dest, t + 0.05 + Math.random() * 0.3, { type: "bandpass", freq: 1800 + Math.random() * 2200, q: 3, decay: 0.012 + Math.random() * 0.013, level: 0.03 + Math.random() * 0.05 });
+    }
+  }
+
+  /** An ice cream: a soft splodge and a cartoon plop or two. */
+  icecream(sp: Spatial): void {
+    const c = this.ready();
+    if (!c) return;
+    const t = c.currentTime;
+    const dest = this.out(c, sp, 0.9);
+    this.burst(c, dest, t, { type: "lowpass", freq: 900, freqTo: 200, attack: 0.006, decay: 0.15, level: 0.5 });
+    this.thump(c, dest, t, 110, 55, 0.12, 0.35);
+    this.plop(c, dest, t + 0.012, 190, 560, 0.3);
+    this.plop(c, dest, t + 0.1 + Math.random() * 0.04, 260, 720, 0.12);
+  }
+
+  /** A pitch flicking up, like a bubble. */
+  private plop(c: Ctx, dest: AudioNode, at: number, from: number, to: number, level: number): void {
+    const o = c.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(from, at);
+    o.frequency.exponentialRampToValueAtTime(to, at + 0.045);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(level, at + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.08);
+    o.connect(g).connect(dest);
+    o.start(at);
+    o.stop(at + 0.12);
+  }
+
+  /** Food landing on the floor: a bun's springy little bounce, something soft, an empty cone's hollow tok. */
+  foodLand(sp: Spatial, kind: "soft" | "bun" | "cone", speed: number): void {
+    const c = this.ready();
+    if (!c) return;
+    const t = c.currentTime;
+    const dest = this.out(c, sp, 0.3 + 0.5 * Math.min(1, speed / 3), 0.1);
+    if (kind === "bun") {
+      this.thump(c, dest, t, 230, 150, 0.08, 0.45);
+      this.burst(c, dest, t, { type: "lowpass", freq: 900, decay: 0.04, level: 0.25 });
+    } else if (kind === "cone") {
+      this.burst(c, dest, t, { type: "bandpass", freq: 1500, q: 5, decay: 0.03, level: 0.4 });
+      this.ring(c, dest, t, 880 + Math.random() * 120, 0.05, 0.06);
+      this.burst(c, dest, t + 0.008, { type: "highpass", freq: 3500, decay: 0.02, level: 0.06 });
+    } else {
+      this.burst(c, dest, t, { type: "bandpass", freq: 520, freqTo: 240, q: 1.2, decay: 0.05, level: 0.4 });
+      this.thump(c, dest, t, 110, 60, 0.05, 0.25);
+    }
+  }
+
+  /** A dart leaving the hand: a short, airy "fft". */
+  dartThrow(): void {
+    const c = this.ready();
+    if (!c) return;
+    const t = c.currentTime;
+    const dest = this.out(c, { pan: 0.25, dist: 0.5 }, 0.45, 0.06);
+    this.burst(c, dest, t, { type: "bandpass", freq: 1800, freqTo: 3800, q: 1.4, attack: 0.012, decay: 0.07, level: 0.2 });
+    this.burst(c, dest, t + 0.01, { type: "highpass", freq: 5000, attack: 0.005, decay: 0.05, level: 0.05 });
+  }
+
+  /** A dart going in: crisp in wood and frames, duller in plaster, a papery "tuk" in canvas; then the shaft's buzz. */
+  dartHit(sp: Spatial, surface: "canvas" | "plaster" | "gilt" | "wood" | "stone"): void {
+    const c = this.ready();
+    if (!c) return;
+    const t = c.currentTime + Math.min(0.02, sp.dist / 340);
+    const dest = this.out(c, sp, 0.85, 0.14);
+    if (surface === "canvas") {
+      this.burst(c, dest, t, { type: "bandpass", freq: 1400, freqTo: 700, q: 2, decay: 0.028, level: 0.5 });
+      this.burst(c, dest, t, { type: "highpass", freq: 2600, decay: 0.035, level: 0.12 });
+      this.thump(c, dest, t, 210, 120, 0.04, 0.2);
+    } else if (surface === "plaster" || surface === "stone") {
+      this.burst(c, dest, t, { type: "bandpass", freq: 900, q: 1.2, decay: 0.035, level: 0.5 });
+      this.thump(c, dest, t, 170, 90, 0.06, 0.35);
+      this.burst(c, dest, t + 0.002, { type: "highpass", freq: 4000, decay: 0.02, level: 0.08 });
+    } else {
+      this.burst(c, dest, t, { type: "highpass", freq: 3000, attack: 0.0006, decay: 0.006, level: 0.55 });
+      this.burst(c, dest, t, { type: "bandpass", freq: 1900, q: 3, decay: 0.035, level: 0.45 });
+      this.thump(c, dest, t, 280, 150, 0.05, 0.3);
+    }
+    this.twang(c, dest, t + 0.004, surface === "canvas" ? 0.03 : 0.07);
+  }
+
+  /** A stuck dart's shaft shivering: a soft buzzing tone beating at twice its wobble, dying away. */
+  private twang(c: Ctx, dest: AudioNode, at: number, level: number): void {
+    const o = c.createOscillator();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(190 + Math.random() * 60, at);
+    const beat = c.createGain();
+    beat.gain.value = 0.5;
+    const lfo = c.createOscillator();
+    lfo.frequency.value = 16 + Math.random() * 4;
+    const depth = c.createGain();
+    depth.gain.value = 0.5;
+    lfo.connect(depth).connect(beat.gain);
+    const env = c.createGain();
+    env.gain.setValueAtTime(0.0001, at);
+    env.gain.exponentialRampToValueAtTime(level, at + 0.004);
+    env.gain.exponentialRampToValueAtTime(0.0001, at + 0.5);
+    o.connect(beat).connect(env).connect(dest);
+    o.start(at);
+    lfo.start(at);
+    o.stop(at + 0.55);
+    lfo.stop(at + 0.55);
+  }
+
   /** Brush on canvas: a continuous swish shaped by speed (m/s). */
   brush(speed: number): void {
     const c = this.ready();
@@ -442,6 +590,99 @@ class Sfx {
     const t = c.currentTime;
     g.gain.setTargetAtTime(0, t, 0.05);
     s.stop(t + 0.3);
+  }
+
+  /** The spray can's mixing ball: a few quick knocks inside the tin. */
+  sprayShake(): void {
+    const c = this.ready();
+    if (!c) return;
+    const t = c.currentTime;
+    const dest = this.out(c, { pan: 0.22, dist: 0.45 }, 0.8, 0.1);
+    const n = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      // quick and a little uneven, softer as the shake stops
+      const at = t + i * 0.055 + Math.random() * 0.012;
+      const k = 1 - (0.35 * i) / n;
+      // the ball's tick against the wall, and the tin's brief ring
+      this.burst(c, dest, at, { type: "bandpass", freq: 3000 + Math.random() * 1400, q: 2.2, attack: 0.0006, decay: 0.012, level: 0.42 * k });
+      this.ring(c, dest, at, 1850 + Math.random() * 120, 0.06, 0.04 * k);
+      this.ring(c, dest, at, 4300 + Math.random() * 250, 0.035, 0.018 * k);
+    }
+    // the swing of the hand under the knocks
+    this.burst(c, dest, t, { type: "lowpass", freq: 700, attack: 0.04, decay: 0.2, level: 0.05 });
+  }
+
+  /**
+   * The can's hiss while it sprays, `near` 0 (into the air) … 1 (close to a
+   * surface: a little louder and brighter, with the wash of paint landing).
+   * Call every frame; ~30 ms attack.
+   */
+  spray(near: number): void {
+    const c = this.ready();
+    if (!c) {
+      this.sprayStop();
+      return;
+    }
+    if (!this.hiss) this.hiss = this.startHiss(c);
+    const h = this.hiss;
+    const v = Math.max(0, Math.min(1, near));
+    const t = c.currentTime;
+    h.nozzle.gain.setTargetAtTime(0.075 + 0.04 * v, t, 0.01);
+    h.wash.gain.setTargetAtTime(0.05 * v, t, 0.02);
+    h.tone.frequency.setTargetAtTime(6400 + 1800 * v, t, 0.06);
+  }
+
+  private startHiss(c: Ctx): NonNullable<Sfx["hiss"]> {
+    const dest = this.out(c, { pan: 0.18, dist: 0.5 }, 1, 0.08);
+    const src = this.noiseSrc(c);
+    // the nozzle: a band of hiss high up over a little broadband air, nothing harsh on top
+    const tone = c.createBiquadFilter();
+    tone.type = "bandpass";
+    tone.frequency.value = 7000;
+    tone.Q.value = 1.1;
+    const air = c.createBiquadFilter();
+    air.type = "highpass";
+    air.frequency.value = 2200;
+    const airLevel = c.createGain();
+    airLevel.gain.value = 0.35;
+    const nozzle = c.createGain();
+    nozzle.gain.value = 0;
+    const top = c.createBiquadFilter();
+    top.type = "lowpass";
+    top.frequency.value = 10500;
+    top.Q.value = 0.5;
+    src.connect(tone).connect(nozzle);
+    src.connect(air).connect(airLevel).connect(nozzle);
+    nozzle.connect(top).connect(dest);
+    // the paint landing: a softer, lower wash
+    const land = c.createBiquadFilter();
+    land.type = "bandpass";
+    land.frequency.value = 2600;
+    land.Q.value = 0.7;
+    const wash = c.createGain();
+    wash.gain.value = 0;
+    src.connect(land).connect(wash).connect(dest);
+    // the jet is never quite steady
+    const lfo = c.createOscillator();
+    lfo.frequency.value = 6.3;
+    const depth = c.createGain();
+    depth.gain.value = 0.004;
+    lfo.connect(depth).connect(nozzle.gain);
+    src.start();
+    lfo.start();
+    return { srcs: [src, lfo], nozzle, wash, tone };
+  }
+
+  /** Let go of the valve: ~80 ms release. */
+  sprayStop(): void {
+    const c = this.ctx;
+    const h = this.hiss;
+    this.hiss = null;
+    if (!c || !h) return;
+    const t = c.currentTime;
+    h.nozzle.gain.setTargetAtTime(0, t, 0.025);
+    h.wash.gain.setTargetAtTime(0, t, 0.025);
+    for (const s of h.srcs) s.stop(t + 0.3);
   }
 
   /** The marker: a pop of compressed air, a short hiss, the hopper rattling. */

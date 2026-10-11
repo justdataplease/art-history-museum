@@ -1,6 +1,7 @@
 // Short-lived bits in the air: plaster dust and grit where a blade scores a
 // wall, fibres and paint flakes where it opens a canvas, flecks of gold leaf
-// off a frame, a fine mist where a paintball bursts. One pooled point cloud
+// off a frame, a fine mist where a paintball bursts, bits flung off a burst
+// burger or ice cream. One pooled point cloud
 // (one draw call), simulated on the CPU (a few hundred points at most).
 
 import * as THREE from "three";
@@ -185,6 +186,29 @@ export class Particles {
         alpha: 1,
         gravity: 0.55,
         drag: 2.2, // flakes flutter
+        shape: Shape.Chip,
+        floor: true,
+      });
+    }
+  }
+
+  /** Food bursting: bits of lettuce, sesame, sprinkles, crumbs of cone, flung off and lying a moment. */
+  crumbs(p: THREE.Vector3, n: THREE.Vector3, seed: number, colors: THREE.Color[], count: number): void {
+    const r = rng(seed);
+    for (let i = 0; i < count; i++) {
+      const c = colors[Math.floor(r() * colors.length)];
+      const v = n.clone().multiplyScalar(0.3 + 1.0 * r()).add(new THREE.Vector3(gauss(r), gauss(r) + 0.4, gauss(r)).multiplyScalar(0.8));
+      const s = 0.003 + 0.003 * r();
+      this.emit({
+        pos: p.clone().addScaledVector(n, 0.01),
+        vel: v,
+        life: 1.4 + 1.2 * r(),
+        size0: s,
+        size1: s,
+        color: c.clone().multiplyScalar(0.85 + 0.25 * r()),
+        alpha: 1,
+        gravity: 1,
+        drag: 0.8,
         shape: Shape.Chip,
         floor: true,
       });

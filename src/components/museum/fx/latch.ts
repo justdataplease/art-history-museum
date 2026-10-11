@@ -74,3 +74,10 @@ export function useUnlocked(): boolean {
     () => false,
   );
 }
+
+// Test hook (development builds only): an init script that sets window.__MUSEUM_DEBUG__ can unlock the studio
+// without the phrase, as the gallery's own hook (Gallery.tsx) reaches its camera.
+if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
+  const w = window as unknown as { __MUSEUM_DEBUG__?: boolean; __latch?: typeof latch };
+  if (w.__MUSEUM_DEBUG__) w.__latch = latch;
+}

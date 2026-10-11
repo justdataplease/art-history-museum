@@ -6,10 +6,19 @@
 import { useSyncExternalStore } from "react";
 import type { FxAudioBridge } from "./Gate";
 
-export type Tool = "paint" | "brush" | "egg" | "marker" | "sword";
+export type Tool = "paint" | "brush" | "spray" | "food" | "dart" | "marker" | "sword";
 
-/** Palette order (keys 1–5; the mouse wheel steps through them). */
-export const TOOL_ORDER: Tool[] = ["paint", "brush", "egg", "marker", "sword"];
+/** Palette order (keys 1–7; the mouse wheel steps through them). */
+export const TOOL_ORDER: Tool[] = ["paint", "brush", "spray", "food", "dart", "marker", "sword"];
+
+/** What the food tool throws. */
+export type Food = "egg" | "pizza" | "burger" | "icecream";
+export const FOODS: { id: Food; label: string }[] = [
+  { id: "egg", label: "Eggs" },
+  { id: "pizza", label: "Pizza" },
+  { id: "burger", label: "Burgers" },
+  { id: "icecream", label: "Ice cream" },
+];
 
 export function isHeld(t: Tool | null): t is "marker" | "sword" {
   return t === "marker" || t === "sword";
@@ -34,6 +43,13 @@ export const BRUSH_SIZES: { width: number; reach: number; label: string }[] = [
   { width: 0.085, reach: 1.0, label: "Large" },
 ];
 
+/** Spray cone: the radius of the mist where it lands (m) at arm's length, fine → wide. */
+export const SPRAY_SIZES: { radius: number; label: string }[] = [
+  { radius: 0.03, label: "Fine" },
+  { radius: 0.07, label: "Medium" },
+  { radius: 0.14, label: "Wide" },
+];
+
 export interface FxState {
   /** the palette is open */
   open: boolean;
@@ -41,6 +57,8 @@ export interface FxState {
   tool: Tool | null;
   color: string;
   brush: number;
+  spray: number;
+  food: Food;
   /** the marker shoots random team colours instead of the palette colour */
   team: boolean;
   /** the conservator is at work */
@@ -77,6 +95,8 @@ const main = createStore<FxState>({
   tool: null,
   color: PAINT_COLORS[0].hex,
   brush: 1,
+  spray: 1,
+  food: "egg",
   team: false,
   cleaning: false,
   dirty: false,
@@ -85,11 +105,14 @@ const main = createStore<FxState>({
 
 export interface Tally {
   paint: number;
-  egg: number;
+  /** food thrown (eggs, pizza, burgers, ice cream) */
+  food: number;
+  dart: number;
   ball: number;
   cut: number;
-  /** metres of brush on canvas */
+  /** metres of brush / spray on any surface */
   brush: number;
+  spray: number;
   /** distinct works touched */
   works: number;
   balls: number;
@@ -97,7 +120,19 @@ export interface Tally {
   refilling: boolean;
 }
 
-const tally = createStore<Tally>({ paint: 0, egg: 0, ball: 0, cut: 0, brush: 0, works: 0, balls: 0, cap: 0, refilling: false });
+const tally = createStore<Tally>({
+  paint: 0,
+  food: 0,
+  dart: 0,
+  ball: 0,
+  cut: 0,
+  brush: 0,
+  spray: 0,
+  works: 0,
+  balls: 0,
+  cap: 0,
+  refilling: false,
+});
 
 type Listener = () => void;
 const cleanListeners = new Set<Listener>();
@@ -142,6 +177,18 @@ export const fx = {
     main.set({ color: PAINT_COLORS[((i < 0 ? 0 : i + dir) + n) % n].hex, team: false });
   },
   setBrush: (brush: number) => main.set({ brush: Math.max(0, Math.min(BRUSH_SIZES.length - 1, brush)) }),
+  setSpray: (spray: number) => main.set({ spray: Math.max(0, Math.min(SPRAY_SIZES.length - 1, spray)) }),
+  setFood: (food: Food) => main.set({ food }),
+  /** [ / ]: the size of what is in hand (brush, spray), or the next food. */
+  stepSize: (dir: 1 | -1) => {
+    const s = main.get();
+    const clamp = (i: number, n: number) => Math.max(0, Math.min(n - 1, i));
+    if (s.tool === "spray") main.set({ spray: clamp(s.spray + dir, SPRAY_SIZES.length) });
+    else if (s.tool === "food") {
+      const i = FOODS.findIndex((f) => f.id === s.food);
+      main.set({ food: FOODS[(i + dir + FOODS.length) % FOODS.length].id });
+    } else main.set({ brush: clamp(s.brush + dir, BRUSH_SIZES.length) });
+  },
   markDirty: () => main.set({ dirty: true }),
   /** Ask the engine to clean up (it calls cleaned() when done). */
   requestClean: () => {
@@ -174,7 +221,7 @@ export const fx = {
 export const fxTally = {
   get: tally.get,
   subscribe: tally.subscribe,
-  add(kind: "paint" | "egg" | "ball" | "cut" | "brush" | "works", amount: number): void {
+  add(kind: "paint" | "food" | "dart" | "ball" | "cut" | "brush" | "spray" | "works", amount: number): void {
     tally.set({ [kind]: tally.get()[kind] + amount } as Partial<Tally>);
   },
   hopper(balls: number, cap: number, refilling: boolean): void {

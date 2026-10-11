@@ -553,7 +553,7 @@ function doorCase(trim: GeoBatch, z: number, facing: 1 | -1, dw: number, dh: num
 
 /**
  * A closed pair of door leaves standing on a wall face at z (the room on its +z side), centred at x = cx, cased
- * like the entrance doors: an artist's gallery's doors to the artists before and after (layout.exits).
+ * like the entrance doors: an artist's gallery's doors to two related artists (layout.exits).
  */
 function exitDoor(trim: GeoBatch, cx: number, z: number, dw: number, dh: number, classical: boolean) {
   const leafW = dw - 0.004;
@@ -735,7 +735,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
     doorCase(trim, L / 2, -1, dw, dh, classical);
   }
 
-  // ---- an artist's gallery: doors to the artists before and after in the far end wall
+  // ---- an artist's gallery: doors to two related artists in the far end wall
   if (layout.exits) {
     const { x, halfWidth, height } = layout.exits;
     for (const s of [-1, 1]) exitDoor(rooms[last].trim, s * x, -L / 2, halfWidth, height, classical);

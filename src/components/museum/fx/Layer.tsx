@@ -9,20 +9,21 @@
 //
 // Input is taken in the capture phase, ahead of the gallery's own handlers,
 // and only while a tool is in hand:
-//   desktop (pointer locked): mouse down throws / starts a brush stroke /
-//     fires (the marker keeps firing while held) / swings (held after the
-//     swing, the edge follows where you look) at the crosshair; the click
-//     that follows is swallowed (no inspect);
-//   touch: with the brush, the marker or the sword a press is ours (drag
-//     paints / aims / cuts, the view does not turn); with paint or eggs a
-//     tap throws at the finger (drags still look round).
+//   desktop (pointer locked): mouse down throws (paint, food, a dart) /
+//     starts a brush stroke / sprays while held / fires (the marker keeps
+//     firing while held) / swings (held after the swing, the edge follows
+//     where you look) at the crosshair; the click that follows is swallowed
+//     (no inspect);
+//   touch: with the brush, the spray can, the marker or the sword a press is
+//     ours (drag paints / sprays / aims / cuts, the view does not turn); with
+//     paint, food or darts a tap throws at the finger (drags still look round).
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { FxEngine, TEAM_COLORS, type CanvasRef, type Quality } from "./engine";
 import type { FxSlotProps } from "./Slot";
-import { armed, BRUSH_SIZES, fx, fxTally, isHeld, type Tool } from "./store";
+import { armed, BRUSH_SIZES, fx, fxTally, isHeld, SPRAY_SIZES, type Tool } from "./store";
 import { sfx } from "./sfx";
 
 const CENTER = new THREE.Vector2(0, 0);
@@ -75,48 +76,48 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
   const compileRef = useRef(compile);
   compileRef.current = compile;
 
-  const engine = useMemo(
-    () =>
-      new FxEngine({
-        renderer: gl,
-        scene,
-        camera,
-        invalidate,
-        quality: (touch ? "low" : "high") as Quality,
-        floorY,
-        compile: async () => {
-          if (compileRef.current) await compileRef.current();
-          else await gl.compileAsync(scene, camera);
-        },
-        onDamage: () => fx.markDirty(),
-        onCleaned: () => {
-          fx.cleaned();
-          // the music comes back
-          fx.duck(1, 2.5);
-        },
-        onStat: (e) => fxTally.add(e.kind === "work" ? "works" : e.kind, e.amount),
-        onHopper: (h) => fxTally.hopper(h.balls, h.cap, h.refilling),
-        autoRefill: touch,
-      }),
-    // one engine per renderer / scene; quality is fixed for its life
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [gl, scene, camera],
-  );
-
+  // One engine per renderer / scene, made in an effect so it is disposed once, with the life it had (in
+  // development StrictMode's rehearsal unmount disposes the first and the effect makes another); its quality is
+  // fixed for its life.
+  const [engine, setEngine] = useState<FxEngine | null>(null);
   useEffect(() => {
+    const e = new FxEngine({
+      renderer: gl,
+      scene,
+      camera,
+      invalidate,
+      quality: (touch ? "low" : "high") as Quality,
+      floorY,
+      compile: async () => {
+        if (compileRef.current) await compileRef.current();
+        else await gl.compileAsync(scene, camera);
+      },
+      onDamage: () => fx.markDirty(),
+      onCleaned: () => {
+        fx.cleaned();
+        // the music comes back
+        fx.duck(1, 2.5);
+      },
+      onStat: (s) => fxTally.add(s.kind === "work" ? "works" : s.kind, s.amount),
+      onHopper: (h) => fxTally.hopper(h.balls, h.cap, h.refilling),
+      autoRefill: touch,
+    });
+    setEngine(e);
     // Test hook, like the gallery's: only when an init script sets the flag.
     const w = window as unknown as { __MUSEUM_DEBUG__?: boolean; __fx?: unknown };
-    if (w.__MUSEUM_DEBUG__) w.__fx = { engine, state: fx, tally: fxTally };
+    if (w.__MUSEUM_DEBUG__) w.__fx = { engine: e, state: fx, tally: fxTally, ndc: (x: number, y: number) => new THREE.Vector2(x, y) };
     return () => {
       if (w.__MUSEUM_DEBUG__) w.__fx = undefined;
-      engine.dispose();
+      e.dispose();
       sfx.close();
     };
-  }, [engine]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gl, scene, camera]);
 
   // the unlock moment: the lights dip, a low thud, the music ducks; the
   // engine arms (and compiles) inside the dip
   useEffect(() => {
+    if (!engine) return;
     engine.syncCanvases(canvasRefs(registry));
     engine.dip();
     fx.duck(0.2, 0.25);
@@ -145,24 +146,27 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
   }, [engine, registry]);
 
   // the conservator, R
-  useEffect(() => fx.onClean(() => engine.clean()), [engine]);
-  useEffect(() => fx.onRefill(() => engine.refill()), [engine]);
+  useEffect(() => (engine ? fx.onClean(() => engine.clean()) : undefined), [engine]);
+  useEffect(() => (engine ? fx.onRefill(() => engine.refill()) : undefined), [engine]);
 
   // what is held follows the palette; the marker's colours follow the colour picks
   useEffect(() => {
+    if (!engine) return;
     const sync = () => {
       const s = fx.get();
       if (engine.isActive) engine.setHeld(s.open && !s.cleaning && isHeld(s.tool) ? s.tool : null);
       engine.setBallColors(ballColors, s.team ? TEAM_COLORS[2] : s.color);
       if (!armed() || s.tool !== "brush") engine.brushUp();
+      if (!armed() || s.tool !== "spray") engine.sprayUp();
     };
     sync();
     return fx.subscribe(sync);
   }, [engine]);
   useEffect(() => {
-    engine.setEnabled(enabled);
+    engine?.setEnabled(enabled);
   }, [engine, enabled]);
   useEffect(() => {
+    if (!engine) return;
     const fit = () => engine.setCompact(touch || window.innerWidth < 760);
     fit();
     window.addEventListener("resize", fit);
@@ -171,6 +175,7 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
 
   // ---- input
   useEffect(() => {
+    if (!engine) return;
     const el = (gl.domElement.parentElement ?? gl.domElement) as HTMLElement;
     const ndc = new THREE.Vector2();
     const toNdc = (x: number, y: number) => {
@@ -192,13 +197,20 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
         engine.brushDown(at, s.color, b.width, b.reach);
         return;
       }
+      if (s.tool === "spray") {
+        engine.sprayDown(at, s.color, (SPRAY_SIZES[s.spray] ?? SPRAY_SIZES[1]).radius);
+        return;
+      }
       const now = performance.now();
       if (now - lastThrow < THROW_GAP_MS) return;
       lastThrow = now;
-      engine.throwAt(at, s.tool === "egg" ? "egg" : "paint", s.color);
+      if (s.tool === "food") engine.throwFood(at, s.food);
+      else if (s.tool === "dart") engine.throwDart(at);
+      else engine.throwAt(at, "paint", s.color);
     };
     const release = () => {
       engine.brushUp();
+      engine.sprayUp();
       engine.triggerUp();
     };
 
@@ -221,7 +233,7 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
     let tapCand: { id: number; x: number; y: number; t: number } | null = null;
     const ours = (e: PointerEvent) => e.pointerType !== "mouse" && e.target instanceof Node && el.contains(e.target);
     // tools that own the whole press (drag = paint / aim / cut)
-    const holds = (t: Tool | null) => t === "brush" || t === "marker" || t === "sword";
+    const holds = (t: Tool | null) => t === "brush" || t === "spray" || t === "marker" || t === "sword";
     const onDown = (e: PointerEvent) => {
       if (!ours(e) || !live()) return;
       if (holds(fx.get().tool)) {
@@ -243,6 +255,7 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
         e.stopImmediatePropagation();
         const at = toNdc(e.clientX, e.clientY);
         engine.brushMove(at);
+        engine.sprayMove(at);
         engine.triggerMove(at);
         return;
       }
@@ -260,7 +273,7 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
       const c = tapCand;
       tapCand = null;
       if (!c || e.pointerId !== c.id || performance.now() - c.t > TAP_MAX_MS || !live()) return;
-      // a tap with paint or eggs throws; the gallery's tap (walk / inspect)
+      // a tap with paint, food or darts throws; the gallery's tap (walk / inspect)
       // is told the gesture was taken over
       e.stopImmediatePropagation();
       el.dispatchEvent(new PointerEvent("pointercancel", { pointerId: e.pointerId, pointerType: e.pointerType, bubbles: true }));
@@ -306,7 +319,7 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
   );
   const seen = useRef("");
   useFrame(() => {
-    if (!engine.isActive) return;
+    if (!engine?.isActive) return;
     // a work's paint follows it when its exhibit unmounts and mounts again
     const key = registryKey(registry);
     if (key !== seen.current) {

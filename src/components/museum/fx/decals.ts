@@ -1,11 +1,12 @@
 // Paint on everything that is not a painting: walls, floor, frames, benches.
 // Each splat gets a square cell of one shared atlas (a PaintSurface) and a
 // projected decal (three's DecalGeometry, clipped to the meshes the splat's
-// box touches, so it wraps a gilt moulding or a bench edge). All decals are
-// merged into a single mesh: one draw call however many there are. The
-// oldest decal gives up its cell when the atlas is full. Each decal carries
-// a per-vertex sequence key so the conservator can dissolve them one by one
-// against a single clock.
+// box touches, so it wraps a gilt moulding or a bench edge). Free strokes
+// (the brush, the spray can) paint into larger square patches the same way.
+// All decals are merged into a single mesh: one draw call however many
+// there are. The least recently used decal gives up its cell when the atlas
+// is full. Each decal carries a per-vertex sequence key so the conservator
+// can dissolve them one by one against a single clock.
 
 import * as THREE from "three";
 import { DecalGeometry } from "three/examples/jsm/geometries/DecalGeometry.js";
@@ -23,7 +24,8 @@ export interface SplatFrame {
 
 interface Decal {
   cell: number;
-  born: number;
+  /** last made or painted into (s) */
+  used: number;
   pos: Float32Array;
   nrm: Float32Array;
   uv: Float32Array;
@@ -52,6 +54,54 @@ const _b = new THREE.Vector3();
 const _c = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const _d = new THREE.Vector3();
+const _wb = new THREE.Box3();
+const _lb = new THREE.Box3();
+const _inv = new THREE.Matrix4();
+
+/** Meshes this small are clipped whole. */
+const SMALL_MESH = 4000;
+
+/**
+ * The triangles of `t` that may meet a world-space box, as a stand-in mesh
+ * for DecalGeometry (it clips every triangle it is given: a merged room of a
+ * few hundred thousand would take a third of a second). The test is a cheap
+ * bounding-box overlap in the mesh's own space. Null when none are near.
+ */
+function nearPart(t: THREE.Mesh, box: THREE.Box3): THREE.Mesh | null {
+  const g = t.geometry;
+  const P = g.getAttribute("position");
+  const N = g.getAttribute("normal");
+  const index = g.index;
+  const count = index ? index.count : P.count;
+  if (count < SMALL_MESH * 3 || !(P instanceof THREE.BufferAttribute) || P.itemSize !== 3 || (N && !(N instanceof THREE.BufferAttribute && N.itemSize === 3))) return t;
+  _lb.copy(box).applyMatrix4(_inv.copy(t.matrixWorld).invert());
+  const { x: x0, y: y0, z: z0 } = _lb.min;
+  const { x: x1, y: y1, z: z1 } = _lb.max;
+  const pa = P.array;
+  const na = N?.array;
+  const ia = index?.array;
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  for (let k = 0; k + 2 < count; k += 3) {
+    const a = (ia ? ia[k] : k) * 3;
+    const b = (ia ? ia[k + 1] : k + 1) * 3;
+    const c = (ia ? ia[k + 2] : k + 2) * 3;
+    if ((pa[a] < x0 && pa[b] < x0 && pa[c] < x0) || (pa[a] > x1 && pa[b] > x1 && pa[c] > x1)) continue;
+    if ((pa[a + 1] < y0 && pa[b + 1] < y0 && pa[c + 1] < y0) || (pa[a + 1] > y1 && pa[b + 1] > y1 && pa[c + 1] > y1)) continue;
+    if ((pa[a + 2] < z0 && pa[b + 2] < z0 && pa[c + 2] < z0) || (pa[a + 2] > z1 && pa[b + 2] > z1 && pa[c + 2] > z1)) continue;
+    for (const v of [a, b, c]) {
+      pos.push(pa[v], pa[v + 1], pa[v + 2]);
+      if (na) nrm.push(na[v], na[v + 1], na[v + 2]);
+    }
+  }
+  if (pos.length === 0) return null;
+  const part = new THREE.BufferGeometry();
+  part.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  if (na) part.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+  const m = new THREE.Mesh(part);
+  m.matrixWorld.copy(t.matrixWorld);
+  return m;
+}
 
 export class DecalManager {
   readonly mesh: THREE.Mesh;
@@ -61,6 +111,8 @@ export class DecalManager {
   private readonly cells: Rect[] = [];
   private readonly owner: (Decal | null)[] = [];
   private decals: Decal[] = [];
+  /** the decal each handed-out receiver paints */
+  private readonly links = new WeakMap<Receiver, Decal>();
   private readonly texel = new THREE.Vector2(1, 1);
 
   constructor(opts: DecalOptions) {
@@ -133,17 +185,29 @@ export class DecalManager {
     _e.setFromRotationMatrix(_m);
     _p.copy(frame.origin).addScaledVector(frame.right, bx).addScaledVector(frame.down, by);
     const size = new THREE.Vector3(side, side, depth);
+    _wb.makeEmpty();
+    for (const i of [-0.5, 0.5]) {
+      for (const j of [-0.5, 0.5]) {
+        for (const k of [-0.5, 0.5]) {
+          _wb.expandByPoint(_a.copy(_p).addScaledVector(frame.right, i * side).addScaledVector(frame.down, j * side).addScaledVector(frame.normal, k * depth));
+        }
+      }
+    }
 
     const pos: number[] = [];
     const nrm: number[] = [];
     const uvs: number[] = [];
     for (const t of targets) {
       t.updateMatrixWorld();
+      const part = nearPart(t, _wb);
+      if (!part) continue;
       let g: THREE.BufferGeometry;
       try {
-        g = new DecalGeometry(t, _p, _e, size);
+        g = new DecalGeometry(part, _p, _e, size);
       } catch {
         continue;
+      } finally {
+        if (part !== t) part.geometry.dispose();
       }
       const P = g.getAttribute("position") as THREE.BufferAttribute | undefined;
       const N = g.getAttribute("normal") as THREE.BufferAttribute | undefined;
@@ -194,7 +258,7 @@ export class DecalManager {
     };
     const d: Decal = {
       cell: cellIdx,
-      born: now,
+      used: now,
       pos: new Float32Array(pos),
       nrm: new Float32Array(nrm),
       uv: new Float32Array(uvs),
@@ -205,6 +269,7 @@ export class DecalManager {
     };
     this.owner[cellIdx] = d;
     this.decals.push(d);
+    this.links.set(rcv, d);
     this.rebuild();
     return rcv;
   }
@@ -213,36 +278,58 @@ export class DecalManager {
    * An existing decal on the same plane that already covers `box` around
    * `point` (paintballs and scratches cluster: a burst should not eat the
    * atlas). The receiver and frame returned are in that decal's axes.
+   * Strokes looking for a patch to carry on in are laxer about the plane
+   * (`tol` m off it, normals `minDot` apart: a frame's mouldings lie within
+   * a wall patch's projection) and skip small splat decals (`minSide` m).
    */
-  reuse(point: THREE.Vector3, normal: THREE.Vector3, box: Bounds): { rcv: Receiver; frame: SplatFrame } | null {
+  reuse(
+    point: THREE.Vector3,
+    normal: THREE.Vector3,
+    box: Bounds,
+    { tol = 0.012, minDot = 0.985, minSide = 0 }: { tol?: number; minDot?: number; minSide?: number } = {},
+  ): { rcv: Receiver; frame: SplatFrame } | null {
     for (let i = this.decals.length - 1; i >= 0; i--) {
       const d = this.decals[i];
       const f = d.frame;
-      if (f.normal.dot(normal) < 0.985) continue;
+      if (f.normal.dot(normal) < minDot || d.sq.x1 - d.sq.x0 < minSide) continue;
       _a.subVectors(point, f.origin);
-      if (Math.abs(_a.dot(f.normal)) > 0.012) continue;
+      if (Math.abs(_a.dot(f.normal)) > tol) continue;
       const x = _a.dot(f.right);
       const y = _a.dot(f.down);
       const m = 0.01;
       if (x + box.x0 < d.sq.x0 + m || x + box.x1 > d.sq.x1 - m || y + box.y0 < d.sq.y0 + m || y + box.y1 > d.sq.y1 - m) continue;
       const r = d.rcv;
+      const rcv = { surface: r.surface, ox: r.ox + x * r.sx, oy: r.oy + y * r.sy, sx: r.sx, sy: r.sy, clip: r.clip };
+      this.links.set(rcv, d);
       return {
-        rcv: { surface: r.surface, ox: r.ox + x * r.sx, oy: r.oy + y * r.sy, sx: r.sx, sy: r.sy, clip: r.clip },
+        rcv,
         frame: { origin: point.clone(), right: f.right.clone(), down: f.down.clone(), normal: f.normal.clone() },
       };
     }
     return null;
   }
 
+  /**
+   * Whether the decal a receiver paints is still there (its cell not given
+   * to another); if so it counts as just used, so a patch being painted is
+   * never the one recycled.
+   */
+  keep(rcv: Receiver, now: number): boolean {
+    const d = this.links.get(rcv);
+    if (!d || this.owner[d.cell] !== d) return false;
+    d.used = now;
+    return true;
+  }
+
   private takeCell(now: number): number {
     let idx = this.owner.indexOf(null);
     if (idx < 0) {
-      // recycle the oldest decal
-      let oldest = 0;
+      // recycle the least recently used decal
+      let lru = 0;
       for (let i = 1; i < this.owner.length; i++) {
-        if ((this.owner[i]?.born ?? Infinity) < (this.owner[oldest]?.born ?? Infinity)) oldest = i;
+        if ((this.owner[i]?.used ?? Infinity) < (this.owner[lru]?.used ?? Infinity)) lru = i;
       }
-      idx = oldest;
+      idx = lru;
       const gone = this.owner[idx];
       this.decals = this.decals.filter((x) => x !== gone);
       this.owner[idx] = null;
