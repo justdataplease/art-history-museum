@@ -1,8 +1,9 @@
-// The audio guide's natural voice (src/components/museum/voice.ts): Kokoro, an open text-to-speech model, run in
+// The audio guide's studio voice (src/components/museum/voice.ts): Kokoro, an open text-to-speech model, run in
 // the visitor's browser on the graphics card (WebGPU). Its code comes from jsdelivr (pinned), its weights and
 // voices from Hugging Face; the browser keeps them (Cache API), so only the first visit downloads them (~330 MB).
 // Only the full-precision weights speak on WebGPU (fp16 and the quantised ones come out silent or garbled), and
-// on the processor alone it is slower than speech, so this runs only where a WebGPU adapter is found.
+// on the processor alone it is slower than speech (1.2 s of work a second of speech on a fast desktop core), so
+// it runs only where WebGPU is found, and voice.ts times it: elsewhere the light voice reads (piper-worker.js).
 //
 // Messages in:  {type: "load"} | {type: "speak", id, text, voice, speed}
 // Messages out: {type: "progress", loaded, total} | {type: "ready"} | {type: "audio", id, sr, samples}

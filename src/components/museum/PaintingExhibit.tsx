@@ -56,6 +56,7 @@ import { createShadowMaterial, shadowQuad } from "./exhibit-shadow";
 import { retainExhibitResources } from "./exhibit-shared";
 import { isInspectFlying } from "./renderer-motion";
 import { useSetting } from "./settings";
+import { currentQuality } from "./quality";
 import type { Lod, SuiteRuntime } from "./suite-runtime";
 
 // ------------------------------------------------------------------ tuning
@@ -355,8 +356,8 @@ function useStreamedTexture(
         track,
         priority,
         maxSize: gl.capabilities.maxTextureSize,
-        // the renderer's best: canvases are mostly seen at an angle down the walls
-        anisotropy: gl.capabilities.getMaxAnisotropy(),
+        // the renderer's best (canvases are mostly seen at an angle down the walls), less in the fast graphics tier
+        anisotropy: Math.min(currentQuality().anisotropy, gl.capabilities.getMaxAnisotropy()),
       },
       () => {
         // retrying after a transient failure: report it, the loader keeps at it

@@ -1,13 +1,14 @@
 // The visitor's gallery settings, kept in this browser: walking pace, the canvas surface (weave and varnish),
-// whether the on-screen controls show, and the audio guide's voice and speed. Controls reads the pace each frame
+// whether the on-screen controls show, the graphics (quality.ts), and the audio guide's voice and speed. Controls reads the pace each frame
 // (getSettings); every painting renders with the surface, the HUD with `hud` (useSetting); the guide reads its
 // voice when it speaks (voice.ts).
 
 import { useSyncExternalStore } from "react";
+import type { GraphicsChoice } from "./quality";
 
 export type Pace = "slow" | "normal" | "fast" | "run";
 /** auto and browser: the browser's own voice, the most natural it has (auto: the best; browser: the one chosen
- *  from its list); natural: the AI voice (voice.ts), heavy, only when chosen. */
+ *  from its list); natural: the AI voice (voice.ts), downloaded and run on this device, only when chosen. */
 export type GuideVoice = "auto" | "natural" | "browser";
 export const GUIDE_SPEEDS = [0.85, 1, 1.15, 1.3, 1.5] as const;
 
@@ -17,9 +18,12 @@ export interface MuseumSettings {
   surface: boolean;
   /** The on-screen controls (title, navigator, hints, guide and music buttons). */
   hud: boolean;
+  /** How much the gallery draws (quality.ts): auto chooses for this computer. */
+  graphics: GraphicsChoice;
   guideVoice: GuideVoice;
-  /** The AI voice (voice.ts NATURAL_VOICES) and the browser's (its voiceURI; "": the best it has). */
-  naturalVoice: string;
+  /** The AI voice (voice.ts NATURAL_VOICES; "": the best for this computer) and the browser's (its voiceURI; "":
+   *  the best it has). */
+  aiVoice: string;
   browserVoice: string;
   /** The guide's reading speed (1: as recorded). */
   guideSpeed: number;
@@ -32,17 +36,19 @@ export const TAP_PACE_SPEED: Record<Pace, number> = { slow: 1.1, normal: 1.7, fa
 
 const KEY = "timeline-museum:settings";
 const DEFAULTS: MuseumSettings = {
-  pace: "run", surface: true, hud: true, guideVoice: "auto", naturalVoice: "af_heart", browserVoice: "", guideSpeed: 1,
+  pace: "run", surface: true, hud: true, graphics: "auto", guideVoice: "auto", aiVoice: "", browserVoice: "", guideSpeed: 1,
 };
 
 /** As saved: the speed is `walk`, so a `pace` saved before running was the default (by any setting saved, H
- *  included) gives way to it once. */
+ *  included) gives way to it once; the AI voice is `aiVoice`, so the studio voice once saved as everyone's default
+ *  (`naturalVoice`) gives way to the best for each computer. */
 interface Saved {
   walk?: Pace;
   surface?: boolean;
   hud?: boolean;
+  graphics?: GraphicsChoice;
   guideVoice?: GuideVoice;
-  naturalVoice?: string;
+  aiVoice?: string;
   browserVoice?: string;
   guideSpeed?: number;
 }
@@ -57,8 +63,9 @@ function load(): MuseumSettings {
       pace: saved.walk && saved.walk in PACE_SPEED ? saved.walk : DEFAULTS.pace,
       surface: typeof saved.surface === "boolean" ? saved.surface : DEFAULTS.surface,
       hud: typeof saved.hud === "boolean" ? saved.hud : DEFAULTS.hud,
+      graphics: saved.graphics === "fast" || saved.graphics === "full" ? saved.graphics : DEFAULTS.graphics,
       guideVoice: saved.guideVoice === "natural" || saved.guideVoice === "browser" ? saved.guideVoice : DEFAULTS.guideVoice,
-      naturalVoice: typeof saved.naturalVoice === "string" ? saved.naturalVoice : DEFAULTS.naturalVoice,
+      aiVoice: typeof saved.aiVoice === "string" ? saved.aiVoice : DEFAULTS.aiVoice,
       browserVoice: typeof saved.browserVoice === "string" ? saved.browserVoice : DEFAULTS.browserVoice,
       guideSpeed:
         typeof saved.guideSpeed === "number" && saved.guideSpeed >= 0.5 && saved.guideSpeed <= 2 ? saved.guideSpeed : DEFAULTS.guideSpeed,
@@ -76,8 +83,8 @@ export function getSettings(): MuseumSettings {
 export function setSettings(patch: Partial<MuseumSettings>) {
   current = { ...getSettings(), ...patch };
   try {
-    const { pace: walk, surface, hud, guideVoice, naturalVoice, browserVoice, guideSpeed } = current;
-    const saved: Saved = { walk, surface, hud, guideVoice, naturalVoice, browserVoice, guideSpeed };
+    const { pace: walk, surface, hud, graphics, guideVoice, aiVoice, browserVoice, guideSpeed } = current;
+    const saved: Saved = { walk, surface, hud, graphics, guideVoice, aiVoice, browserVoice, guideSpeed };
     localStorage.setItem(KEY, JSON.stringify(saved));
   } catch {
     // no storage: the setting lasts this visit

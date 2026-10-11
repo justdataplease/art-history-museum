@@ -24,7 +24,7 @@ import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import { inNook, outerHalf, type FilmNook as Nook, type GalleryLayout } from "@/components/museum/layout";
 import { NOOK_LIGHT, patchRoomMaterial, roomCross } from "@/components/museum/room-shading";
-import { stepRuntime, type CinemaRuntime } from "./cinema-runtime";
+import { runtimeMoving, stepRuntime, type CinemaRuntime } from "./cinema-runtime";
 import { embedSrc } from "./film-deck";
 import { glowTexture } from "./cinema-textures";
 import { Projector } from "./Projector";
@@ -115,7 +115,8 @@ function Director({ layout, nook, runtime, onInside }: { layout: GalleryLayout; 
       }
       const status = rt?.deck.state.status;
       if (!inside && rt && (status === "playing" || status === "loading")) rt.deck.pause();
-      if (inside || (rt && rt.level > 0.002)) invalidate();
+      // (out of the corner, a film left paused keeps its lamp lit but nothing moves: no frames)
+      if (inside || (rt && runtimeMoving(rt))) invalidate();
       id = requestAnimationFrame(tick);
     };
     id = requestAnimationFrame(tick);

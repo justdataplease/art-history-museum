@@ -7,9 +7,10 @@
 // The text is standard, prepared data (archive/guide.py -> /api/guide/<artist>): one script per artist and per
 // work, with a stable id and version. The voice is separate: a recording of the script when there is one
 // (public/audio/guide/<id>.mp3, subtitles timed by sentence length), else a voice reading it one sentence at a
-// time (voice.ts): the natural AI voice, run on this device, where it can run and is chosen (Settings), else the
-// browser's most natural voice. All at the visitor's speed (the 1× button, or Settings). The sentence being
-// read shows as a subtitle; the gallery music steps back while the guide speaks.
+// time (voice.ts): the AI voice, run on this device, when it is chosen (Settings), else the browser's most natural
+// voice. The AI voice starts on a painting's first sentence as soon as the visitor stops at it, before the guide
+// begins. All at the visitor's speed (the 1× button, or Settings). The sentence being read shows as a subtitle;
+// the gallery music steps back while the guide speaks.
 //
 // "In front of": within NEAR metres, the painting ahead of the visitor (FACING), for DWELL_MS. Checked on a
 // timer, not per frame: the canvas renders on demand and stops drawing when the visitor stands still.
@@ -96,8 +97,8 @@ function toSentences(lines: string[]): string[] {
   ).filter((s) => s.length > 1);
 }
 
-/** The AI voice, only when chosen in Settings (which downloads it, once): it is heavy to run, so it never loads
- *  by itself, even when it is on this device already. */
+/** The AI voice, only when chosen in Settings (which downloads it, once): it runs on this device, so it never
+ *  loads by itself, even when it is on this device already. */
 function wantsNatural(): boolean {
   return getSettings().guideVoice === "natural";
 }
@@ -166,8 +167,8 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
 
   // the AI voice warms up in the background while the browser's reads, when chosen in Settings
   useEffect(() => {
-    if (on && wantsNatural()) void naturalVoice.load();
-  }, [on, settings.guideVoice]);
+    if (on && settings.guideVoice === "natural") void naturalVoice.load(settings.aiVoice);
+  }, [on, settings.guideVoice, settings.aiVoice]);
 
   // the gallery's scripts, ahead of the first painting
   useEffect(() => {
@@ -242,7 +243,7 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
           onLine: (text: string) => current.current === key && setLine(text),
           onEnd: () => current.current === key && done(),
         };
-        if (wantsNatural() && naturalVoice.state === "ready") speech.current = naturalVoice.speak(lines, s.naturalVoice, o);
+        if (wantsNatural() && naturalVoice.state === "ready") speech.current = naturalVoice.speak(lines, o);
         else if ("speechSynthesis" in window) {
           // with the browser's best voice, not its default (its list can come a moment late)
           void voicesReady().then(() => {
@@ -255,28 +256,47 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
     [silence, finished]
   );
 
-  const narrate = useCallback(
+  /** A work's script (prepared, else from the page), and its artist's scripts. */
+  const scriptOf = useCallback(
     async (pl: Placement) => {
       const p = pl.painting;
       const slug = p.artistSlug ?? gallerySlug;
-      if (!slug) return;
-      const key = p.slug;
-      current.current = key; // claim it now: the scripts may still be loading
+      if (!slug) return null;
       // in a custom room a work's slug is "<artist>--<work>"
       const workSlug = p.artistSlug && p.slug.startsWith(`${slug}--`) ? p.slug.slice(slug.length + 2) : p.slug;
       const doc = await load(slug);
-      if (current.current !== key) return;
       const who = artists.find((a) => a.slug === slug);
-      const queue: Script[] = [doc?.works[workSlug] ?? fallbackWork(p, p.artistName ?? who?.name ?? "")];
-      if (!introduced.current.has(slug)) {
-        introduced.current.add(slug);
-        const life = doc?.artist ?? (who ? fallbackArtist(who) : null);
+      return { slug, doc, who, work: doc?.works[workSlug] ?? fallbackWork(p, p.artistName ?? who?.name ?? "") };
+    },
+    [artists, gallerySlug, load]
+  );
+
+  const narrate = useCallback(
+    async (pl: Placement) => {
+      const key = pl.painting.slug;
+      current.current = key; // claim it now: the scripts may still be loading
+      const s = await scriptOf(pl);
+      if (!s || current.current !== key) return;
+      const queue: Script[] = [s.work];
+      if (!introduced.current.has(s.slug)) {
+        introduced.current.add(s.slug);
+        const life = s.doc?.artist ?? (s.who ? fallbackArtist(s.who) : null);
         // after the painting: the artist (who they were, in "famous works"; their life, in "every work")
         if (life) queue.push(modeRef.current === "all" ? life : { ...life, lines: life.lines.slice(0, 2) });
       }
       play(key, queue);
     },
-    [artists, gallerySlug, load, play]
+    [scriptOf, play]
+  );
+
+  /** The AI voice makes a work's first sentence while the visitor is stopping at it (it reads it a moment later). */
+  const prepare = useCallback(
+    async (pl: Placement) => {
+      if (!wantsNatural() || naturalVoice.state !== "ready") return;
+      const s = await scriptOf(pl);
+      if (s && !s.work.audio) naturalVoice.prefetch(toSentences(s.work.lines), getSettings().guideSpeed);
+    },
+    [scriptOf]
   );
 
   const toggle = useCallback(() => {
@@ -314,6 +334,7 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
     const dir = new THREE.Vector3();
     let candidate: string | null = null;
     let since = 0;
+    let prepared = false;
     const iv = setInterval(() => {
       const cam = cameraRef.current;
       if (!cam) return;
@@ -336,12 +357,19 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
       if (key !== candidate) {
         candidate = key;
         since = now;
+        prepared = false;
         return;
       }
-      if (best && key !== current.current && now - since >= DWELL_MS) void narrate(best);
+      if (!best || key === current.current) return;
+      if (now - since >= DWELL_MS) void narrate(best);
+      // held for a check: the visitor is stopping here, not walking past
+      else if (!prepared) {
+        prepared = true;
+        void prepare(best);
+      }
     }, CHECK_MS);
     return () => clearInterval(iv);
-  }, [on, mode, famous, active, inspect, placements, cameraRef, narrate]);
+  }, [on, mode, famous, active, inspect, placements, cameraRef, narrate, prepare]);
 
   useEffect(() => () => silence(), [silence]);
 

@@ -582,6 +582,17 @@
   border-radius: 999px;
   cursor: pointer;
 }
+/* the AI voices, by model: a caption over each row (SettingsPanel) */
+.settings .voiceKind {
+  margin: 12px 0 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: rgba(233, 229, 226, 0.5);
+}
+.hear:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
 .seg {
   display: flex;
   flex-wrap: wrap;

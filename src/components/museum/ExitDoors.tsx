@@ -217,11 +217,11 @@ export function ExitDoors({
     }
   });
 
-  if (!visible) return null;
-  // over each door's cornice, a little proud of the wall
+  // over each door's cornice, a little proud of the wall. Hung from the start, hidden until the last room is drawn:
+  // the warm-up behind the entrance doors compiles hidden meshes too, so walking up to them does not stall on it
   const y = spot.height + 0.27 + CARD_H / 2;
   return (
-    <group>
+    <group visible={visible}>
       {cards.map((k) => {
         const x = k.side === "prev" ? -spot.x : spot.x;
         return (

@@ -21,16 +21,25 @@ import * as THREE from "three";
 import { BlurPass } from "@react-three/drei/materials/BlurPass";
 import { crossUniforms, crossWalls, ROOM_AO_APPLY, ROOM_AO_PARS, ROOM_NOISE_GLSL, type CrossWalls } from "./room-shading";
 import { concreteTexture, woodGrainTexture } from "./textures";
+import { onReflection, reflectionOn } from "./quality";
 import type { GalleryTheme } from "./theme";
 
 const RESOLUTION = 512;
 
-/** Live reflector materials — the probe capture switches their reflection off. */
+/** Live reflector materials — the probe capture switches their reflection off, and so does the fast graphics
+ *  tier (quality.ts: the pass is skipped, the probe's soft sheen stays). */
 const reflectors = new Set<{ uniforms: { uReflectMix: THREE.IUniform<number> }; mix: number }>();
-export function setFloorReflectionsEnabled(on: boolean) {
+let capturing = false;
+function applyReflections() {
+  const on = !capturing && reflectionOn();
   reflectors.forEach((r) => {
     r.uniforms.uReflectMix.value = on ? r.mix : 0;
   });
+}
+onReflection(applyReflections);
+export function setFloorReflectionsEnabled(on: boolean) {
+  capturing = !on;
+  applyReflections();
 }
 
 interface FloorProps {
@@ -332,10 +341,15 @@ export function ReflectiveFloor(props: FloorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gl, props.W, props.L, props.H, props.theme, props.grain, props.cross, tmp]);
 
+  const invalidate = useThree((s) => s.invalidate);
   useEffect(() => {
     const entry = { uniforms: res.uniforms, mix: res.uniforms.uReflectMix.value };
     reflectors.add(entry);
+    applyReflections();
+    // the graphics tier switching it on or off shows at once
+    const off = onReflection(() => invalidate());
     return () => {
+      off();
       reflectors.delete(entry);
       res.fbo1.dispose();
       res.fbo2.dispose();
@@ -346,7 +360,7 @@ export function ReflectiveFloor(props: FloorProps) {
       res.mat.dispose();
       res.ownMap?.dispose();
     };
-  }, [res]);
+  }, [res, invalidate]);
 
   // Mirror the main camera through the floor plane (drei's beforeRender,
   // with Lengyel's oblique near-plane clipping).
@@ -410,7 +424,8 @@ export function ReflectiveFloor(props: FloorProps) {
 
   useFrame(() => {
     const mesh = meshRef.current;
-    if (!mesh || !beforeRender()) return;
+    // the fast graphics tier: no second drawing of the scene for the floor
+    if (!mesh || !reflectionOn() || !beforeRender()) return;
     mesh.visible = false;
     const xr = gl.xr.enabled;
     gl.xr.enabled = false;

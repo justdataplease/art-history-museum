@@ -49,6 +49,17 @@ const HOUSE_DOWN = 0.05;
 const HOUSE_PAUSED = 0.4;
 const _neutral = new THREE.Color();
 
+/** Whether the room's light is still changing: a film plays or loads, or the lamp or the dimmer is still easing to
+ *  where the deck's state puts it. Otherwise (a film left paused, the lamp lit) nothing moves and the gallery need
+ *  not draw. */
+export function runtimeMoving(rt: CinemaRuntime): boolean {
+  const { status, film } = rt.deck.state;
+  if (status === "playing" || status === "loading") return true;
+  const lamp = film !== null && status === "paused" ? 1 : 0;
+  const house = status === "paused" ? HOUSE_PAUSED : 1;
+  return Math.abs(rt.level - lamp) > 0.002 || Math.abs(rt.house - house) > 0.002;
+}
+
 /** Advance the room's light by dt seconds from the deck's state. */
 export function stepRuntime(rt: CinemaRuntime, dt: number, now: number): void {
   const { status, film, mode } = rt.deck.state;

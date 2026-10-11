@@ -98,6 +98,14 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
     natural voice (Edge's Natural voices, Android's neural ones, Safari's Enhanced): the AI voice made a slower
     browser lag, so it never loads by itself (changed 2026-10-10). Settings → Audio guide: the voice,
     five natural voices, the browser's voices, a reading speed (0.85× to 1.5×) and "Hear it". Live 2026-10-09.
+  - [x] The AI voice on any computer (owner, 2026-10-11: "it will be used by some non good laptops"): a light
+    voice, Piper (Cori, Kristin, John; public-domain readers), about 75 MB, on the processor in a worker: 0.14 s
+    of work a second of speech on a fast desktop, ahead of speech on a weak laptop, nothing on the graphics card.
+    Kokoro stays as the studio voice, offered only where WebGPU runs; "Best here" takes it only on a strong
+    graphics card. Each voice is timed as it reads: too slow, and the studio voice gives way to the light one,
+    the light one to the browser's voice (remembered). One model loads at a time (choosing Natural loaded two);
+    the guide makes a painting's first sentence while the visitor stops at it, long sentences in pieces; "Hear
+    it" waits for the AI voice instead of reading with the browser's.
   - [ ] Recorded narration in place of the browser's voice.
   - [ ] Greek names said the Greek way (the voices are English).
 - [x] **Films about the artist** (owner, 2026-10-09). Live.
@@ -114,6 +122,20 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
     articles, 10,238 links kept, 3,087 pages followed; 323 films for 158 artists (ZDF's Terra X, RAI Teche,
     UbuWeb, TV5Monde, Arte among the pages' films).
   - [ ] The other 472 artists: their articles link no film; a YouTube search (an API key) would find more.
+- [x] **Fast on weak laptops** (owner, 2026-10-11: "we need to be ultra fast ... non good laptops").
+  - [x] Settings → Graphics: Auto, Fast, Full (`quality.ts`). Fast: no edge smoothing, 1× pixels (0.75× if
+    walking still stutters), no floor reflection (its pass draws the scene twice), two ceiling area lights
+    instead of four, no close-up textures, anisotropy 4. Auto takes it for older Intel HD / UHD / Iris Plus,
+    software renderers, 4 cores or fewer, 4 GB or less, and steps down while walking stutters at full (the
+    reflection goes at once; the next gallery starts fast, remembered). Measured on the same walk: render work
+    per frame at a 6× slower CPU 11.4 → 5.8 ms (p95 16.9 → 9.0), frame p95 34.9 → 18.5 ms, draws 107 → 68;
+    the GPU sustains 3.6× the frame rate.
+  - [x] The films corner no longer keeps the gallery drawing after one walks out (a paused film's lamp kept it
+    at 57 frames a second for the rest of the visit).
+  - [x] The end doors compile behind the entrance doors (they compiled on reaching the last room: 0.6 s).
+  - [ ] A very long suite builds every room before the doors open (Monet, 130 rooms: 5 s on a slow CPU): build
+    the rooms near the visitor first, and the rounded boxes of the many room widths faster.
+  - [ ] Room entry: 10–20 ms per painting texture upload; spread them over frames, hold them while turning.
 - [ ] **16. A connected museum you can get lost in** (tamacun3, d--b, AIblemblio).
   - [x] Step 1: doors between artists (item 6).
   - [ ] Rooms that turn corners, period wings, streaming, a minimap.

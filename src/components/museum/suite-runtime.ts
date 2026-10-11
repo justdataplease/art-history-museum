@@ -166,14 +166,24 @@ export class SuiteRuntime {
   private snap = false;
   /** The laylight area lights (Lighting reads them every frame). */
   readonly areaSlots: AreaSlot[] = [];
+  /** Close-up textures for the works the visitor stands at (not in the fast graphics tier). */
+  private readonly near: boolean;
 
   constructor(
     layout: GalleryLayout,
     lights: ExhibitLights[],
-    opts: { color: THREE.ColorRepresentation; gate: string[]; start: P2 },
+    opts: {
+      color: THREE.ColorRepresentation;
+      gate: string[];
+      start: P2;
+      /** The graphics tier's area lights (AREA_POOL at full) and close-up textures (quality.ts). */
+      areaPool?: number;
+      near?: boolean;
+    },
   ) {
     this.layout = layout;
     this.suite = layout.rooms.length > 1;
+    this.near = opts.near ?? true;
     const gate = new Set(opts.gate);
     this.exhibits = layout.placements.map((pl, i) => {
       const hw = layout.rooms[pl.room]?.halfWidth ?? layout.hallWidth / 2;
@@ -223,7 +233,7 @@ export class SuiteRuntime {
     }
     // light the starting view at full strength (behind the closed doors)
     this.room = roomAt(layout, opts.start.z);
-    const nArea = Math.min(layout.rooms.length, AREA_POOL);
+    const nArea = Math.min(layout.rooms.length, opts.areaPool ?? AREA_POOL);
     for (const room of this.areaRooms(nArea)) this.areaSlots.push({ room, level: 1, goal: 1 });
     this.plan({ x: opts.start.x, y: EYE, z: opts.start.z });
     for (const s of this.slots) {
@@ -377,10 +387,10 @@ export class SuiteRuntime {
     this.windowSubs.forEach((cb) => cb());
   }
 
-  /** The rooms the area lights belong to: one behind the visitor, the rest ahead. */
+  /** The rooms the area lights belong to: the visitor's, one behind it (with three or more), the rest ahead. */
   private areaRooms(count: number): number[] {
     const n = this.layout.rooms.length;
-    const lo = Math.max(0, Math.min(n - count, this.room - 1));
+    const lo = Math.max(0, Math.min(n - count, this.room - (count >= 3 ? 1 : 0)));
     return Array.from({ length: count }, (_, i) => lo + i);
   }
 
@@ -439,7 +449,7 @@ export class SuiteRuntime {
     // ---- texture tiers: close-up resolution for the few works the visitor
     // stands at; in a suite, wall resolution only within a short walk
     const near = new Set<Exhibit>();
-    if (this.open) {
+    if (this.open && this.near) {
       const close = this.exhibits
         .map((e) => {
           const [x, , z] = e.placement.position;

@@ -25,6 +25,8 @@ import { FxSlot } from "./fx/Slot";
 import { Elevator, type ElevatorApi, type LiftDirection } from "./Elevator";
 import { ExitDoors, type ExitSide } from "./ExitDoors";
 import { FilmNook } from "@/components/cinema/FilmNook";
+import { rememberSteppedDown, setReflection, type Quality } from "./quality";
+import { useSetting } from "./settings";
 import type { CinemaRuntime } from "@/components/cinema/cinema-runtime";
 
 export type { LockApi };
@@ -75,6 +77,9 @@ export interface GalleryProps {
   warmApi: RefObject<WarmupApi | null>;
   /** Adaptive resolution: the highest device-pixel-ratio worth rendering at. */
   onDprCap: (cap: number) => void;
+  /** The graphics tier the gallery was created with (quality.ts), and whether Auto chose it (it may step down). */
+  quality: Quality;
+  autoQuality: boolean;
   /** Touch device: drag to look, tap to walk / inspect (no pointer lock). */
   touch: boolean;
   /** Touch mode: the visitor has dismissed the "step inside" overlay. */
@@ -135,7 +140,11 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
         color: theme.light.spot,
         gate: entryGate(layout),
         start: { x: 0, z: entryZ(layout) },
+        areaPool: props.quality.areaLights,
+        near: props.quality.near,
       }),
+    // the tier is the gallery's for its life (a light count change would recompile every lit program)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [layout, lights, theme.light.spot]
   );
   useEffect(() => () => runtime.dispose(), [runtime]);
@@ -356,7 +365,7 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
         open={props.entering}
         onRoom={props.onRoom}
       />
-      <AdaptiveDpr onDprCap={props.onDprCap} />
+      <AdaptiveDpr onDprCap={props.onDprCap} quality={props.quality} auto={props.autoQuality} />
       <FxSlot
         registry={meshRegistry.current}
         enabled={props.walkEnabled}
@@ -498,15 +507,33 @@ const DPR_WINDOW_MS = 250; // one frame-rate sample
 const DPR_WINDOWS = 10; // samples per decision: 2.5 s of walking in all
 const DPR_MAX_GAP_MS = 250; // a slower frame is a stall or an idle canvas, not a rate
 
-/** Drop to 1x pixel ratio when walking runs below ~40 fps, back up when it
- *  holds 60 (drei PerformanceMonitor's bounds and 3/4 majority). Only sampled
- *  while frames are continuous (walking): in demand mode an idle canvas, or
- *  one redrawn per look event, would otherwise read as a slow one. Finished
- *  samples are kept across walking bursts, so short hops add up to a
- *  decision; only the sample in progress is dropped when walking stops. */
-function AdaptiveDpr({ onDprCap }: { onDprCap: (cap: number) => void }) {
+/** A step of the quality ladder: a pixel ratio, with or without the floor's reflection. */
+interface Step {
+  dpr: number;
+  reflection: boolean;
+}
+
+/** The ladder, richest first: at full, 1.5x then 1x, then (Auto only: a visitor who chose Full keeps it) the
+ *  floor's reflection off, then 0.75x; fast starts without the reflection, at 1x. */
+function ladder(tier: Quality["tier"], auto: boolean): Step[] {
+  if (tier === "fast") return [{ dpr: 1, reflection: false }, { dpr: 0.75, reflection: false }];
+  const full = [{ dpr: 1.5, reflection: true }, { dpr: 1, reflection: true }];
+  return auto ? [...full, { dpr: 1, reflection: false }, { dpr: 0.75, reflection: false }] : full;
+}
+
+/** Adaptive quality: a step down the ladder when walking runs below ~40 fps, back up when it holds 60 (drei
+ *  PerformanceMonitor's bounds and 3/4 majority), except past the reflection: once Auto has taken it away, it
+ *  stays away, and the next gallery starts fast (remembered). Only sampled while frames are continuous
+ *  (walking): in demand mode an idle canvas, or one redrawn per look event, would otherwise read as a slow one.
+ *  Finished samples are kept across walking bursts, so short hops add up to a decision; only the sample in
+ *  progress is dropped when walking stops. The visitor's choice in Settings (Graphics) applies at once. */
+function AdaptiveDpr({ onDprCap, quality, auto }: { onDprCap: (cap: number) => void; quality: Quality; auto: boolean }) {
+  const choice = useSetting("graphics");
+  // Auto keeps the tier the gallery started with; a choice made since applies at once (its lights from the next)
+  const steps = useMemo(() => (choice === "auto" ? ladder(quality.tier, auto) : ladder(choice, false)), [choice, quality.tier, auto]);
   const st = useRef({
-    cap: 1.5,
+    step: 0,
+    floor: 0, // the richest step allowed (past a reflection Auto took away)
     flips: 0,
     settled: false,
     t0: 0, // start of the sample in progress (0: none)
@@ -515,18 +542,29 @@ function AdaptiveDpr({ onDprCap }: { onDprCap: (cap: number) => void }) {
     fps: [] as number[],
     refresh: 0, // highest rate seen: tells a 120 Hz screen from a 60 Hz one
   });
+  const stepsRef = useRef(steps);
+  useEffect(() => {
+    stepsRef.current = steps;
+    Object.assign(st.current, { step: 0, floor: 0, flips: 0, settled: false, t0: 0, fps: [] });
+    onDprCap(steps[0].dpr);
+    setReflection(steps[0].reflection);
+  }, [steps, onDprCap]);
 
-  const set = (v: number) => {
+  const go = (i: number) => {
     const s = st.current;
-    if (s.cap === v) return;
-    s.cap = v;
-    onDprCap(v);
-    if (++s.flips >= 4) {
-      // it keeps flip-flopping: settle on the cheap setting
-      s.cap = 1;
-      onDprCap(1);
-      s.settled = true;
+    const list = stepsRef.current;
+    const k = THREE.MathUtils.clamp(i, s.floor, list.length - 1);
+    if (k === s.step) return;
+    const was = list[s.step];
+    s.step = k;
+    onDprCap(list[k].dpr);
+    setReflection(list[k].reflection);
+    if (was.reflection && !list[k].reflection) {
+      // the reflection taken away for walking's sake: it stays away, and the next gallery starts fast
+      s.floor = k;
+      rememberSteppedDown();
     }
+    if (++s.flips >= 4) s.settled = true; // it keeps flip-flopping: stay on this (the cheaper side, as it goes)
   };
 
   useFrame(() => {
@@ -556,8 +594,8 @@ function AdaptiveDpr({ onDprCap }: { onDprCap: (cap: number) => void }) {
     const fast = s.fps.filter((v) => v >= upper * 0.9).length;
     const slow = s.fps.filter((v) => v < lower).length;
     s.fps.length = 0;
-    if (slow > DPR_WINDOWS * 0.75) set(1);
-    else if (fast > DPR_WINDOWS * 0.75) set(1.5);
+    if (slow > DPR_WINDOWS * 0.75) go(s.step + 1);
+    else if (fast > DPR_WINDOWS * 0.75) go(s.step - 1);
   });
   return null;
 }

@@ -28,7 +28,8 @@ import { duckMusic, MuseumAudio, musicMuted } from "./MuseumAudio";
 import { AudioGuide } from "./AudioGuide";
 import { FxGate } from "./fx/Gate";
 import { SettingsPanel } from "./SettingsPanel";
-import { setSettings, useSetting } from "./settings";
+import { getSettings, setSettings, useSetting } from "./settings";
+import { galleryQuality } from "./quality";
 import { galleryTheme, roomTheme } from "./theme";
 import { createSettleTracker, type SettleTracker } from "./renderer-motion";
 import styles from "./museum.module.css";
@@ -54,6 +55,7 @@ const JUMP_FADE_MS = 280;
 const JUMP_HOLD_MIN_MS = 520;
 const JUMP_HOLD_MAX_MS = 2400;
 
+// (antialias: the graphics tier's, quality.ts)
 const GL_PROPS = {
   antialias: true,
   powerPreference: "high-performance" as const,
@@ -138,7 +140,11 @@ export function MuseumApp({
   const [inspect, setInspect] = useState<Placement | null>(null);
   const [returning, setReturning] = useState(false);
   const [allSettled, setAllSettled] = useState(false);
-  const [dprCap, setDprCap] = useState(1.5);
+  // the graphics tier, for this gallery's life (quality.ts): smoothing, lights, close-up textures; the pixel ratio
+  // and the floor's reflection then follow walking (Gallery's AdaptiveDpr) and Settings
+  const [quality] = useState(() => ({ q: galleryQuality(), auto: getSettings().graphics === "auto" }));
+  const glProps = useMemo(() => ({ ...GL_PROPS, antialias: quality.q.antialias }), [quality]);
+  const [dprCap, setDprCap] = useState(quality.q.dprMax);
   // a suite's room navigator: the room the visitor is in, a pulse on entering
   const [room, setRoom] = useState(0);
   const [pulse, setPulse] = useState(0);
@@ -678,7 +684,7 @@ export function MuseumApp({
 
   const engaged = touch ? touchActive : locked; // walking with input captured
   const showStart = doorsOpen && arrived && !inspect && !returning && !engaged && !settingsOpen;
-  const dpr = useMemo(() => [1, dprCap] as [number, number], [dprCap]);
+  const dpr = useMemo(() => [Math.min(1, dprCap), dprCap] as [number, number], [dprCap]);
 
   return (
     <div className={`mus-root${hud ? "" : ` ${styles.hudOff}`}`}>
@@ -686,7 +692,7 @@ export function MuseumApp({
         shadows={false}
         frameloop={live ? "demand" : "never"}
         camera={camera}
-        gl={GL_PROPS}
+        gl={glProps}
         dpr={dpr}
       >
         <Gallery
@@ -706,6 +712,8 @@ export function MuseumApp({
           lockApi={lockApi}
           warmApi={warmApi}
           onDprCap={setDprCap}
+          quality={quality.q}
+          autoQuality={quality.auto}
           touch={touch}
           touchActive={touchActive}
           onRoom={rooms > 1 ? showRoom : undefined}
@@ -940,7 +948,7 @@ export function MuseumApp({
             type="button"
             className={styles.hudTool}
             onClick={openSettings}
-            title="Speed, canvas surface, on-screen controls (O)"
+            title="Speed, canvas surface, graphics, on-screen controls, audio guide (O)"
             aria-label="Settings"
           >
             <span aria-hidden>⚙</span> <span className={styles.toolLabel}>Settings</span>
