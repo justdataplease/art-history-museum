@@ -23,10 +23,9 @@ const SAMPLE =
   "The audio guide reads to you in front of the works people come to see: what you see in the painting first, then its story.";
 
 const PACES: { key: Pace; label: string }[] = [
-  { key: "slow", label: "Stroll" },
-  { key: "normal", label: "Walk" },
-  { key: "fast", label: "Brisk" },
+  { key: "walk", label: "Walk" },
   { key: "run", label: "Run" },
+  { key: "sprint", label: "Sprint" },
 ];
 
 function Choice<T extends string | boolean>({
@@ -158,9 +157,11 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
           <p>
             {touch
               ? "Push the stick (bottom left) to walk, as far as you push it, that fast; double-tap the floor to go there."
-              : s.pace === "run"
-                ? "You run by default."
-                : "Hold W for a few seconds to run."}
+              : s.pace === "sprint"
+                ? "Twice a run: the rooms go by fast."
+                : s.pace === "run"
+                  ? "You run by default."
+                  : "Hold W for a few seconds to run."}
           </p>
         </section>
         <section>

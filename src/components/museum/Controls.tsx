@@ -32,7 +32,7 @@ import { getSettings, PACE_SPEED, TAP_PACE_SPEED } from "./settings";
 // after an idle stretch R3F's clock reports the whole gap as one delta.
 
 const MAX_DT = 1 / 30;
-// pace: the visitor's setting (settings.ts; a run by default); at a walking pace, holding W runs at twice it
+// pace: the visitor's setting (settings.ts; a run by default, a sprint twice it); walking, holding W runs (twice it)
 const RUN_FACTOR = 2;
 const RUN_AFTER_MS = 3000;
 const AIM_RANGE = 9; // m: furthest a crosshair click can inspect from
@@ -607,7 +607,7 @@ export function Player({
     _dir.set(0, 0, 0).addScaledVector(_fwd, -mz).addScaledVector(_right, mx);
     if (_dir.lengthSq() > 0) {
       const pace = getSettings().pace;
-      const running = pace !== "run" && mz < 0 && pressed.current.has("KeyW") && forwardSince.current !== null
+      const running = pace === "walk" && mz < 0 && pressed.current.has("KeyW") && forwardSince.current !== null
         && performance.now() - forwardSince.current >= RUN_AFTER_MS && !b.crouch && b.k === 0;
       const walk = PACE_SPEED[pace];
       _dir.normalize().multiplyScalar((running ? walk * RUN_FACTOR : walk) * THREE.MathUtils.lerp(1, CROUCH_SPEED, smooth(b.k)));

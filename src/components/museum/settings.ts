@@ -1,12 +1,12 @@
 // The visitor's gallery settings, kept in this browser: walking pace, the canvas surface (weave and varnish),
-// whether the on-screen controls show, the graphics (quality.ts), and the audio guide's voice and speed. Controls reads the pace each frame
-// (getSettings); every painting renders with the surface, the HUD with `hud` (useSetting); the guide reads its
+// whether the on-screen controls show, the graphics (quality.ts), and the audio guide's voice and speed. Controls
+// reads the pace each frame (getSettings); every painting renders with the surface, the HUD with `hud` (useSetting); the guide reads its
 // voice when it speaks (voice.ts).
 
 import { useSyncExternalStore } from "react";
 import type { GraphicsChoice } from "./quality";
 
-export type Pace = "slow" | "normal" | "fast" | "run";
+export type Pace = "walk" | "run" | "sprint";
 /** auto and browser: the browser's own voice, the most natural it has (auto: the best; browser: the one chosen
  *  from its list); natural: the AI voice (voice.ts), downloaded and run on this device, only when chosen. */
 export type GuideVoice = "auto" | "natural" | "browser";
@@ -29,10 +29,12 @@ export interface MuseumSettings {
   guideSpeed: number;
 }
 
-/** Speed, m/s (a museum stroll is 1.0–1.4): a run by default; at a walking speed, holding W runs at twice it. */
-export const PACE_SPEED: Record<Pace, number> = { slow: 1.3, normal: 2.0, fast: 3.1, run: 4.0 };
-/** Tap-to-walk on touch, a little slower. */
-export const TAP_PACE_SPEED: Record<Pace, number> = { slow: 1.1, normal: 1.7, fast: 2.4, run: 3.0 };
+/** Speed, m/s: a run by default, a sprint twice a run; walking, holding W runs (twice the walk). */
+export const PACE_SPEED: Record<Pace, number> = { walk: 2.0, run: 4.0, sprint: 8.0 };
+/** Tap-to-walk and the stick on touch, a little slower. */
+export const TAP_PACE_SPEED: Record<Pace, number> = { walk: 1.7, run: 3.0, sprint: 6.0 };
+/** The four speeds before the three (Stroll, Walk, Brisk, Run), as saved. */
+const OLD_PACE: Record<string, Pace> = { slow: "walk", normal: "walk", fast: "run" };
 
 const KEY = "timeline-museum:settings";
 const DEFAULTS: MuseumSettings = {
@@ -43,7 +45,7 @@ const DEFAULTS: MuseumSettings = {
  *  included) gives way to it once; the AI voice is `aiVoice`, so the studio voice once saved as everyone's default
  *  (`naturalVoice`) gives way to the best for each computer. */
 interface Saved {
-  walk?: Pace;
+  walk?: string;
   surface?: boolean;
   hud?: boolean;
   graphics?: GraphicsChoice;
@@ -60,7 +62,7 @@ function load(): MuseumSettings {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Saved;
     return {
-      pace: saved.walk && saved.walk in PACE_SPEED ? saved.walk : DEFAULTS.pace,
+      pace: saved.walk && saved.walk in PACE_SPEED ? (saved.walk as Pace) : (saved.walk && OLD_PACE[saved.walk]) || DEFAULTS.pace,
       surface: typeof saved.surface === "boolean" ? saved.surface : DEFAULTS.surface,
       hud: typeof saved.hud === "boolean" ? saved.hud : DEFAULTS.hud,
       graphics: saved.graphics === "fast" || saved.graphics === "full" ? saved.graphics : DEFAULTS.graphics,
