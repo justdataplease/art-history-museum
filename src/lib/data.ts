@@ -232,7 +232,13 @@ ORDER BY a.slug`;
 /** The timeline: every period and artist. `origins`: each artist's country and continent too (the Explore
  *  filters), read from rooms.json; the pages that only need the order leave it out. */
 export async function getTimeline({ origins = false }: { origins?: boolean } = {}): Promise<TimelineData> {
-  const place = origins ? withOrigin : (a: Artist) => a;
+  // The card only displays this excerpt. Keep the full biography in getArtist
+  // for the gallery's audio guide, without sending unseen text to the timeline.
+  const place = (a: Artist): Artist => {
+    const bio = a.bio.length > 560 ? a.bio.slice(0, a.bio.lastIndexOf(" ", 560)) + " …" : a.bio;
+    const artist = { ...a, bio };
+    return origins ? withOrigin(artist) : artist;
+  };
   return read(
     async (db) => {
       const r = await db.query<{ data: TimelineData }>(TIMELINE_SQL);

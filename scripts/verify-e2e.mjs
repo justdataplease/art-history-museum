@@ -4,9 +4,10 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 
 const BASE = process.argv[2] ?? "http://localhost:3000";
-// VERIFY_PLACEHOLDER_IMAGES=1 serves a local placeholder for every Wikimedia
+// VERIFY_PLACEHOLDER_IMAGES=1 serves a local placeholder for every Wikimedia and WikiArt
 // image (portraits, paintings): repeated runs then stay clear of its rate limits.
 const PLACEHOLDER_IMAGES = !!process.env.VERIFY_PLACEHOLDER_IMAGES;
+const ART_IMAGE = /^https:\/\/(?:(?:upload|thumb)\.wikimedia\.org|(?:[^/]+\.)?wikiart\.org)\//;
 // a 4x4 warm-grey PNG
 const PLACEHOLDER_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGPoqkqDIwbiOABO0hahD+yEBAAAAABJRU5ErkJggg==",
@@ -42,7 +43,7 @@ await page.addInitScript(() => {
   Document.prototype.exitPointerLock = function () { locked = null; fire(); };
 });
 
-if (PLACEHOLDER_IMAGES) await page.route(/(upload|thumb)\.wikimedia\.org/, placeholder);
+if (PLACEHOLDER_IMAGES) await page.route(ART_IMAGE, placeholder);
 
 page.on("console", (msg) => {
   if (msg.type() === "error")
@@ -472,7 +473,7 @@ async function pageAt(w, h) {
     Element.prototype.requestPointerLock = function () { locked = this; fire(); return Promise.resolve(); };
     Document.prototype.exitPointerLock = function () { locked = null; fire(); };
   });
-  if (PLACEHOLDER_IMAGES) await p.route(/(upload|thumb)\.wikimedia\.org/, placeholder);
+    if (PLACEHOLDER_IMAGES) await p.route(ART_IMAGE, placeholder);
   p.on("pageerror", (e) => consoleErrors.push(`pageerror @${w}x${h}: ${e.message.slice(0, 300)}`));
   await p.goto(BASE, { waitUntil: "networkidle" });
   await p.waitForTimeout(900);

@@ -119,13 +119,19 @@ export interface GalleryLink {
   why?: string;
 }
 
-/** One floor of a custom room (rooms spanning eras get one floor per era, joined by an elevator). */
+/** One floor of a gallery, joined to the others by an elevator. */
 export interface RoomFloor {
   label: string;
   href: string;
   works: number;
   /** The number the elevator shows (a museum may count from 0, the ground floor). */
   number: number;
+}
+
+export interface GalleryFloors {
+  floors: RoomFloor[];
+  /** Current floor, 1-based. */
+  floor: number;
 }
 
 /** A custom room: works chosen by a selection (era, movement, genre, artists ...), shareable by its URL. */
@@ -197,6 +203,8 @@ export interface ArtistWithPaintings extends Artist {
   films?: Film[];
   /** Present when this "artist" is a custom room (works by several artists). */
   room?: RoomInfo;
+  /** An artist's gallery, split into floors of at most six rooms. */
+  gallery?: GalleryFloors;
   /** The phases of the artist's life, when known (src/lib/phases.ts): the gallery's rooms follow them. */
   phases?: ArtistPhase[];
 }

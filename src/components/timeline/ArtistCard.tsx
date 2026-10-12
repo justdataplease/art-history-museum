@@ -160,10 +160,6 @@ export function ArtistCard({
     gsap.to(backdropRef.current, { backgroundColor: "rgba(4,3,2,1)", duration: 0.5 });
   }
 
-  const bioShort =
-    artist.bio.length > 560
-      ? artist.bio.slice(0, artist.bio.lastIndexOf(" ", 560)) + " …"
-      : artist.bio;
   // Wikidata taglines often already carry the dates ("Italian painter (1571–1610)").
   const years = artistYears(artist);
   const showYears = !!years && !/\b1\d{3}\b|\b20\d{2}\b/.test(artist.tagline);
@@ -221,7 +217,7 @@ export function ArtistCard({
             <div className="card-rule" aria-hidden>
               ❦
             </div>
-            <p className="card-bio">{bioShort}</p>
+            <p className="card-bio">{artist.bio}</p>
             {period && (
               <span
                 className="card-period-tag"

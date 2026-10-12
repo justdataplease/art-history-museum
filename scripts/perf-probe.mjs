@@ -8,8 +8,8 @@
 // while something actually changes. Older builds that render every frame
 // report the same number in both samples.
 //
-// A multi-room suite is then walked end to end (`suiteWalk`): down the axis
-// just off the centre line (clear of the benches, through every doorway),
+// A multi-room suite is then walked end to end (`suiteWalk`), steering
+// through each doorway (including openings offset from the centre),
 // sampling draws / framebuffer binds per rendered frame each second, and
 // checking that no shader program is linked on the way (`programsLinked`
 // before / after) and how many image bytes the far rooms add. The walk reads
@@ -188,8 +188,7 @@ const suite = await page.evaluate(() => {
 if (suite && suite.rooms > 1 && walk) {
   const programsBefore = await page.evaluate(() => window.__probe.programs);
   const mbBefore = +(imageBytes / 1e6).toFixed(2);
-  // just off the axis: clear of the centre-line benches, inside every doorway
-  // (and behind a long suite's flagship screen, which stands on the axis)
+  // Start clear of the centre-line bench and behind the flagship's screen.
   await page.evaluate(() => {
     const m = window.__museum;
     const s = m.layout.screen;
@@ -202,10 +201,22 @@ if (suite && suite.rooms > 1 && walk) {
   const seconds = [];
   const t0 = Date.now();
   let z = Infinity;
+  let previous = null;
+  let stuck = 0;
   // up to ~3.5 min: a 17-room suite is ~400 m at walking pace
   while (Date.now() - t0 < 210000) {
+    // As in suite-check: follow the actual openings, stepping round a bench if held up.
+    await page.evaluate((side) => {
+      const { camera, layout } = window.__museum;
+      const door = layout.doorways.find(d => d.z < camera.position.z - 0.2);
+      const x = door?.x ?? 0, z = door ? door.z - 1.5 : -layout.hallLength / 2;
+      camera.rotation.set(0, Math.atan2(-(x - camera.position.x), -(z - camera.position.z)) + side, 0, "YXZ");
+    }, stuck > 1 ? (seconds.length % 4 < 2 ? 1 : -1) * Math.PI / 2 : 0);
     const s = await sample(1000);
-    z = await page.evaluate(() => window.__museum.camera.position.z);
+    const position = await page.evaluate(() => ({ x: window.__museum.camera.position.x, z: window.__museum.camera.position.z }));
+    stuck = previous && Math.hypot(position.x - previous.x, position.z - previous.z) < 0.15 ? stuck + 1 : 0;
+    previous = position;
+    z = position.z;
     const room = await page.evaluate(() => window.__museum.runtime.currentRoom());
     seconds.push({ z: +z.toFixed(1), room, draws: s.drawsPerFrame, fb: s.fbBindsPerFrame, fps: s.renderedFps });
     if (z < -suite.L / 2 + 2) break;

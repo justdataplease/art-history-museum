@@ -333,15 +333,17 @@ function useStreamedTexture(
     let alive = true;
     let owned = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const upload = (tex: THREE.Texture) =>
-      scheduleUpload(() => {
+    let cancelUpload: (() => void) | undefined;
+    const upload = (tex: THREE.Texture) => {
+      cancelUpload = scheduleUpload(() => {
         if (!alive) return;
         gl.initTexture(tex);
         owned = true;
         setShown({ url, tex });
         invalidate();
         cbs.current.onLoad?.();
-      });
+      }, priority);
+    };
     // wait out notBefore, then poll the hold, then queue the upload
     const whenFree = (tex: THREE.Texture) => {
       if (!alive) return;
@@ -371,6 +373,7 @@ function useStreamedTexture(
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
+      cancelUpload?.();
       if (!owned) releaseTexture(url);
     };
   }, [url, track, priority, gl, invalidate, epoch]);
@@ -473,6 +476,7 @@ function CanvasSurface({
   }, [isFocused, hiUrl, baseUrl, wantUrl]);
   const hi = useStreamedTexture(hiWanted ? hiUrl : null, {
     track: false,
+    priority: "high",
     notBefore: focusAt.current + INSPECT_TWEEN_MS,
     hold: isInspectFlying,
   });

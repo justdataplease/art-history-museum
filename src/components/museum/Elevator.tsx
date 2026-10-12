@@ -142,7 +142,10 @@ export function Elevator({
   const directory = useMemo(() => {
     if (spot.directoryX === null) return null;
     const c = document.createElement("canvas");
-    const rows = floors.length;
+    // Keep the directory legible (and its texture bounded) in artists with dozens of floors.
+    const first = Math.max(0, Math.min(floor - 3, floors.length - 5));
+    const last = Math.min(floors.length, first + 5);
+    const rows = last - first;
     c.width = 640;
     c.height = 150 + rows * 92;
     const g = c.getContext("2d");
@@ -155,9 +158,9 @@ export function Elevator({
       g.fillStyle = "#e9e1d0";
       g.font = "500 30px Georgia, serif";
       g.textBaseline = "middle";
-      g.fillText("FLOORS", 40, 66);
+      g.fillText(`FLOORS · ${floors.length}`, 40, 66);
       // top floor first, as on a lobby board
-      for (let i = rows - 1, row = 0; i >= 0; i--, row++) {
+      for (let i = last - 1, row = 0; i >= first; i--, row++) {
         const y = 140 + row * 92;
         const here = i + 1 === floor;
         if (here) {

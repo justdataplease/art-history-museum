@@ -32,6 +32,7 @@ import { getSettings, setSettings, useSetting } from "./settings";
 import { galleryQuality } from "./quality";
 import { galleryTheme, roomTheme } from "./theme";
 import { createSettleTracker, type SettleTracker } from "./renderer-motion";
+import { preloadFloorImages } from "./preload-floor";
 import styles from "./museum.module.css";
 import { SourceLink } from "@/components/timeline/SourceLink";
 import { ScreeningHud, useScreening } from "@/components/cinema/ScreeningHud";
@@ -98,6 +99,7 @@ export function MuseumApp({
 }) {
   // a custom room may choose its room style, wall colour and hanging order (src/lib/rooms.ts)
   const design = artist.room;
+  const floorInfo = artist.gallery ?? design;
   const theme = useMemo(
     () => (design ? roomTheme(artist.periodSlug, design.style, design.wall, design.ground) : galleryTheme(artist.periodSlug)),
     [artist.periodSlug, design]
@@ -110,13 +112,13 @@ export function MuseumApp({
       keepOrder: !!design?.keepOrder,
       furnish: furnishSizes(furnitureOf(theme)),
       arches: theme.room.arches,
-      elevator: (design?.floors.length ?? 0) > 1,
+      elevator: (floorInfo?.floors.length ?? 0) > 1,
       exits: !design && !!neighbours,
       phases: design ? undefined : artist.phases?.map((p) => p.name),
       // the films about the artist: a corner of the second room, behind a free-standing wall
       films: !design && !!artist.films?.length,
     });
-  }, [artist, theme, design, neighbours]);
+  }, [artist, theme, design, floorInfo, neighbours]);
   const screening = useScreening(useMemo(() => artist.films ?? [], [artist.films]), layout);
   const films = layout.nook ? screening.films.length : 0;
   // the flagship (a thumbnail, in a suite) and the entrance room's nearest works
@@ -160,6 +162,12 @@ export function MuseumApp({
   const cameraRef = useRef<THREE.Camera | null>(null);
   const router = useRouter();
   const roomInfo = artist.room;
+  // Warm only this bounded floor's image cache, after the entrance has finished loading. Nothing is
+  // decoded or uploaded here; the existing distance-based texture tiers still control GPU memory.
+  useEffect(() => {
+    if (!arrived || !artist.gallery) return;
+    return preloadFloorImages(artist.paintings);
+  }, [arrived, artist]);
   // the audio guide's artists: a custom room's, or the gallery's own
   const guideArtists = useMemo<GuideArtist[]>(
     () =>
@@ -489,6 +497,7 @@ export function MuseumApp({
     if (!navEnabled) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e.target as Element | null)?.closest("input, textarea, select, [contenteditable]")) return;
       if (e.code === "BracketLeft" || e.code === "PageUp") goRoom(room - 1);
       else if (e.code === "BracketRight" || e.code === "PageDown") goRoom(room + 1);
       else return;
@@ -499,8 +508,8 @@ export function MuseumApp({
   }, [navEnabled, goRoom, room]);
   // ---- a custom room's elevator, beside the entrance doors (Elevator.tsx): up to the next floor, down to
   // the one before. At it: E (up, or the only way) and Q (down), or its buttons; elsewhere E walks there.
-  const floors = roomInfo?.floors ?? [];
-  const floorNo = roomInfo?.floor ?? 1;
+  const floors = floorInfo?.floors ?? [];
+  const floorNo = floorInfo?.floor ?? 1;
   const up = floorNo < floors.length ? floors[floorNo] : null;
   const down = floorNo > 1 ? floors[floorNo - 2] : null;
   const liftApi = useRef<ElevatorApi | null>(null);
@@ -515,10 +524,12 @@ export function MuseumApp({
     }
   }, []);
   const ride = useCallback(
-    async (dir: LiftDirection) => {
-      const to = dir === "up" ? up : down;
+    async (dir: LiftDirection, destination?: number) => {
+      const to = destination == null ? (dir === "up" ? up : down) : floors[destination - 1];
       if (!to || riding) return;
       setRiding(true);
+      // Fetch the chosen floor during the elevator animation, never the whole museum in advance.
+      router.prefetch(to.href);
       duckMusic(0.25, 0.8);
       const call = liftApi.current?.call(dir) ?? Promise.resolve();
       await Promise.race([call, new Promise((r) => setTimeout(r, 2600))]);
@@ -529,7 +540,7 @@ export function MuseumApp({
       if (document.pointerLockElement) document.exitPointerLock();
       setTimeout(() => router.push(to.href), JUMP_FADE_MS + 200);
     },
-    [up, down, riding, router]
+    [up, down, floors, riding, router]
   );
   const rideRef = useRef(ride);
   useEffect(() => {
@@ -647,6 +658,7 @@ export function MuseumApp({
     if (!atEnd || !walkEnabled) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      if ((e.target as Element | null)?.closest("input, textarea, select, [contenteditable]")) return;
       if (e.code === "KeyE") leave("next");
       else if (e.code === "KeyQ") leave("prev");
     };
@@ -656,9 +668,9 @@ export function MuseumApp({
 
   const lift = useMemo(
     () =>
-      layout.elevator && roomInfo
+      layout.elevator && floorInfo
         ? {
-            floors: roomInfo.floors,
+            floors: floorInfo.floors,
             floor: floorNo,
             arrivedByLift,
             apiRef: liftApi,
@@ -666,12 +678,13 @@ export function MuseumApp({
             onPress: pressLift,
           }
         : undefined,
-    [layout.elevator, roomInfo, floorNo, arrivedByLift, pressLift]
+    [layout.elevator, floorInfo, floorNo, arrivedByLift, pressLift]
   );
   useEffect(() => {
-    if (!walkEnabled || !layout.elevator || (!up && !down)) return;
+    if (!walkEnabled || !layout.elevator || (!up && !down) || (atEnd && !nearLift)) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      if ((e.target as Element | null)?.closest("input, textarea, select, [contenteditable]")) return;
       if (e.code === "KeyE") {
         if (nearLift) void ride(up ? "up" : "down");
         else goToLift();
@@ -681,14 +694,14 @@ export function MuseumApp({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [walkEnabled, layout.elevator, up, down, nearLift, ride, goToLift]);
+  }, [walkEnabled, layout.elevator, up, down, nearLift, ride, goToLift, atEnd]);
 
   const engaged = touch ? touchActive : locked; // walking with input captured
   const showStart = doorsOpen && arrived && !inspect && !returning && !engaged && !settingsOpen;
   const dpr = useMemo(() => [Math.min(1, dprCap), dprCap] as [number, number], [dprCap]);
 
   return (
-    <div className={`mus-root${hud ? "" : ` ${styles.hudOff}`}`}>
+    <div className={`mus-root${artist.gallery ? ` ${styles.floored}` : ""}${hud ? "" : ` ${styles.hudOff}`}`}>
       <Canvas
         shadows={false}
         frameloop={live ? "demand" : "never"}
@@ -759,11 +772,27 @@ export function MuseumApp({
             </p>
           ) : (
             <p>
+              {artist.gallery ? `${floors[floorNo - 1].label} · ` : ""}
               {artist.periodName} · {artist.birthYear} — {artist.deathYear ?? ""}
             </p>
           )}
         </div>
         <div className={`${styles.topSide} ${styles.topRight}`}>
+          {artist.gallery && doorsOpen && !inspect && (
+            <select
+              className={styles.floorPicker}
+              aria-label="Floor"
+              value={floorNo}
+              disabled={riding}
+              onFocus={() => { if (document.pointerLockElement) document.exitPointerLock(); }}
+              onChange={(e) => {
+                const to = Number(e.target.value);
+                if (to !== floorNo) void ride(to > floorNo ? "up" : "down", to);
+              }}
+            >
+              {floors.map((f, i) => <option key={f.href} value={i + 1}>{f.label} · {f.works} works</option>)}
+            </select>
+          )}
           {roomInfo && !inspect && (
             <div className={styles.roomActions}>
               <Link href={`/rooms?${roomInfo.href.split("?")[1] ?? ""}`} className="mus-back">
@@ -929,6 +958,7 @@ export function MuseumApp({
         >
           <h2>{artist.name}</h2>
           {roomInfo && <p>{roomInfo.floors.length > 1 ? roomInfo.floors[floorNo - 1].label : roomInfo.subtitle}</p>}
+          {artist.gallery && <p>{floors[floorNo - 1].label} · {floors.length} floors</p>}
           {roomInfo?.intro && <p className={styles.intro}>{roomInfo.intro}</p>}
           <p>
             {touch ? "Tap" : "Click"} to step inside · {artist.paintings.length} works
@@ -1081,7 +1111,7 @@ export function MuseumApp({
         </div>
         <div className="doors-name">
           <h1>{artist.name}</h1>
-          <p>{arrivedByLift && roomInfo ? roomInfo.floors[floorNo - 1].label : artist.periodName}</p>
+          <p>{arrivedByLift && floorInfo ? floors[floorNo - 1].label : artist.periodName}</p>
           {design?.intro && <p className={styles.intro}>{design.intro}</p>}
         </div>
         <DoorsStatus tracker={tracker} gate={gate} />

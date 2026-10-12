@@ -17,6 +17,7 @@
     "build": "next build",
     "start": "next start",
     "check-layout": "tsx scripts/check-layout.ts",
+    "test:performance": "tsx --test scripts/lib/upload-queue.test.ts scripts/lib/room-geometry.test.ts scripts/lib/gallery-floors.test.ts scripts/lib/preload-floor.test.ts",
     "ingest": "tsx scripts/ingest.ts",
     "load-db": "tsx scripts/load-db.ts",
     "enrich": "tsx scripts/enrich.ts",

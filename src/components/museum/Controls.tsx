@@ -523,7 +523,7 @@ export function Player({
       // the click on "step inside" that took the lock, or on a HUD control,
       // is not aim
       const t = e.target as Element | null;
-      if (t?.closest?.(".mus-click-to-start, button, a, nav, input")) return;
+      if (t?.closest?.(".mus-click-to-start, button, a, nav, input, select")) return;
       camera.updateMatrixWorld();
       ray.setFromCamera(_CENTER, camera);
       const hit = pickPainting(ray, registry, AIM_RANGE, layout);

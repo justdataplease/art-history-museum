@@ -85,7 +85,7 @@
    music's card (MuseumAudio.module.css) */
 @media (max-width: 640px) {
   .guide {
-    top: 126px;
+    top: calc(126px + var(--floor-toolbar-height, 0px));
     left: 12px;
     right: 12px;
     flex-wrap: wrap;

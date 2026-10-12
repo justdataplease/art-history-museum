@@ -220,7 +220,7 @@ export class GeoBatch {
   }
 
   /** Merge everything into one static world-space geometry. */
-  build(): THREE.BufferGeometry {
+  build(bounds = true): THREE.BufferGeometry {
     if (this.parts.length === 0) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
@@ -230,8 +230,10 @@ export class GeoBatch {
     this.parts.forEach((p) => p.dispose());
     this.parts = [];
     if (!merged) throw new Error("room-geometry: merge failed");
-    merged.computeBoundingBox();
-    merged.computeBoundingSphere();
+    if (bounds) {
+      merged.computeBoundingBox();
+      merged.computeBoundingSphere();
+    }
     return merged;
   }
 }
@@ -608,7 +610,8 @@ export interface IndexRange {
  * extra draw call.
  */
 function mergeRooms(batches: GeoBatch[]): { geometry: THREE.BufferGeometry; ranges: IndexRange[] } {
-  const built = batches.map((b) => b.build());
+  // Temporary room geometries are merged again below; only the final hall needs bounds.
+  const built = batches.map((b) => b.build(batches.length === 1));
   if (built.length === 1) {
     const g = built[0];
     return { geometry: g, ranges: [{ start: 0, count: g.index ? g.index.count : 0 }] };

@@ -417,19 +417,28 @@ export function releaseTexture(url: string): void {
 
 // ------------------------------------------------------- staggered uploads
 
-const queue: (() => void)[] = [];
+const priorities = ["high", "auto", "low"] as const;
+const uploads: Record<FetchPriority, Set<() => void>> = {
+  high: new Set(),
+  auto: new Set(),
+  low: new Set(),
+};
 let pumping = false;
 
 function pump() {
-  const job = queue.shift();
-  if (job) {
+  for (const priority of priorities) {
+    const queue = uploads[priority];
+    const job = queue.values().next().value;
+    if (!job) continue;
+    queue.delete(job);
     try {
       job();
     } catch (e) {
       console.error(e);
     }
+    break;
   }
-  if (queue.length) next();
+  if (priorities.some((p) => uploads[p].size)) next();
   else pumping = false;
 }
 
@@ -437,22 +446,28 @@ function next() {
   // rAF paces uploads to frames; the timeout keeps the queue moving in a
   // hidden/background tab where rAF is paused.
   let done = false;
+  let frame: number | undefined;
   const go = () => {
     if (done) return;
     done = true;
+    clearTimeout(timer);
+    if (frame !== undefined) cancelAnimationFrame(frame);
     pump();
   };
-  if (typeof requestAnimationFrame === "function") requestAnimationFrame(go);
-  setTimeout(go, 120);
+  const timer = setTimeout(go, 120);
+  if (typeof requestAnimationFrame === "function") frame = requestAnimationFrame(go);
 }
 
-/** Run `job` (typically gl.initTexture + setState) on a later frame, one job per frame. */
-export function scheduleUpload(job: () => void): void {
-  queue.push(job);
+/** One upload per frame, entrance/inspect first. Cancelling removes the job without spending a frame on it. */
+export function scheduleUpload(run: () => void, priority: FetchPriority = "auto"): () => void {
+  const queue = uploads[priority];
+  const job = () => run();
+  queue.add(job);
   if (!pumping) {
     pumping = true;
     next();
   }
+  return () => { queue.delete(job); };
 }
 
 // ------------------------------------------------------------ placeholder

@@ -49,7 +49,10 @@ for (const works of scales) {
     const last = layout.rooms.at(-1)!;
     const a = { x: 0, z: (first.z0 + first.z1) / 2 };
     const b = { x: 0, z: (last.z0 + last.z1) / 2 };
-    assert(Math.abs(pathDistance(a, b, layout) - Math.abs(b.z - a.z)) < 1e-8, "aligned doors make a straight walk");
+    const straight = Math.abs(b.z - a.z);
+    assert(pathDistance(a, b, layout) >= straight - 1e-8, "offset doorways cannot shorten the straight distance");
+    const aligned = { ...layout, doorways: layout.doorways.map((d) => ({ ...d, x: 0 })) };
+    assert(Math.abs(pathDistance(a, b, aligned) - straight) < 1e-8, "aligned doors make a straight walk");
     const forward = pathDistance({ ...a, x: 1 }, { ...b, x: -1 }, layout);
     const reverse = pathDistance({ ...b, x: -1 }, { ...a, x: 1 }, layout);
     assert(Math.abs(forward - reverse) < 1e-8, "walking distance is symmetric");

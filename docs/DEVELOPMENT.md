@@ -177,6 +177,14 @@ linked behind the entry doors; the count stayed at 28 throughout the walk.
 
 ## Deploy
 
+Artist galleries are served one floor at a time, with at most six rooms per floor. The first floor keeps the
+original `/museum/<artist>` URL; later floors use `/museum/<artist>/floor/<number>`. All floors are prerendered
+and keep every work and phase. Films stay on the first floor. Custom museums retain their authored floor plans.
+After entering, two low-priority requests warm the current floor's wall images in the browser cache, without
+decoding or uploading extra GPU textures. Leaving cancels this work. The elevator fetches another floor only
+when selected; the floor picker can jump directly to any floor. Data Saver and 2G connections skip background
+image preloading.
+
 Any Node host works (`npm run build && npm start`, or the Dockerfile). On
 Vercel the project builds as it is; set `DATABASE_URL` only if you use
 Postgres.
@@ -184,12 +192,17 @@ Postgres.
 ## Tests and tools
 
 - `node scripts/verify-e2e.mjs [baseUrl]`: timeline behaviour checks.
+- `node scripts/check-floors.mjs [baseUrl]`: desktop and touch floor navigation, elevator rides, history,
+  direct links and 404s; set `VERIFY_REAL_IMAGES=1` to use the real artwork hosts instead of fixtures.
 - `node scripts/suite-check.mjs`: walks a gallery suite (collision, doorways,
   navigator, inspect).
 - `node scripts/perf-probe.mjs <slug> [baseUrl] [label]`: rendering cost.
 - `node scripts/shot-museum.mjs <slug> <prefix> [baseUrl]`: gallery screenshots.
 - `node scripts/error-sweep.mjs [baseUrl]`: console-error sweep.
 - `npm run check-layout`: collection and room-navigation checks up to 10,000 works.
+- `npm run test:performance`: painting-upload priority, cancellation and frame pacing; identical hall geometry
+  and room draw ranges when bounds calculations are deferred until the final merge; floor limits, artwork
+  preservation and bounded, cancellable preloading.
 - `npx tsx --test scripts/ingest.test.ts scripts/lib/wiki.test.ts scripts/lib/passes.test.ts scripts/lib/metadata.test.ts scripts/lib/item-cache.test.ts`:
   source validation, catalogue pagination, category traversal, series
   handling and stable metadata reuse.
