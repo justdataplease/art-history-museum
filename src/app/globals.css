@@ -1566,6 +1566,7 @@ button {
   position: relative;
   min-width: 0;
   height: 40px;
+  touch-action: none;
 }
 
 .tl-year-track::before,
@@ -1686,6 +1687,15 @@ button {
   .tl-year-nav label:first-child { justify-self: start; }
   .tl-year-nav button { grid-column: 2; grid-row: 1; min-height: 28px; }
   .tl-year-track { grid-column: 1 / -1; grid-row: 2; }
+}
+
+/* Keep room for every Star Map title on the shortest phones. */
+@media (max-width: 400px) and (max-height: 760px) {
+  .tl-year-nav { grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; padding: 3px 10px; border-radius: 999px; }
+  .tl-year-nav label { gap: 4px; }
+  .tl-year-track { grid-column: 2; grid-row: 1; }
+  .tl-year-nav button,
+  .tl-hint { display: none; }
 }
 
 .tl-note-l {
