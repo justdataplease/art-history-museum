@@ -32,6 +32,16 @@
   color: rgba(233, 229, 226, 0.6);
 }
 
+.settings.settings {
+  display: grid;
+  place-items: center;
+  min-width: 32px;
+  padding: 7px;
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
 .toggle kbd {
   margin-left: 8px;
   font: inherit;

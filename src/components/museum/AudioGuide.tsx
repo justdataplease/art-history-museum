@@ -115,9 +115,10 @@ interface Props {
   active: boolean;
   inspect: Placement | null;
   touch: boolean;
+  onSettings: () => void;
 }
 
-export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active, inspect, touch }: Props) {
+export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active, inspect, touch, onSettings }: Props) {
   const [supported, setSupported] = useState(false);
   const [mode, setMode] = useState<Mode>("off");
   const on = mode !== "off";
@@ -403,6 +404,17 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
           {MODE_LABEL[mode]}
           {!touch && <kbd>G</kbd>}
         </button>
+        {on && (
+          <button
+            type="button"
+            className={`${styles.small} ${styles.settings}`}
+            onClick={onSettings}
+            aria-label="Audio guide settings"
+            title="Audio guide settings: voice and reading speed"
+          >
+            <span aria-hidden>⚙</span>
+          </button>
+        )}
         {on && (
           <button
             type="button"

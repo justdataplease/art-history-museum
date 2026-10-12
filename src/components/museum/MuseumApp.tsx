@@ -1074,6 +1074,7 @@ export function MuseumApp({
       )}
 
       <AudioGuide
+        onSettings={openSettings}
         placements={layout.placements}
         cameraRef={cameraRef}
         artists={guideArtists}
