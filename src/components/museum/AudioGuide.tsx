@@ -7,10 +7,10 @@
 // The text is standard, prepared data (archive/guide.py -> /api/guide/<artist>): one script per artist and per
 // work, with a stable id and version. The voice is separate: a recording of the script when there is one
 // (public/audio/guide/<id>.mp3, subtitles timed by sentence length), else a voice reading it one sentence at a
-// time (voice.ts): the AI voice, run on this device, when it is chosen (Settings), else the browser's most natural
-// voice. The AI voice starts on a painting's first sentence as soon as the visitor stops at it, before the guide
-// begins. All at the visitor's speed (the 1× button, or Settings). The sentence being read shows as a subtitle;
-// the gallery music steps back while the guide speaks.
+// time (voice.ts): the AI voice (Pocket), run on this device, when it is chosen (Settings), else the browser's most
+// natural voice. The AI voice starts on a painting's first sentence as soon as the visitor stops at it, before the
+// guide begins. All at the visitor's speed (the 1× button, or Settings), but the AI voice, which keeps its own pace.
+// The sentence being read shows as a subtitle; the gallery music steps back while the guide speaks.
 //
 // "In front of": within NEAR metres, the painting ahead of the visitor (FACING), for DWELL_MS. Checked on a
 // timer, not per frame: the canvas renders on demand and stops drawing when the visitor stands still.
@@ -166,7 +166,7 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
 
   // the AI voice warms up in the background while the browser's reads, when chosen in Settings
   useEffect(() => {
-    if (on && settings.guideVoice === "natural") void naturalVoice.load(settings.aiVoice);
+    if (on && settings.guideVoice === "natural") naturalVoice.load(settings.aiVoice);
   }, [on, settings.guideVoice, settings.aiVoice]);
 
   // the gallery's scripts, ahead of the first painting
@@ -291,7 +291,7 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
     async (pl: Placement) => {
       if (!wantsNatural() || naturalVoice.state !== "ready") return;
       const s = await scriptOf(pl);
-      if (s && !s.work.audio) naturalVoice.prefetch(toSentences(s.work.lines), getSettings().guideSpeed);
+      if (s && !s.work.audio) naturalVoice.prefetch(toSentences(s.work.lines));
     },
     [scriptOf]
   );

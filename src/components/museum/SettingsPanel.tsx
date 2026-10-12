@@ -8,8 +8,8 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { GUIDE_SPEEDS, getSettings, setSettings, useSettings, type GuideVoice, type Pace } from "./settings";
 import { currentQuality, forgetSteppedDown, tierFor, weakReason, type GraphicsChoice } from "./quality";
 import {
-  ENGINE_MB,
   NATURAL_VOICES,
+  POCKET_MB,
   browserVoices,
   naturalVoice,
   pickBrowserVoice,
@@ -54,22 +54,12 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true });
   }, []);
-  // the AI voice: which this computer runs best, whether it is here already, and its download (only choosing it
-  // starts it; Auto never uses it)
+  // the AI voice (Pocket): whether it is here already, and its download (only choosing it starts it; Auto never
+  // uses it)
   const natural = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getState, () => "idle" as const);
   const progress = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getProgress, () => 0);
   useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getDevices, () => 0);
-  const [studio, setStudio] = useState(false);
-  const [best, setBest] = useState<string | null>(null);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  useEffect(() => {
-    // not offered on a phone or tablet, whose graphics would only lag with them
-    void naturalVoice.gpu().then((g) => setStudio(g.ok && !window.matchMedia("(pointer: coarse)").matches));
-  }, []);
-  // what "best for this computer" reads with (it changes when a voice proves too slow here)
-  useEffect(() => {
-    void naturalVoice.resolve("").then(setBest);
-  }, [natural]);
   useEffect(() => {
     if (!("speechSynthesis" in window)) return;
     const list = () => setVoices(browserVoices());
@@ -87,7 +77,7 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
     const g = getSettings();
     const o = { speed: g.guideSpeed, onLine: () => {}, onEnd: () => {} };
     if (g.guideVoice === "natural") {
-      void naturalVoice.load(g.aiVoice);
+      naturalVoice.load(g.aiVoice);
       setPreparing(true);
       const ok = await naturalVoice.whenReady();
       setPreparing(false);
@@ -98,32 +88,22 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
     }
     sample.current = speakBrowser([SAMPLE], pickBrowserVoice(g.browserVoice), o);
   };
-  // the AI voice that reads, or will once chosen
-  const target = s.aiVoice || best;
-  const targetInfo = target ? voiceInfo(target) : undefined;
-  const mb = targetInfo && naturalVoice.onDevice(targetInfo.id) === false ? ENGINE_MB[targetInfo.engine] : null;
+  // Pocket's model: its download until it is here (then a second voice is only its own few MB)
+  const here = naturalVoice.onDevice();
+  const mb = here === false ? POCKET_MB : null;
   const reading = naturalVoice.voice ? voiceInfo(naturalVoice.voice) : undefined;
-  // (a second Pocket voice is only its own few MB: the model is here already)
-  const size =
-    reading?.engine === "pocket" && naturalVoice.onDevice(reading.id) ? "a few MB" : `about ${ENGINE_MB[reading?.engine ?? "piper"]} MB`;
   const voiceNote =
     s.guideVoice !== "natural"
-      ? `Auto reads with the browser's most natural voice (Edge's Natural voices are the best; on a phone, the system's neural voices). Natural (AI) runs a neural voice on this device: choosing it downloads it once${mb ? ` (about ${mb} MB)` : ""}. Nothing downloads unless you choose it.`
+      ? `Auto reads with the browser's most natural voice (Edge's Natural voices are the best; on a phone, the system's neural voices). Natural (AI) runs Kyutai's Pocket voices on this device: choosing it downloads them once${mb ? ` (about ${mb} MB)` : ""}. Nothing downloads unless you choose it.`
       : natural === "slow"
-        ? "This device cannot keep ahead of the AI voice while it draws the gallery: the browser's voice reads."
+        ? "This device cannot keep ahead of the Pocket voices while it draws the gallery: the browser's voice reads."
         : natural === "error"
           ? "The AI voice would not start here: the browser's voice reads."
           : natural === "loading"
-            ? `${reading?.label ?? "The AI voice"} is downloading: ${Math.round(progress * 100)}% (${size}, once; the browser keeps it). The browser's voice reads meanwhile.`
-            : naturalVoice.fellBack && reading
-              ? `${voiceInfo(s.aiVoice)?.engine === "pocket" ? "The Pocket voices are too slow on this device" : studio ? "The studio voices are too slow on this device" : "The studio voices need WebGPU, which this browser does not have"}: ${reading.label}, a light voice, reads.`
-              : reading?.engine === "kokoro"
-                ? `${reading.label}, a studio voice, reads on this device's graphics card.`
-                : reading?.engine === "pocket"
-                  ? `${reading.label}, a voice of Kyutai's Pocket TTS (CC BY 4.0), reads on this device's processor at its own pace: the reading speed does not change it.`
-                  : reading
-                    ? `${reading.label} reads on this device's processor: light, it leaves the graphics card to the gallery.`
-                    : `The light voices run on any device (about ${ENGINE_MB.piper} MB, once); the Pocket voices sound very natural and run on the processor too, best on a recent computer (about ${ENGINE_MB.pocket} MB); the studio voices sound most like a person but need a strong graphics card (about ${ENGINE_MB.kokoro} MB). "Best here" chooses for this device, between the light and studio voices.`;
+            ? `${reading?.label ?? "The AI voice"} is downloading: ${Math.round(progress * 100)}% (${here ? "a few MB" : `about ${POCKET_MB} MB`}, once; the browser keeps it). The browser's voice reads meanwhile.`
+            : reading
+              ? `${reading.label}, a voice of Kyutai's Pocket TTS (CC BY 4.0), reads on this device's processor at its own pace: the reading speed does not change it.`
+              : `The Pocket voices sound very natural and run on this device's processor, best on a recent computer (about ${POCKET_MB} MB, once).`;
   // the graphics: what Auto chose here and why; what waits for the next gallery
   const autoWhy = weakReason();
   const tierNow = tierFor(s.graphics);
@@ -142,7 +122,7 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   };
   const pickAi = (aiVoice: string) => {
     setSettings({ aiVoice });
-    void naturalVoice.load(aiVoice);
+    naturalVoice.load(aiVoice);
   };
   return (
     <div className={styles.settingsBack} onClick={() => onClose(true)}>
@@ -214,49 +194,20 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
             ]}
             onPick={(guideVoice) => {
               setSettings({ guideVoice });
-              if (guideVoice === "natural") void naturalVoice.load(getSettings().aiVoice);
+              if (guideVoice === "natural") naturalVoice.load(getSettings().aiVoice);
             }}
           />
           <p>{voiceNote}</p>
           {s.guideVoice === "natural" && (
             <>
-              <p className={styles.voiceKind}>Light · any device</p>
+              <p className={styles.voiceKind}>Pocket · very natural, made on this device, about {POCKET_MB} MB once</p>
               <div className={styles.seg}>
-                <button
-                  type="button"
-                  aria-pressed={s.aiVoice === ""}
-                  onClick={() => pickAi("")}
-                  title={best ? `For this device: ${voiceInfo(best)?.label}` : undefined}
-                >
-                  Best here
-                </button>
-                {NATURAL_VOICES.filter((v) => v.engine === "piper").map((v) => (
+                {NATURAL_VOICES.map((v) => (
                   <button key={v.id} type="button" aria-pressed={s.aiVoice === v.id} onClick={() => pickAi(v.id)}>
                     {v.label}
                   </button>
                 ))}
               </div>
-              {/* every device too, but only when chosen: it works the processor harder than the light voices */}
-              <p className={styles.voiceKind}>Pocket · very natural, made on this device, about {ENGINE_MB.pocket} MB once</p>
-              <div className={styles.seg}>
-                {NATURAL_VOICES.filter((v) => v.engine === "pocket").map((v) => (
-                  <button key={v.id} type="button" aria-pressed={s.aiVoice === v.id} onClick={() => pickAi(v.id)}>
-                    {v.label}
-                  </button>
-                ))}
-              </div>
-              {studio && (
-                <>
-                  <p className={styles.voiceKind}>Studio · a strong graphics card</p>
-                  <div className={styles.seg}>
-                    {NATURAL_VOICES.filter((v) => v.engine === "kokoro").map((v) => (
-                      <button key={v.id} type="button" aria-pressed={s.aiVoice === v.id} onClick={() => pickAi(v.id)}>
-                        {v.label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
             </>
           )}
           {voices.length > 0 && s.guideVoice !== "natural" && (

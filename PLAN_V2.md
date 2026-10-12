@@ -93,19 +93,18 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
 - [x] **15. Audio guide** (justkat91, criddell, own reply). Live.
   - [x] G cycles: famous works (starts by itself at them), every work, off; captions on screen.
   - [x] A script per artist and per work: what you see in the picture first, then its story.
-  - [x] A natural voice: Kokoro (a neural text-to-speech model) runs in the visitor's browser on WebGPU, about
-    330 MB downloaded once, only when the visitor chooses Natural. Auto always reads with the browser's most
-    natural voice (Edge's Natural voices, Android's neural ones, Safari's Enhanced): the AI voice made a slower
-    browser lag, so it never loads by itself (changed 2026-10-10). Settings → Audio guide: the voice,
-    five natural voices, the browser's voices, a reading speed (0.85× to 1.5×) and "Hear it". Live 2026-10-09.
-  - [x] The AI voice on any computer (owner, 2026-10-11: "it will be used by some non good laptops"): a light
-    voice, Piper (Cori, Kristin, John; public-domain readers), about 75 MB, on the processor in a worker: 0.14 s
-    of work a second of speech on a fast desktop, ahead of speech on a weak laptop, nothing on the graphics card.
-    Kokoro stays as the studio voice, offered only where WebGPU runs; "Best here" takes it only on a strong
-    graphics card. Each voice is timed as it reads: too slow, and the studio voice gives way to the light one,
-    the light one to the browser's voice (remembered). One model loads at a time (choosing Natural loaded two);
-    the guide makes a painting's first sentence while the visitor stops at it, long sentences in pieces; "Hear
-    it" waits for the AI voice instead of reading with the browser's.
+  - [x] A natural voice, a neural text-to-speech model run in the visitor's browser, downloaded once, only when
+    the visitor chooses Natural. Auto always reads with the browser's most natural voice (Edge's Natural voices,
+    Android's neural ones, Safari's Enhanced): the AI voice made a slower browser lag, so it never loads by itself
+    (changed 2026-10-10). Settings → Audio guide: the voice, the AI voices, the browser's voices, a reading speed
+    (0.85× to 1.5×) and "Hear it". Live 2026-10-09.
+  - [x] Two voices only (owner, 2026-10-13): the browser's (the default) and Pocket, Kyutai's Pocket TTS (Alba,
+    Jane, George, Michael), about 120 MB once, on the processor in a worker, at its own pace. It is timed as it
+    reads: too slow, and the browser's voice reads (remembered). The earlier AI voices, Kokoro (studio, WebGPU,
+    330 MB) and Piper (light, 75 MB), are gone: a saved choice of them goes back to the browser's voice, and
+    their files are cleared from visitors' browsers. The guide makes a painting's first sentence while the
+    visitor stops at it, long sentences in pieces; "Hear it" waits for the AI voice instead of reading with the
+    browser's.
   - [ ] Recorded narration in place of the browser's voice.
   - [ ] Greek names said the Greek way (the voices are English).
 - [x] **Films about the artist** (owner, 2026-10-09). Live.

@@ -1,84 +1,54 @@
 // The audio guide's voices. Two kinds, one interface (speak lines, one at a time, with the line being read):
 // - the browser's own voice (Web Speech API), the most natural of those it offers: Edge's "Natural" voices,
 //   Safari's Premium and Enhanced ones, Android's network (neural) voices, Google's, never the novelty voices.
-//   The guide's voice unless the visitor chooses the AI one;
-// - the AI voice: a neural text-to-speech model run in a worker on this device, downloaded once (the browser
-//   keeps it) and only when the visitor chooses it (Settings → Audio guide → Natural), never by itself. Three models:
-//   · light (Piper, public/voice/piper-worker.js): about 75 MB, on the processor, a sentence in a seventh of the
-//     time it lasts here and well ahead of speech on a modest laptop; it leaves the graphics card to the gallery.
-//     Every computer;
-//   · Pocket (Kyutai's Pocket TTS, public/voice/pocket-worker.js): very natural, on the processor too, about
-//     120 MB; but it works harder (here 0.4 s for a second of speech, and about 300 MB of memory), so it reads only
-//     when the visitor chooses one of its voices, never as "best for this computer". It has no speed control: it
-//     speaks at its own pace, whatever the guide's speed;
-//   · studio (Kokoro, public/voice/kokoro-worker.js): the most like a person, but it needs WebGPU on a strong
-//     graphics card (on the processor it is slower than speech) and about 330 MB.
-//   "Best for this computer" (the default) takes the studio voice only on a strong graphics card. Each voice is
-//   timed as it reads: a studio voice that cannot keep well ahead, or a Pocket one that cannot keep ahead, gives
-//   way to the light one, and where even the light one falls behind, the browser's voice reads (all remembered on
-//   this device).
+//   The guide's voice unless the visitor chooses Pocket;
+// - Pocket (Kyutai's Pocket TTS, public/voice/pocket-worker.js and pocket-core.js): a neural text-to-speech model,
+//   very natural, run in a worker on this device's processor, downloaded once (about 120 MB, the browser keeps it)
+//   and only when the visitor chooses one of its four voices (Settings → Audio guide → Natural), never by itself.
+//   It works hard (here 0.4 s for a second of speech, and about 300 MB of memory), so it is timed as it reads: where
+//   it cannot keep ahead, the browser's voice reads (remembered on this device). It has no speed control: it speaks
+//   at its own pace, whatever the guide's speed.
 // Sentences are made one at a time, the one about to be heard first, then the next, and the guide asks for the
 // first sentence of the painting the visitor is turning to before it starts (prefetch). A long sentence is made in
-// pieces at its commas, so the voice starts sooner. All at the guide's speed (settings.ts guideSpeed), Pocket's
-// voices at their own.
+// pieces at its commas, so the voice starts sooner. The browser's voice reads at the guide's speed (settings.ts
+// guideSpeed).
 
 export type NaturalState = "idle" | "loading" | "ready" | "slow" | "error";
-export type NaturalEngine = "piper" | "kokoro" | "pocket";
 
 export interface NaturalVoiceInfo {
   id: string;
   label: string;
-  engine: NaturalEngine;
 }
 
-/** The AI voices: Piper's clearest public-domain voices (LibriVox readers), Kokoro's best (its own grades:
- *  Heart A, Bella A-, Emma B-, Michael and George C), and Pocket's English ones (Alba, a Scottish reader; Jane,
- *  George and Michael, British speakers of the VCTK corpus; their ids are its package's voices/<id>.bin). */
+/** Pocket's English voices: Alba, a Scottish reader; Jane, George and Michael, British speakers of the VCTK corpus
+ *  (their ids are its package's voices/<id>.bin). Natural starts with the first. */
 export const NATURAL_VOICES: NaturalVoiceInfo[] = [
-  { id: "en_GB-cori-medium", label: "Cori (British)", engine: "piper" },
-  { id: "en_US-kristin-medium", label: "Kristin", engine: "piper" },
-  { id: "en_US-john-medium", label: "John", engine: "piper" },
-  { id: "af_heart", label: "Heart", engine: "kokoro" },
-  { id: "af_bella", label: "Bella", engine: "kokoro" },
-  { id: "bf_emma", label: "Emma (British)", engine: "kokoro" },
-  { id: "am_michael", label: "Michael", engine: "kokoro" },
-  { id: "bm_george", label: "George (British)", engine: "kokoro" },
-  { id: "alba", label: "Alba (Scottish)", engine: "pocket" },
-  { id: "jane", label: "Jane (British)", engine: "pocket" },
-  { id: "george", label: "George (British)", engine: "pocket" },
-  { id: "michael", label: "Michael (British)", engine: "pocket" },
+  { id: "alba", label: "Alba (Scottish)" },
+  { id: "jane", label: "Jane (British)" },
+  { id: "george", label: "George (British)" },
+  { id: "michael", label: "Michael (British)" },
 ];
-const LIGHT = "en_GB-cori-medium";
-const STUDIO = "af_heart";
-/** Each model's download, MB (Piper: the voice, the runtime and eSpeak; Kokoro: its weights and voices; Pocket:
- *  its package, a voice and the runtime). */
-export const ENGINE_MB: Record<NaturalEngine, number> = { piper: 75, kokoro: 330, pocket: 120 };
-/** What a model's download is counted against until its files have all announced themselves (Pocket's worker
- *  counts its whole download from the first file, its package's list in hand: here only the least it takes, a
- *  voice's few MB when the model is in already). */
-const MODEL_BYTES: Record<NaturalEngine, number> = { piper: 63.5e6, kokoro: 330e6, pocket: 3e6 };
-const WORKER: Record<NaturalEngine, string> = {
-  piper: "/voice/piper-worker.js",
-  kokoro: "/voice/kokoro-worker.js",
-  pocket: "/voice/pocket-worker.js",
-};
+/** Pocket's download, MB: its package, a voice and the runtime. */
+export const POCKET_MB = 120;
+/** What the download is counted against until its files have all announced themselves (the worker counts its whole
+ *  download from the first file, its package's list in hand: here only the least it takes, a voice's few MB when the
+ *  model is in already). */
+const MODEL_BYTES = 3e6;
+const WORKER = "/voice/pocket-worker.js";
 
-/** The breath between two sentences, and between two pieces of one, seconds (at speed 1). */
+/** The breath between two sentences, and between two pieces of one, seconds. */
 const BREATH = 0.28;
 const JOIN = 0.05;
-/** Keeping up: seconds of work per second of speech, over a voice's first sentences. The studio voice must keep
- *  well ahead (its work is on the graphics card the gallery draws with); the light one and Pocket (on the
- *  processor) only ahead. */
-const TOO_SLOW: Record<NaturalEngine, number> = { kokoro: 0.4, piper: 0.95, pocket: 0.9 };
+/** Keeping up: seconds of work per second of speech, over Pocket's first sentences (on the processor, it need only
+ *  keep ahead). */
+const TOO_SLOW = 0.9;
 const JUDGE_AFTER = 3;
 /** Sentences kept, made (replays and the painting turned back to cost nothing). */
 const KEEP = 60;
 
+/** Pocket too slow on this device ({pocket: true}). */
 const SLOW_KEY = "timeline-museum:voice-too-slow";
-/** Where the models are kept (the workers' caches, keyed by the file's URL). */
-const PIPER_CACHE = "museum-voice";
-const KOKORO_CACHE = "transformers-cache";
-const KOKORO_FILE = /Kokoro-82M-v1\.0-ONNX\/resolve\/[^/]+\/onnx\/model\.onnx$/;
+/** Where the model is kept (the worker's cache, keyed by the file's URL). */
 const POCKET_CACHE = "museum-voice-pocket";
 const POCKET_FILE = /\/flow_lm_main\.onnx$/;
 
@@ -135,21 +105,19 @@ export function pieces(line: string, first: boolean): string[] {
   return out.flatMap((p, i) => breakAt(p, max, first && i === 0 ? 45 : p.length / 2));
 }
 
-type Verdicts = Partial<Record<NaturalEngine, boolean>>;
-function readSlow(): Verdicts {
+function readSlow(): boolean {
   try {
-    return JSON.parse(localStorage.getItem(SLOW_KEY) ?? "{}") as Verdicts;
+    return (JSON.parse(localStorage.getItem(SLOW_KEY) ?? "{}") as { pocket?: boolean }).pocket === true;
   } catch {
-    return {};
+    return false;
   }
 }
 
-// ------------------------------------------------------------------------------------------------ the AI voice
+// ------------------------------------------------------------------------------------------------ Pocket
 
 interface Job {
   key: string;
   text: string;
-  speed: number;
   /** The reading that will hear it (made first), or AHEAD: asked for ahead (the painting the visitor is turning to). */
   owner: number;
   resolve: (b: AudioBuffer) => void;
@@ -161,20 +129,14 @@ class NaturalVoice {
   state: NaturalState = "idle";
   /** Download progress while loading, 0..1. */
   progress = 0;
-  /** The voice loaded (or loading), and its model. */
+  /** The voice loaded (or loading). */
   voice: string | null = null;
-  engine: NaturalEngine | null = null;
-  /** Why the voice reading is not the one chosen: the studio voice (or Pocket) was too slow here (the light one
-   *  reads). */
-  fellBack = false;
-  /** Bumped when a voice's files are found on (or put on) this device, so `onDevice` readers re-render. */
+  /** Bumped when the model is found on (or put on) this device, so `onDevice` readers re-render. */
   devices = 0;
   private worker: Worker | null = null;
   private wanted: string | null = null;
-  private claim: Promise<void> = Promise.resolve();
-  private adapter: Promise<{ ok: boolean; strong: boolean }> | null = null;
-  private stored = new Map<string, boolean>();
-  private checking = new Map<string, Promise<boolean>>();
+  private stored: boolean | null = null;
+  private asked = false;
   private ctx: AudioContext | null = null;
   private queue: Job[] = [];
   private busy: Job | null = null;
@@ -182,7 +144,6 @@ class NaturalVoice {
   private readings = 0;
   private made = new Map<string, Promise<AudioBuffer>>();
   private timing = { work: 0, speech: 0, n: 0 };
-  private slow: Verdicts = {};
   private listeners = new Set<() => void>();
 
   subscribe = (f: () => void) => {
@@ -196,114 +157,52 @@ class NaturalVoice {
   getProgress = () => this.progress;
   getDevices = () => this.devices;
 
-  /** WebGPU here (the studio voice can run), and whether its graphics card looks strong enough to read with it
-   *  while the gallery draws: not a phone, not a software or integrated Intel adapter (Arc is fine), 8 cores and
-   *  8 GB or more. Only a guess: the voice is timed as it reads (TOO_SLOW). */
-  gpu(): Promise<{ ok: boolean; strong: boolean }> {
-    if (typeof navigator === "undefined") return Promise.resolve({ ok: false, strong: false });
-    type Info = { vendor?: string; architecture?: string; isFallbackAdapter?: boolean };
-    type Adapter = { info?: Info; isFallbackAdapter?: boolean };
-    const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<Adapter | null> } }).gpu;
-    this.adapter ??= (gpu ? gpu.requestAdapter().catch(() => null) : Promise.resolve(null)).then((a) => {
-      if (!a) return { ok: false, strong: false };
-      const info = a.info ?? {};
-      const vendor = (info.vendor ?? "").toLowerCase();
-      const arch = (info.architecture ?? "").toLowerCase();
-      const nav = navigator as Navigator & { deviceMemory?: number };
-      const strong =
-        !(info.isFallbackAdapter ?? a.isFallbackAdapter) &&
-        !window.matchMedia("(pointer: coarse)").matches &&
-        (nav.deviceMemory ?? 8) >= 8 &&
-        (navigator.hardwareConcurrency ?? 4) >= 8 &&
-        (["nvidia", "amd", "apple"].includes(vendor) || (vendor === "intel" && /^xe-hpg|^xe2/.test(arch)));
-      return { ok: true, strong };
-    });
-    return this.adapter;
-  }
-
-  /** The voice to read with for the visitor's choice ("": the best for this computer): the studio voice only
-   *  where WebGPU runs and has not been too slow; a Pocket voice only when chosen, and while it has kept up (else
-   *  the light one); nothing where even the light voice was too slow (Pocket, on the same processor, works
-   *  harder still). */
-  async resolve(choice: string): Promise<string | null> {
-    this.slow = readSlow();
-    if (this.slow.piper) return null;
-    const chosen = voiceInfo(choice);
-    if (chosen?.engine === "piper") return chosen.id;
-    if (chosen?.engine === "pocket") return this.slow.pocket ? LIGHT : chosen.id;
-    const { ok, strong } = await this.gpu();
-    if (chosen) return ok && !this.slow.kokoro ? chosen.id : LIGHT;
-    return strong && !this.slow.kokoro ? STUDIO : LIGHT;
-  }
-
-  /** Whether the voice is on this device already (downloaded once): choosing it downloads nothing (a Pocket voice:
-   *  nothing but its own few MB, once the model shared by all four is here). Null until the browser has answered. */
-  onDevice(id: string): boolean | null {
-    if (this.stored.has(id)) return this.stored.get(id)!;
-    if (!this.checking.has(id)) {
-      this.checking.set(
-        id,
-        (async () => {
-          try {
-            if (!("caches" in window)) return false;
-            const info = voiceInfo(id);
-            if (!info) return false;
-            const name = info.engine === "piper" ? PIPER_CACHE : info.engine === "pocket" ? POCKET_CACHE : KOKORO_CACHE;
-            if (!(await caches.has(name))) return false;
-            const keys = await (await caches.open(name)).keys();
-            return info.engine === "piper"
-              ? keys.some((r) => r.url.endsWith(`/${id}.onnx`))
-              : keys.some((r) => (info.engine === "pocket" ? POCKET_FILE : KOKORO_FILE).test(r.url));
-          } catch {
-            return false;
-          }
-        })().then((yes) => {
-          this.stored.set(id, yes);
-          this.devices++;
-          this.emit();
-          return yes;
-        })
-      );
+  /** Whether Pocket's model is on this device already (downloaded once): choosing a voice downloads nothing but its
+   *  own few MB. Null until the browser has answered. */
+  onDevice(): boolean | null {
+    if (this.stored === null && !this.asked) {
+      this.asked = true;
+      void (async () => {
+        try {
+          if (!("caches" in window) || !(await caches.has(POCKET_CACHE))) return false;
+          const keys = await (await caches.open(POCKET_CACHE)).keys();
+          return keys.some((r) => POCKET_FILE.test(r.url));
+        } catch {
+          return false;
+        }
+      })().then((yes) => {
+        this.stored ||= yes;
+        this.devices++;
+        this.emit();
+      });
     }
-    return null;
+    return this.stored;
   }
 
-  /** Start downloading and warming the voice for the visitor's choice (once; a different model replaces the one
-   *  loaded, freeing it). Resolves once it is under way. */
-  load(choice: string): Promise<void> {
-    // claimed at once: Settings and the guide ask together, and two models would load at once
-    if (this.wanted === choice && this.state !== "error") return this.claim;
+  /** Start downloading and warming the voice chosen (once; another Pocket voice replaces the one loaded, the model
+   *  staying). Where Pocket was too slow, nothing loads ("slow": the browser's voice reads). */
+  load(choice: string) {
+    // Settings and the guide ask together: once
+    if (this.wanted === choice && this.state !== "error") return;
     this.wanted = choice;
-    return (this.claim = this.begin(choice));
-  }
-
-  private async begin(choice: string) {
-    const id = await this.resolve(choice);
-    if (this.wanted !== choice) return;
-    if (!id) {
+    const slow = readSlow();
+    // (not a Pocket voice: settings.ts gives a voice since removed back to the browser's, so it never reaches here)
+    if (slow || !voiceInfo(choice)) {
       this.drop();
-      this.set("slow");
-      return;
+      return this.set(slow ? "slow" : "idle");
     }
-    this.fellBack = (!!choice && choice !== id) || (!choice && this.slow.kokoro === true);
-    if (id === this.voice && this.worker) return this.emit();
-    const engine = voiceInfo(id)!.engine;
-    if (this.engine !== engine || !this.worker) {
-      this.drop();
-      this.start(engine);
-    } else this.reset();
-    this.voice = id;
+    if (this.worker) this.reset();
+    else this.start();
+    this.voice = choice;
     this.progress = 0;
     this.timing = { work: 0, speech: 0, n: 0 };
     this.set("loading");
-    this.worker!.postMessage(engine === "kokoro" ? { type: "load" } : { type: "load", voice: id });
+    this.worker!.postMessage({ type: "load", voice: choice });
   }
 
   /** Resolves when the voice asked for last can read (false: none will). */
-  async whenReady(): Promise<boolean> {
-    await this.claim;
-    if (this.state === "ready") return true;
-    if (this.state !== "loading") return false;
+  whenReady(): Promise<boolean> {
+    if (this.state !== "loading") return Promise.resolve(this.state === "ready");
     return new Promise((resolve) => {
       const off = this.subscribe(() => {
         if (this.state === "loading") return;
@@ -318,23 +217,21 @@ class NaturalVoice {
     this.emit();
   }
 
-  private start(engine: NaturalEngine) {
-    const w = new Worker(WORKER[engine], { type: "module" });
+  private start() {
+    const w = new Worker(WORKER, { type: "module" });
     this.worker = w;
-    this.engine = engine;
     w.onmessage = ({ data: m }) => {
       if (w !== this.worker) return;
       if (m.type === "progress") {
-        // files announce themselves as they start: count against the whole model from the first
-        this.progress = Math.min(0.99, m.loaded / Math.max(m.total, MODEL_BYTES[engine]));
+        // files announce themselves as they start: count against the whole download from the first
+        this.progress = Math.min(0.99, m.loaded / Math.max(m.total, MODEL_BYTES));
         this.emit();
       } else if (m.type === "ready") {
-        // (a light voice chosen while another was loading: only the last one counts)
-        if (m.voice && m.voice !== this.voice) return;
+        // (a voice chosen while another was loading: only the last one counts)
+        if (m.voice !== this.voice) return;
         this.progress = 1;
-        this.stored.set(this.voice!, true);
-        // (Pocket's model is here now for its other voices too: see onDevice)
-        if (engine === "pocket") for (const v of NATURAL_VOICES) if (v.engine === "pocket") this.stored.set(v.id, true);
+        // the model is here now, for all four voices (see onDevice)
+        this.stored = true;
         this.devices++;
         this.set("ready");
         this.pump();
@@ -344,18 +241,18 @@ class NaturalVoice {
         this.busy = null;
         const ms = performance.now() - this.sentAt;
         const samples = m.samples as Float32Array<ArrayBuffer>;
-        // a model that runs but says nothing (some graphics cards give the studio voice silence, or NaN)
+        // a model that runs but says nothing (silence, or NaN): it gives way, as when too slow
         let peak = 0;
         for (let i = 0; i < samples.length; i += 7) peak = Math.max(peak, Math.abs(samples[i]));
         if (!(peak > 1e-3)) {
           job.reject(new Error("silent"));
           this.made.delete(job.key);
-          return this.giveWay(engine);
+          return this.giveWay();
         }
         const buf = new AudioBuffer({ length: samples.length, sampleRate: m.sr });
         buf.copyToChannel(samples, 0);
         job.resolve(buf);
-        this.judge(engine, ms, buf.duration * job.speed);
+        this.judge(ms, buf.duration);
         this.pump();
       } else if (m.type === "error") {
         if (this.busy && this.state === "ready") {
@@ -376,24 +273,22 @@ class NaturalVoice {
     this.set("error");
   }
 
-  /** The model's work against the speech it made (at speed 1), over its first sentences: too slow, and it gives
-   *  way (the studio voice to the light one, the light one to the browser's voice), remembered on this device. */
-  private judge(engine: NaturalEngine, ms: number, seconds: number) {
+  /** The model's work against the speech it made, over its first sentences: too slow, and it gives way to the
+   *  browser's voice, remembered on this device. */
+  private judge(ms: number, seconds: number) {
     const t = this.timing;
     if (t.n >= JUDGE_AFTER || seconds < 0.8) return;
     t.work += ms / 1000;
     t.speech += seconds;
-    if (++t.n >= JUDGE_AFTER && t.work / t.speech > TOO_SLOW[engine]) this.giveWay(engine);
+    if (++t.n >= JUDGE_AFTER && t.work / t.speech > TOO_SLOW) this.giveWay();
   }
 
-  private giveWay(engine: NaturalEngine) {
+  private giveWay() {
     try {
-      localStorage.setItem(SLOW_KEY, JSON.stringify({ ...readSlow(), [engine]: true }));
+      localStorage.setItem(SLOW_KEY, JSON.stringify({ pocket: true }));
     } catch {}
-    const choice = this.wanted ?? "";
-    this.wanted = null;
     this.drop();
-    void this.load(choice);
+    this.set("slow");
   }
 
   private reset() {
@@ -409,18 +304,11 @@ class NaturalVoice {
     this.reset();
     this.worker?.terminate();
     this.worker = null;
-    this.engine = null;
     this.voice = null;
   }
 
   private audio(): AudioContext {
     return (this.ctx ??= new AudioContext());
-  }
-
-  /** The speed the voice reads at: the guide's, but Pocket's own pace (it has no speed control). Its sentences are
-   *  made, kept and timed (judge) at 1, and the breaths between them are a speed-1 reading's. */
-  private pace(speed: number): number {
-    return this.engine === "pocket" ? 1 : speed;
   }
 
   /** One sentence at a time to the worker, the ones a reading is waiting for first. */
@@ -430,18 +318,13 @@ class NaturalVoice {
     const job = this.queue.splice(i, 1)[0];
     this.busy = job;
     this.sentAt = performance.now();
-    this.worker.postMessage(
-      this.engine === "piper"
-        ? { type: "speak", id: 1, text: job.text, speed: job.speed }
-        : { type: "speak", id: 1, text: job.text, voice: this.voice, speed: job.speed }
-    );
+    this.worker.postMessage({ type: "speak", id: 1, text: job.text, voice: this.voice });
   }
 
-  private synth(text: string, speed: number, owner: number): Promise<AudioBuffer> {
+  private synth(text: string, owner: number): Promise<AudioBuffer> {
     // no voice to make it (it gave way, or failed): the reading ends, and the guide goes on with the browser's
     if (!this.worker || (this.state !== "ready" && this.state !== "loading")) return Promise.reject(new Error("no voice"));
-    speed = this.pace(speed);
-    const key = `${this.voice}|${speed}|${text}`;
+    const key = `${this.voice}|${text}`;
     const had = this.made.get(key);
     if (had) {
       // asked for ahead and now about to be heard: this reading's, first in line
@@ -451,7 +334,7 @@ class NaturalVoice {
       return had;
     }
     const p = new Promise<AudioBuffer>((resolve, reject) => {
-      this.queue.push({ key, text, speed, owner, resolve, reject });
+      this.queue.push({ key, text, owner, resolve, reject });
     });
     p.catch(() => this.made.get(key) === p && this.made.delete(key));
     this.made.set(key, p);
@@ -471,14 +354,15 @@ class NaturalVoice {
   }
 
   /** Make the start of a reading ahead (the painting the visitor is turning to), if the voice is ready. */
-  prefetch(lines: string[], speed: number) {
+  prefetch(lines: string[]) {
     if (this.state !== "ready" || !lines.length) return;
     // a painting walked past leaves nothing behind but the sentence begun
     this.forget(AHEAD);
-    for (const text of pieces(lines[0], true).slice(0, 2)) void this.synth(text, speed, AHEAD).catch(() => {});
+    for (const text of pieces(lines[0], true).slice(0, 2)) void this.synth(text, AHEAD).catch(() => {});
   }
 
-  /** Read the lines in turn; the next piece is made while one is heard. */
+  /** Read the lines in turn, at Pocket's own pace (`o.speed` is the browser's voice's); the next piece is made while
+   *  one is heard. */
   speak(lines: string[], o: SpeakOptions): Speaking {
     const me = ++this.readings;
     const ctx = this.audio();
@@ -488,7 +372,7 @@ class NaturalVoice {
     let current: AudioBufferSourceNode | null = null;
     // each piece asked for once: what was made is kept by the reading, even if the voice gives way meanwhile
     const got: Promise<AudioBuffer>[] = [];
-    const make = (k: number) => (k < parts.length ? (got[k] ??= this.synth(parts[k].text, o.speed, me)) : null);
+    const make = (k: number) => (k < parts.length ? (got[k] ??= this.synth(parts[k].text, me)) : null);
     const play = async (k: number) => {
       if (stopped) return;
       if (k >= parts.length) return o.onEnd();
@@ -509,7 +393,7 @@ class NaturalVoice {
         void play(k + 1);
       };
       current = src;
-      src.start(ctx.currentTime + (k === 0 ? 0.02 : (parts[k].first ? BREATH : JOIN) / this.pace(o.speed)));
+      src.start(ctx.currentTime + (k === 0 ? 0.02 : parts[k].first ? BREATH : JOIN));
       if (parts[k].first) o.onLine(parts[k].line);
     };
     void play(0);
@@ -534,6 +418,20 @@ class NaturalVoice {
 }
 
 export const naturalVoice = new NaturalVoice();
+
+// The guide's earlier AI voices are gone (Piper's light voice, about 75 MB, and Kokoro's studio voice, about
+// 330 MB): their files, kept by the browser in these caches, go too, and their too-slow verdicts. Nothing else on
+// this site uses either cache (Pocket's is POCKET_CACHE).
+const GONE_CACHES = ["museum-voice", "transformers-cache"];
+if (typeof window !== "undefined") {
+  try {
+    if ("caches" in window) for (const name of GONE_CACHES) void caches.delete(name).catch(() => {});
+  } catch {}
+  try {
+    if (readSlow()) localStorage.setItem(SLOW_KEY, JSON.stringify({ pocket: true }));
+    else localStorage.removeItem(SLOW_KEY);
+  } catch {}
+}
 
 // ------------------------------------------------------------------------------------------------ the browser's
 

@@ -1,15 +1,14 @@
 // The audio guide's Pocket voices (src/components/museum/voice.ts): Pocket TTS, Kyutai's neural text-to-speech
-// model (CC BY 4.0), run in the visitor's browser on the processor (WebAssembly, one thread), as the light voice
-// (piper-worker.js) is. It sounds more like a person than the light voice and needs no graphics card, but it works
-// harder: here about 0.4 s for a second of speech and about 300 MB of memory, so it reads only when the visitor
-// chooses it, and voice.ts times it as it reads (too slow, and the light voice takes over). Its code comes from
-// jsdelivr (the runtime, pinned) and this site (pocket-core.js, the model's loop), the model from Hugging Face: one
-// language's package (bundle.json lists its files and their sizes, about 116 MB) and a voice of a few MB
-// (voices/<id>.bin, the model having heard the speaker). The browser keeps them (Cache API), so only the first
-// visit downloads them, and a second Pocket voice is only its own few MB.
-// Pocket has no speed control: it speaks at its own pace, whatever the guide's speed (voice.ts asks for 1).
+// model (CC BY 4.0), run in the visitor's browser on the processor (WebAssembly, one thread). It sounds very like a
+// person and needs no graphics card, but it works hard: here about 0.4 s for a second of speech and about 300 MB of
+// memory, so it reads only when the visitor chooses it, and voice.ts times it as it reads (too slow, and the
+// browser's voice takes over). Its code comes from jsdelivr (the runtime, pinned) and this site (pocket-core.js, the
+// model's loop), the model from Hugging Face: one language's package (bundle.json lists its files and their sizes,
+// about 116 MB) and a voice of a few MB (voices/<id>.bin, the model having heard the speaker). The browser keeps them
+// (Cache API), so only the first visit downloads them, and a second Pocket voice is only its own few MB.
+// Pocket has no speed control: it speaks at its own pace, whatever the guide's speed (voice.ts asks for none).
 //
-// Messages in:  {type: "load", voice} | {type: "speak", id, text, voice?, speed}
+// Messages in:  {type: "load", voice} | {type: "speak", id, text, voice?}
 // Messages out: {type: "progress", loaded, total} | {type: "ready", voice} | {type: "audio", id, sr, samples, ms}
 //               | {type: "error", id?, error}
 
@@ -113,7 +112,6 @@ self.onmessage = async ({ data: m }) => {
     } else if (m.type === "speak") {
       await loading;
       const t = performance.now();
-      // (m.speed is not used: Pocket speaks at its own pace)
       const { samples, sr } = await pocket.synth(m.text, m.voice || voice);
       self.postMessage({ type: "audio", id: m.id, sr, samples, ms: performance.now() - t }, [samples.buffer]);
     }

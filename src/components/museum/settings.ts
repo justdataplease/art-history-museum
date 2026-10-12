@@ -5,10 +5,11 @@
 
 import { useSyncExternalStore } from "react";
 import type { GraphicsChoice } from "./quality";
+import { NATURAL_VOICES, voiceInfo } from "./voice";
 
 export type Pace = "walk" | "run";
 /** auto and browser: the browser's own voice, the most natural it has (auto: the best; browser: the one chosen
- *  from its list); natural: the AI voice (voice.ts), downloaded and run on this device, only when chosen. */
+ *  from its list); natural: the AI voice (voice.ts, Pocket), downloaded and run on this device, only when chosen. */
 export type GuideVoice = "auto" | "natural" | "browser";
 export const GUIDE_SPEEDS = [0.85, 1, 1.15, 1.3, 1.5] as const;
 
@@ -21,8 +22,8 @@ export interface MuseumSettings {
   /** How much the gallery draws (quality.ts): auto chooses for this computer. */
   graphics: GraphicsChoice;
   guideVoice: GuideVoice;
-  /** The AI voice (voice.ts NATURAL_VOICES; "": the best for this computer) and the browser's (its voiceURI; "":
-   *  the best it has). */
+  /** The AI voice (one of Pocket's, voice.ts NATURAL_VOICES) and the browser's (its voiceURI; "": the best it
+   *  has). */
   aiVoice: string;
   browserVoice: string;
   /** The guide's reading speed (1: as recorded). */
@@ -38,12 +39,13 @@ const OLD_PACE: Record<string, Pace> = { slow: "walk", normal: "walk", fast: "ru
 
 const KEY = "timeline-museum:settings";
 const DEFAULTS: MuseumSettings = {
-  pace: "run", surface: true, hud: true, graphics: "auto", guideVoice: "auto", aiVoice: "", browserVoice: "", guideSpeed: 1,
+  pace: "run", surface: true, hud: true, graphics: "auto", guideVoice: "auto", aiVoice: NATURAL_VOICES[0].id, browserVoice: "",
+  guideSpeed: 1,
 };
 
 /** As saved: the speed is `walk`, so a `pace` saved before running was the default (by any setting saved, H
- *  included) gives way to it once; the AI voice is `aiVoice`, so the studio voice once saved as everyone's default
- *  (`naturalVoice`) gives way to the best for each computer. */
+ *  included) gives way to it once; the AI voice is `aiVoice`, and only a Pocket voice is kept: one since removed
+ *  (or "", the best of those for this computer) gives the guide back to the browser's voice, nothing downloaded. */
 interface Saved {
   walk?: string;
   surface?: boolean;
@@ -61,13 +63,14 @@ const listeners = new Set<() => void>();
 function load(): MuseumSettings {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Saved;
+    const ai = typeof saved.aiVoice === "string" && voiceInfo(saved.aiVoice) ? saved.aiVoice : null;
     return {
       pace: saved.walk && saved.walk in PACE_SPEED ? (saved.walk as Pace) : (saved.walk && OLD_PACE[saved.walk]) || DEFAULTS.pace,
       surface: typeof saved.surface === "boolean" ? saved.surface : DEFAULTS.surface,
       hud: typeof saved.hud === "boolean" ? saved.hud : DEFAULTS.hud,
       graphics: saved.graphics === "fast" || saved.graphics === "full" ? saved.graphics : DEFAULTS.graphics,
-      guideVoice: saved.guideVoice === "natural" || saved.guideVoice === "browser" ? saved.guideVoice : DEFAULTS.guideVoice,
-      aiVoice: typeof saved.aiVoice === "string" ? saved.aiVoice : DEFAULTS.aiVoice,
+      guideVoice: saved.guideVoice === "browser" || (saved.guideVoice === "natural" && ai) ? saved.guideVoice : DEFAULTS.guideVoice,
+      aiVoice: ai ?? DEFAULTS.aiVoice,
       browserVoice: typeof saved.browserVoice === "string" ? saved.browserVoice : DEFAULTS.browserVoice,
       guideSpeed:
         typeof saved.guideSpeed === "number" && saved.guideSpeed >= 0.5 && saved.guideSpeed <= 2 ? saved.guideSpeed : DEFAULTS.guideSpeed,
