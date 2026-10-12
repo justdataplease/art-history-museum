@@ -802,17 +802,17 @@ export function MuseumApp({
         />
       )}
 
-      {touch && engaged && walkEnabled && !inspect && <TouchStick />}
+      {touch && engaged && walkEnabled && !inspect && <><TouchStick /><TouchStick mode="look" /></>}
 
       {engaged && walkEnabled && inFilmRoom && (
         <div className={`mus-hint ${styles.hint}`}>
           {touch ? (
             <>
               <span>
-                <b>Drag</b> look
+                <b>Right stick</b> look
               </span>
               <span>
-                <b>Stick</b> walk
+                <b>Left stick</b> walk
               </span>
               <span>
                 <b>Films</b> the list
@@ -848,10 +848,10 @@ export function MuseumApp({
           {touch ? (
             <>
               <span>
-                <b>Drag</b> look
+                <b>Right stick</b> look
               </span>
               <span>
-                <b>Stick</b> walk
+                <b>Left stick</b> walk
               </span>
               <span>
                 <b>Tap painting</b> inspect

@@ -835,7 +835,7 @@
   color: var(--ink-soft);
 }
 
-/* ---- the walking stick (TouchStick): bottom left, in the thumb's reach ---- */
+/* ---- two touch sticks: movement left, camera right ---- */
 .stick {
   position: absolute;
   left: calc(18px + env(safe-area-inset-left, 0px));
@@ -861,6 +861,20 @@
   background: rgba(233, 229, 226, 0.2);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
   transition: transform 0.14s ease-out;
+  pointer-events: none;
+}
+.stick.stickLook {
+  left: auto;
+  right: calc(18px + env(safe-area-inset-right, 0px));
+}
+.stickLabel {
+  position: absolute;
+  top: -23px;
+  color: var(--light);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 5px #000;
   pointer-events: none;
 }
 .stick[data-active="true"] .stickKnob {

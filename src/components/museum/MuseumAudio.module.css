@@ -199,3 +199,16 @@
     max-width: calc(100vw - 172px);
   }
 }
+
+/* Both bottom corners belong to the touch sticks; music sits above the look stick. */
+@media (pointer: coarse) {
+  .root {
+    left: auto;
+    right: calc(18px + env(safe-area-inset-right, 0px));
+    bottom: calc(158px + env(safe-area-inset-bottom, 0px));
+  }
+  .credit { left: auto; right: 0; }
+}
+@media (max-height: 500px) and (pointer: coarse) {
+  .root { bottom: calc(138px + env(safe-area-inset-bottom, 0px)); }
+}

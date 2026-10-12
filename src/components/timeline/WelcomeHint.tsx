@@ -34,7 +34,7 @@ export function WelcomeHint({ focusOnOpen, onDismiss }: {
       <p className={styles.eyebrow}>How to explore</p>
       <h2 id="timeline-welcome-title">From timeline to gallery.</h2>
       <ol>
-        <li><strong>Zoom into a period</strong>Click a period name, scroll, or pinch.</li>
+        <li><strong>Choose your years</strong>Drag the two year handles or click a period. Scroll to move up and down.</li>
         <li><strong>Choose an artist</strong>Click or tap an artist, then “Enter the Gallery.”</li>
         <li><strong>Step inside and explore</strong>Walk among their works in a 3D gallery.</li>
       </ol>

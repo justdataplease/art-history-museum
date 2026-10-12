@@ -1,23 +1,23 @@
 "use client";
 
-// The walking stick on a touch screen, bottom left in the thumb's reach: push the knob the way to go (forward,
-// back, a step aside, as one faces), as far as it is pushed, that fast; let go to stop. Dragging anywhere else
-// looks round (TouchPlayer, which reads the push each frame from `stick`).
+// Two independent touch sticks: movement on the left, camera look on the right.
+// TouchPlayer reads their pushes each frame; releasing either thumb stops that input.
 
 import { useEffect, useRef } from "react";
-import { stick } from "./Controls";
+import { lookStick, stick } from "./Controls";
 import styles from "./museum.module.css";
 
 /** How far the knob travels from the centre, px. */
 const REACH = 42;
 
-export function TouchStick() {
+export function TouchStick({ mode = "move" }: { mode?: "move" | "look" }) {
   const base = useRef<HTMLDivElement>(null);
   const knob = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = base.current;
     const k = knob.current;
     if (!el || !k) return;
+    const control = mode === "look" ? lookStick : stick;
     let id: number | null = null;
     let cx = 0;
     let cy = 0;
@@ -25,12 +25,12 @@ export function TouchStick() {
       const d = Math.hypot(x, y);
       const f = d > REACH ? REACH / d : 1;
       k.style.transform = `translate(${x * f}px, ${y * f}px)`;
-      stick.x = (x * f) / REACH;
-      stick.y = (-y * f) / REACH;
-      stick.wake?.();
+      control.x = (x * f) / REACH;
+      control.y = (-y * f) / REACH;
+      control.wake?.();
     };
     const down = (e: PointerEvent) => {
-      if (id !== null) return;
+      if (id !== null || (e.pointerType === "mouse" && e.button !== 0)) return;
       id = e.pointerId;
       const r = el.getBoundingClientRect();
       cx = r.left + r.width / 2;
@@ -41,39 +41,51 @@ export function TouchStick() {
         // capture is best-effort
       }
       el.dataset.active = "true";
-      stick.active = true;
+      control.active = true;
       push(e.clientX - cx, e.clientY - cy);
       e.preventDefault();
     };
     const move = (e: PointerEvent) => {
       if (e.pointerId === id) push(e.clientX - cx, e.clientY - cy);
     };
-    const up = (e: PointerEvent) => {
-      if (e.pointerId !== id) return;
+    const reset = () => {
+      const captured = id;
       id = null;
       delete el.dataset.active;
       k.style.transform = "";
-      stick.active = false;
-      stick.x = 0;
-      stick.y = 0;
-      stick.wake?.();
+      control.active = false;
+      control.x = 0;
+      control.y = 0;
+      if (captured !== null && el.hasPointerCapture(captured)) el.releasePointerCapture(captured);
+      control.wake?.();
+    };
+    const up = (e: PointerEvent) => {
+      if (e.pointerId === id) reset();
+    };
+    const onVisibility = () => {
+      if (document.hidden) reset();
     };
     el.addEventListener("pointerdown", down);
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
     el.addEventListener("pointercancel", up);
+    el.addEventListener("lostpointercapture", up);
+    window.addEventListener("blur", reset);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       el.removeEventListener("pointerdown", down);
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
       el.removeEventListener("pointercancel", up);
-      stick.active = false;
-      stick.x = 0;
-      stick.y = 0;
+      el.removeEventListener("lostpointercapture", up);
+      window.removeEventListener("blur", reset);
+      document.removeEventListener("visibilitychange", onVisibility);
+      reset();
     };
-  }, []);
+  }, [mode]);
   return (
-    <div ref={base} className={styles.stick} aria-hidden="true">
+    <div ref={base} className={`${styles.stick}${mode === "look" ? ` ${styles.stickLook}` : ""}`} data-touch-stick={mode} role="group" aria-label={mode === "look" ? "Look joystick" : "Movement joystick"}>
+      <span className={styles.stickLabel}>{mode === "look" ? "Look" : "Move"}</span>
       <div ref={knob} className={styles.stickKnob} />
     </div>
   );

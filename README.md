@@ -51,8 +51,8 @@ guide's voice (the browser's most natural one, or, if you choose it, one of
 Kyutai's Pocket voices run on your computer: a one-time download of about
 120 MB, heavy on a slower machine) and
 reading speed, and hiding the controls (**H**).
-On a phone, drag to look and push the stick (bottom left) to walk, or double-tap
-the floor to go there. Click or tap a painting to
+On a phone, use the left stick to walk and the right stick to look around.
+You can also drag to look or double-tap the floor to go there. Click or tap a painting to
 inspect it. **Explore → How to explore** brings back the short guide on the
 timeline.
 

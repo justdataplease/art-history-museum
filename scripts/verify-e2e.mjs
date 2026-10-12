@@ -154,13 +154,20 @@ const ax0 = await axisState();
 check(ax0 && ax0.n >= 8, `year axis labels at overview: ${ax0?.n} (step ${ax0?.step})`);
 await page.screenshot({ path: `${OUT}/1-wall-zoomed-out.png` });
 
-// ---------------------------------------------------------------- 2. wheel zoom
-log("wheel zoom toward the Baroque");
+// ---------------------------------------------------------------- 2. scrolling and deliberate zoom
+log("normal scrolling keeps the year range; Ctrl+wheel zooms toward the Baroque");
+const yearsBeforeScroll = [await startSlider.inputValue(), await endSlider.inputValue()];
+await page.mouse.move(800, 480);
+await page.mouse.wheel(0, 180);
+await page.waitForTimeout(150);
+check(JSON.stringify([await startSlider.inputValue(), await endSlider.inputValue()]) === JSON.stringify(yearsBeforeScroll), "normal mouse wheel keeps the selected years");
 await page.mouse.move(await xOfYear(1650), 480);
+await page.keyboard.down("Control");
 for (let i = 0; i < 14; i++) {
-  await page.mouse.wheel(0, -240);
+  await page.mouse.wheel(0, -38);
   await page.waitForTimeout(60);
 }
+await page.keyboard.up("Control");
 await page.waitForTimeout(900);
 const ax1 = await axisState();
 check(ax1 && ax1.ppy > ax0.ppy * 4, `wheel zoomed in (px/year ${ax0?.ppy.toFixed(2)} -> ${ax1?.ppy.toFixed(2)})`);
@@ -343,10 +350,12 @@ const blurred = await page.evaluate(() =>
 check(blurred === 0, `no CSS filters in the star map (${blurred})`);
 await page.screenshot({ path: `${OUT}/4-star-map.png` });
 await page.mouse.move(await xOfYear(1900), 480);
+await page.keyboard.down("Control");
 for (let i = 0; i < 10; i++) {
-  await page.mouse.wheel(0, -220);
+  await page.mouse.wheel(0, -35);
   await page.waitForTimeout(60);
 }
+await page.keyboard.up("Control");
 await page.waitForTimeout(900);
 ov = await labelOverlaps();
 check(ov.bad.length === 0, `no overlapping star-map labels zoomed (${ov.n}) ${ov.bad.slice(0, 3).join(" | ")}`);

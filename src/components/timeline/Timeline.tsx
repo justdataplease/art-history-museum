@@ -316,11 +316,11 @@ export function Timeline({ data }: { data: TimelineData }) {
         dy = 0;
       }
       const cur = tRef.current;
-      if (!e.ctrlKey && Math.abs(dx) > Math.abs(dy)) {
-        apply({ ...cur, x: cur.x - dx });
+      if (!e.ctrlKey) {
+        apply({ ...cur, x: cur.x - dx, y: cur.y - dy });
         return;
       }
-      const k = clamp(cur.k * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0016)), K_MIN, K_MAX);
+      const k = clamp(cur.k * Math.exp(-dy * 0.01), K_MIN, K_MAX);
       const mx = e.clientX;
       apply({ k, x: mx - ((mx - cur.x) * k) / cur.k, y: cur.y });
     };
@@ -823,7 +823,7 @@ export function Timeline({ data }: { data: TimelineData }) {
               opacity: t.y > -overflow + 4 ? 1 : 0,
             }}
           >
-            more below · drag up
+            more below · scroll or drag up
           </div>
         )}
       </div>
@@ -900,8 +900,7 @@ export function Timeline({ data }: { data: TimelineData }) {
         </p>
         <div className="tl-hint" id="tl-hint">
           <span className="hint-fine">
-            Scroll or pinch to travel through time · drag to pan · click a period to dive in · Tab
-            to browse
+            Scroll to move up or down · drag to pan · use the year handles or pinch to zoom
           </span>
           <span className="hint-touch">Pinch to travel through time · drag to pan · tap a period</span>
         </div>

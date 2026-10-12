@@ -49,6 +49,8 @@ const STICK_DEAD = 0.12;
 /** The walking stick's push (TouchStick, outside the canvas): x to the right, y forward, each -1..1. `wake` asks
  *  for a frame (the canvas renders on demand); TouchPlayer sets it. */
 export const stick = { x: 0, y: 0, active: false, wake: null as (() => void) | null };
+export const lookStick = { x: 0, y: 0, active: false, wake: null as (() => void) | null };
+const STICK_LOOK_SPEED = 1.65; // rad per second at full tilt
 const LOOK_SPEED = 0.0042; // rad per px of drag
 const MAX_PITCH = 1.25; // rad
 // Jump: a plain ballistic hop (~0.6 m peak, ~0.7 s in the air), no air
@@ -652,7 +654,7 @@ export function Player({
 
 // ------------------------------------------------------------ TouchPlayer
 
-/** Touch first-person: drag to look, the walking stick (TouchStick) to walk, a
+/** Touch first-person: left stick to walk, right stick or drag to look, a
  *  double tap on the floor to walk there, a tap on a painting to inspect it.
  *  Raycasts are done here from the tap position (drei's PointerLockControls is
  *  not mounted, so R3F events stay uncentred). */
@@ -689,8 +691,10 @@ export function TouchPlayer({
   useEffect(() => () => setMoving(false), []);
   useEffect(() => {
     stick.wake = invalidate;
+    lookStick.wake = invalidate;
     return () => {
       stick.wake = null;
+      lookStick.wake = null;
     };
   }, [invalidate]);
   const sticking = useRef(false);
@@ -776,8 +780,8 @@ export function TouchPlayer({
       drag.y = e.clientY;
       if (!enabled.current) return;
       euler.setFromQuaternion(camera.quaternion);
-      euler.y += dx * LOOK_SPEED;
-      euler.x = THREE.MathUtils.clamp(euler.x + dy * LOOK_SPEED, -MAX_PITCH, MAX_PITCH);
+      euler.y -= dx * LOOK_SPEED;
+      euler.x = THREE.MathUtils.clamp(euler.x - dy * LOOK_SPEED, -MAX_PITCH, MAX_PITCH);
       euler.z = 0;
       camera.quaternion.setFromEuler(euler);
       invalidate();
@@ -805,6 +809,7 @@ export function TouchPlayer({
   }, [camera, gl, invalidate, layout, onSelect, ray, registry]);
 
   const lastPos = useRef(new THREE.Vector3());
+  const lookEuler = useMemo(() => new THREE.Euler(0, 0, 0, "YXZ"), []);
   useFrame((_, rawDt) => {
     const p = camera.position;
     // a jump to another room (the navigator) cancels a walk in progress
@@ -813,6 +818,18 @@ export function TouchPlayer({
     if (jumped && route.current.length) {
       route.current = [];
       setMoving(false);
+    }
+    // Turn before walking so both thumbs can steer together. Never roll or flip the camera.
+    const lookPush = lookStick.active && enabled.current ? Math.min(1, Math.hypot(lookStick.x, lookStick.y)) : 0;
+    if (lookPush > STICK_DEAD) {
+      const speed = STICK_LOOK_SPEED * Math.pow((lookPush - STICK_DEAD) / (1 - STICK_DEAD), 1.4);
+      const angle = speed * Math.min(rawDt, MAX_DT) / lookPush;
+      lookEuler.setFromQuaternion(camera.quaternion);
+      lookEuler.y -= lookStick.x * angle;
+      lookEuler.x = THREE.MathUtils.clamp(lookEuler.x + lookStick.y * angle, -MAX_PITCH, MAX_PITCH);
+      lookEuler.z = 0;
+      camera.quaternion.setFromEuler(lookEuler);
+      invalidate();
     }
     // the walking stick: that way (forward, back, aside, as the camera faces), as fast as it is pushed
     const push = stick.active && enabled.current ? Math.min(1, Math.hypot(stick.x, stick.y)) : 0;
@@ -835,7 +852,7 @@ export function TouchPlayer({
       sticking.current = false;
       setMoving(false);
     }
-    if (stick.active) invalidate();
+    if (stick.active || lookStick.active) invalidate();
     const t = route.current[0];
     if (!t) return;
     const dt = Math.min(rawDt, MAX_DT);
