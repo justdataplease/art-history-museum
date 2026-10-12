@@ -94,9 +94,10 @@ npm run dev
 
 Setup details and technical notes live in the [development guide](docs/DEVELOPMENT.md).
 
-Code is licensed under [MIT](LICENSE). Text, images and music retain their own
-licences and credits; see [NOTICE](NOTICE.md). Works still in copyright are
-labelled in the gallery. Rights holders can submit a
+Code is licensed under [MIT](LICENSE). Text, images, music and the audio
+guide's Pocket voices retain their own licences and credits; see
+[NOTICE](NOTICE.md). Works still in copyright are labelled in the gallery.
+Rights holders can submit a
 [takedown request](https://github.com/justdataplease/art-history-museum/issues/new?template=takedown-request.yml).
 
 Made with care by [justdataplease.com](https://justdataplease.com).

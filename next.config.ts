@@ -36,7 +36,8 @@ const FILM_MEDIA = [
 ].join(" ");
 const FILM_FRAMES = "https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://geo.dailymotion.com";
 // the audio guide's natural voice (src/components/museum/voice): the model runs in the visitor's browser, its code
-// from jsdelivr, its weights and voices from Hugging Face (WebAssembly needs 'wasm-unsafe-eval')
+// from jsdelivr, its weights and voices from Hugging Face (WebAssembly needs 'wasm-unsafe-eval'). huggingface.co
+// answers a file with a redirect to its storage (cas-bridge.xethub.hf.co for Pocket's package): *.hf.co covers it.
 const VOICE_CODE = "https://cdn.jsdelivr.net";
 const VOICE_DATA = "https://huggingface.co https://*.huggingface.co https://*.hf.co https://cdn.jsdelivr.net";
 const csp = [

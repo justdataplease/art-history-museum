@@ -103,6 +103,9 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   const targetInfo = target ? voiceInfo(target) : undefined;
   const mb = targetInfo && naturalVoice.onDevice(targetInfo.id) === false ? ENGINE_MB[targetInfo.engine] : null;
   const reading = naturalVoice.voice ? voiceInfo(naturalVoice.voice) : undefined;
+  // (a second Pocket voice is only its own few MB: the model is here already)
+  const size =
+    reading?.engine === "pocket" && naturalVoice.onDevice(reading.id) ? "a few MB" : `about ${ENGINE_MB[reading?.engine ?? "piper"]} MB`;
   const voiceNote =
     s.guideVoice !== "natural"
       ? `Auto reads with the browser's most natural voice (Edge's Natural voices are the best; on a phone, the system's neural voices). Natural (AI) runs a neural voice on this device: choosing it downloads it once${mb ? ` (about ${mb} MB)` : ""}. Nothing downloads unless you choose it.`
@@ -111,14 +114,16 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
         : natural === "error"
           ? "The AI voice would not start here: the browser's voice reads."
           : natural === "loading"
-            ? `${reading?.label ?? "The AI voice"} is downloading: ${Math.round(progress * 100)}% (about ${ENGINE_MB[reading?.engine ?? "piper"]} MB, once; the browser keeps it). The browser's voice reads meanwhile.`
+            ? `${reading?.label ?? "The AI voice"} is downloading: ${Math.round(progress * 100)}% (${size}, once; the browser keeps it). The browser's voice reads meanwhile.`
             : naturalVoice.fellBack && reading
-              ? `${studio ? "The studio voices are too slow on this device" : "The studio voices need WebGPU, which this browser does not have"}: ${reading.label}, a light voice, reads.`
+              ? `${voiceInfo(s.aiVoice)?.engine === "pocket" ? "The Pocket voices are too slow on this device" : studio ? "The studio voices are too slow on this device" : "The studio voices need WebGPU, which this browser does not have"}: ${reading.label}, a light voice, reads.`
               : reading?.engine === "kokoro"
                 ? `${reading.label}, a studio voice, reads on this device's graphics card.`
-                : reading
-                  ? `${reading.label} reads on this device's processor: light, it leaves the graphics card to the gallery.`
-                  : `The light voices run on any device (about ${ENGINE_MB.piper} MB, once); the studio voices sound most like a person but need a strong graphics card (about ${ENGINE_MB.kokoro} MB). "Best here" chooses for this device.`;
+                : reading?.engine === "pocket"
+                  ? `${reading.label}, a voice of Kyutai's Pocket TTS (CC BY 4.0), reads on this device's processor at its own pace: the reading speed does not change it.`
+                  : reading
+                    ? `${reading.label} reads on this device's processor: light, it leaves the graphics card to the gallery.`
+                    : `The light voices run on any device (about ${ENGINE_MB.piper} MB, once); the Pocket voices sound very natural and run on the processor too, best on a recent computer (about ${ENGINE_MB.pocket} MB); the studio voices sound most like a person but need a strong graphics card (about ${ENGINE_MB.kokoro} MB). "Best here" chooses for this device, between the light and studio voices.`;
   // the graphics: what Auto chose here and why; what waits for the next gallery
   const autoWhy = weakReason();
   const tierNow = tierFor(s.graphics);
@@ -226,6 +231,15 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
                   Best here
                 </button>
                 {NATURAL_VOICES.filter((v) => v.engine === "piper").map((v) => (
+                  <button key={v.id} type="button" aria-pressed={s.aiVoice === v.id} onClick={() => pickAi(v.id)}>
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+              {/* every device too, but only when chosen: it works the processor harder than the light voices */}
+              <p className={styles.voiceKind}>Pocket · very natural, made on this device, about {ENGINE_MB.pocket} MB once</p>
+              <div className={styles.seg}>
+                {NATURAL_VOICES.filter((v) => v.engine === "pocket").map((v) => (
                   <button key={v.id} type="button" aria-pressed={s.aiVoice === v.id} onClick={() => pickAi(v.id)}>
                     {v.label}
                   </button>

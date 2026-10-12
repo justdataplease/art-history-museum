@@ -3,21 +3,27 @@
 //   Safari's Premium and Enhanced ones, Android's network (neural) voices, Google's, never the novelty voices.
 //   The guide's voice unless the visitor chooses the AI one;
 // - the AI voice: a neural text-to-speech model run in a worker on this device, downloaded once (the browser
-//   keeps it) and only when the visitor chooses it (Settings → Audio guide → Natural), never by itself. Two models:
+//   keeps it) and only when the visitor chooses it (Settings → Audio guide → Natural), never by itself. Three models:
 //   · light (Piper, public/voice/piper-worker.js): about 75 MB, on the processor, a sentence in a seventh of the
 //     time it lasts here and well ahead of speech on a modest laptop; it leaves the graphics card to the gallery.
 //     Every computer;
+//   · Pocket (Kyutai's Pocket TTS, public/voice/pocket-worker.js): very natural, on the processor too, about
+//     120 MB; but it works harder (here 0.4 s for a second of speech, and about 300 MB of memory), so it reads only
+//     when the visitor chooses one of its voices, never as "best for this computer". It has no speed control: it
+//     speaks at its own pace, whatever the guide's speed;
 //   · studio (Kokoro, public/voice/kokoro-worker.js): the most like a person, but it needs WebGPU on a strong
 //     graphics card (on the processor it is slower than speech) and about 330 MB.
 //   "Best for this computer" (the default) takes the studio voice only on a strong graphics card. Each voice is
-//   timed as it reads: a studio voice that cannot keep well ahead gives way to the light one, and where even the
-//   light one falls behind, the browser's voice reads (both remembered on this device).
+//   timed as it reads: a studio voice that cannot keep well ahead, or a Pocket one that cannot keep ahead, gives
+//   way to the light one, and where even the light one falls behind, the browser's voice reads (all remembered on
+//   this device).
 // Sentences are made one at a time, the one about to be heard first, then the next, and the guide asks for the
 // first sentence of the painting the visitor is turning to before it starts (prefetch). A long sentence is made in
-// pieces at its commas, so the voice starts sooner. All at the guide's speed (settings.ts guideSpeed).
+// pieces at its commas, so the voice starts sooner. All at the guide's speed (settings.ts guideSpeed), Pocket's
+// voices at their own.
 
 export type NaturalState = "idle" | "loading" | "ready" | "slow" | "error";
-export type NaturalEngine = "piper" | "kokoro";
+export type NaturalEngine = "piper" | "kokoro" | "pocket";
 
 export interface NaturalVoiceInfo {
   id: string;
@@ -25,8 +31,9 @@ export interface NaturalVoiceInfo {
   engine: NaturalEngine;
 }
 
-/** The AI voices: Piper's clearest public-domain voices (LibriVox readers), and Kokoro's best (its own grades:
- *  Heart A, Bella A-, Emma B-, Michael and George C). */
+/** The AI voices: Piper's clearest public-domain voices (LibriVox readers), Kokoro's best (its own grades:
+ *  Heart A, Bella A-, Emma B-, Michael and George C), and Pocket's English ones (Alba, a Scottish reader; Jane,
+ *  George and Michael, British speakers of the VCTK corpus; their ids are its package's voices/<id>.bin). */
 export const NATURAL_VOICES: NaturalVoiceInfo[] = [
   { id: "en_GB-cori-medium", label: "Cori (British)", engine: "piper" },
   { id: "en_US-kristin-medium", label: "Kristin", engine: "piper" },
@@ -36,20 +43,33 @@ export const NATURAL_VOICES: NaturalVoiceInfo[] = [
   { id: "bf_emma", label: "Emma (British)", engine: "kokoro" },
   { id: "am_michael", label: "Michael", engine: "kokoro" },
   { id: "bm_george", label: "George (British)", engine: "kokoro" },
+  { id: "alba", label: "Alba (Scottish)", engine: "pocket" },
+  { id: "jane", label: "Jane (British)", engine: "pocket" },
+  { id: "george", label: "George (British)", engine: "pocket" },
+  { id: "michael", label: "Michael (British)", engine: "pocket" },
 ];
 const LIGHT = "en_GB-cori-medium";
 const STUDIO = "af_heart";
-/** Each model's download, MB (Piper: the voice, the runtime and eSpeak; Kokoro: its weights and voices). */
-export const ENGINE_MB: Record<NaturalEngine, number> = { piper: 75, kokoro: 330 };
-const MODEL_BYTES: Record<NaturalEngine, number> = { piper: 63.5e6, kokoro: 330e6 };
-const WORKER: Record<NaturalEngine, string> = { piper: "/voice/piper-worker.js", kokoro: "/voice/kokoro-worker.js" };
+/** Each model's download, MB (Piper: the voice, the runtime and eSpeak; Kokoro: its weights and voices; Pocket:
+ *  its package, a voice and the runtime). */
+export const ENGINE_MB: Record<NaturalEngine, number> = { piper: 75, kokoro: 330, pocket: 120 };
+/** What a model's download is counted against until its files have all announced themselves (Pocket's worker
+ *  counts its whole download from the first file, its package's list in hand: here only the least it takes, a
+ *  voice's few MB when the model is in already). */
+const MODEL_BYTES: Record<NaturalEngine, number> = { piper: 63.5e6, kokoro: 330e6, pocket: 3e6 };
+const WORKER: Record<NaturalEngine, string> = {
+  piper: "/voice/piper-worker.js",
+  kokoro: "/voice/kokoro-worker.js",
+  pocket: "/voice/pocket-worker.js",
+};
 
 /** The breath between two sentences, and between two pieces of one, seconds (at speed 1). */
 const BREATH = 0.28;
 const JOIN = 0.05;
 /** Keeping up: seconds of work per second of speech, over a voice's first sentences. The studio voice must keep
- *  well ahead (its work is on the graphics card the gallery draws with); the light one only ahead. */
-const TOO_SLOW: Record<NaturalEngine, number> = { kokoro: 0.4, piper: 0.95 };
+ *  well ahead (its work is on the graphics card the gallery draws with); the light one and Pocket (on the
+ *  processor) only ahead. */
+const TOO_SLOW: Record<NaturalEngine, number> = { kokoro: 0.4, piper: 0.95, pocket: 0.9 };
 const JUDGE_AFTER = 3;
 /** Sentences kept, made (replays and the painting turned back to cost nothing). */
 const KEEP = 60;
@@ -59,6 +79,8 @@ const SLOW_KEY = "timeline-museum:voice-too-slow";
 const PIPER_CACHE = "museum-voice";
 const KOKORO_CACHE = "transformers-cache";
 const KOKORO_FILE = /Kokoro-82M-v1\.0-ONNX\/resolve\/[^/]+\/onnx\/model\.onnx$/;
+const POCKET_CACHE = "museum-voice-pocket";
+const POCKET_FILE = /\/flow_lm_main\.onnx$/;
 
 export interface Speaking {
   stop(): void;
@@ -142,7 +164,8 @@ class NaturalVoice {
   /** The voice loaded (or loading), and its model. */
   voice: string | null = null;
   engine: NaturalEngine | null = null;
-  /** Why the voice reading is not the one chosen: the studio voice was too slow here (the light one reads). */
+  /** Why the voice reading is not the one chosen: the studio voice (or Pocket) was too slow here (the light one
+   *  reads). */
   fellBack = false;
   /** Bumped when a voice's files are found on (or put on) this device, so `onDevice` readers re-render. */
   devices = 0;
@@ -199,19 +222,22 @@ class NaturalVoice {
   }
 
   /** The voice to read with for the visitor's choice ("": the best for this computer): the studio voice only
-   *  where WebGPU runs and has not been too slow; nothing where even the light voice was too slow. */
+   *  where WebGPU runs and has not been too slow; a Pocket voice only when chosen, and while it has kept up (else
+   *  the light one); nothing where even the light voice was too slow (Pocket, on the same processor, works
+   *  harder still). */
   async resolve(choice: string): Promise<string | null> {
     this.slow = readSlow();
     if (this.slow.piper) return null;
     const chosen = voiceInfo(choice);
     if (chosen?.engine === "piper") return chosen.id;
+    if (chosen?.engine === "pocket") return this.slow.pocket ? LIGHT : chosen.id;
     const { ok, strong } = await this.gpu();
     if (chosen) return ok && !this.slow.kokoro ? chosen.id : LIGHT;
     return strong && !this.slow.kokoro ? STUDIO : LIGHT;
   }
 
-  /** Whether the voice is on this device already (downloaded once): choosing it downloads nothing. Null until
-   *  the browser has answered. */
+  /** Whether the voice is on this device already (downloaded once): choosing it downloads nothing (a Pocket voice:
+   *  nothing but its own few MB, once the model shared by all four is here). Null until the browser has answered. */
   onDevice(id: string): boolean | null {
     if (this.stored.has(id)) return this.stored.get(id)!;
     if (!this.checking.has(id)) {
@@ -222,12 +248,12 @@ class NaturalVoice {
             if (!("caches" in window)) return false;
             const info = voiceInfo(id);
             if (!info) return false;
-            const name = info.engine === "piper" ? PIPER_CACHE : KOKORO_CACHE;
+            const name = info.engine === "piper" ? PIPER_CACHE : info.engine === "pocket" ? POCKET_CACHE : KOKORO_CACHE;
             if (!(await caches.has(name))) return false;
             const keys = await (await caches.open(name)).keys();
             return info.engine === "piper"
               ? keys.some((r) => r.url.endsWith(`/${id}.onnx`))
-              : keys.some((r) => KOKORO_FILE.test(r.url));
+              : keys.some((r) => (info.engine === "pocket" ? POCKET_FILE : KOKORO_FILE).test(r.url));
           } catch {
             return false;
           }
@@ -270,7 +296,7 @@ class NaturalVoice {
     this.progress = 0;
     this.timing = { work: 0, speech: 0, n: 0 };
     this.set("loading");
-    this.worker!.postMessage(engine === "piper" ? { type: "load", voice: id } : { type: "load" });
+    this.worker!.postMessage(engine === "kokoro" ? { type: "load" } : { type: "load", voice: id });
   }
 
   /** Resolves when the voice asked for last can read (false: none will). */
@@ -307,6 +333,8 @@ class NaturalVoice {
         if (m.voice && m.voice !== this.voice) return;
         this.progress = 1;
         this.stored.set(this.voice!, true);
+        // (Pocket's model is here now for its other voices too: see onDevice)
+        if (engine === "pocket") for (const v of NATURAL_VOICES) if (v.engine === "pocket") this.stored.set(v.id, true);
         this.devices++;
         this.set("ready");
         this.pump();
@@ -389,6 +417,12 @@ class NaturalVoice {
     return (this.ctx ??= new AudioContext());
   }
 
+  /** The speed the voice reads at: the guide's, but Pocket's own pace (it has no speed control). Its sentences are
+   *  made, kept and timed (judge) at 1, and the breaths between them are a speed-1 reading's. */
+  private pace(speed: number): number {
+    return this.engine === "pocket" ? 1 : speed;
+  }
+
   /** One sentence at a time to the worker, the ones a reading is waiting for first. */
   private pump() {
     if (this.busy || this.state !== "ready" || !this.worker || !this.queue.length) return;
@@ -406,6 +440,7 @@ class NaturalVoice {
   private synth(text: string, speed: number, owner: number): Promise<AudioBuffer> {
     // no voice to make it (it gave way, or failed): the reading ends, and the guide goes on with the browser's
     if (!this.worker || (this.state !== "ready" && this.state !== "loading")) return Promise.reject(new Error("no voice"));
+    speed = this.pace(speed);
     const key = `${this.voice}|${speed}|${text}`;
     const had = this.made.get(key);
     if (had) {
@@ -474,7 +509,7 @@ class NaturalVoice {
         void play(k + 1);
       };
       current = src;
-      src.start(ctx.currentTime + (k === 0 ? 0.02 : (parts[k].first ? BREATH : JOIN) / o.speed));
+      src.start(ctx.currentTime + (k === 0 ? 0.02 : (parts[k].first ? BREATH : JOIN) / this.pace(o.speed)));
       if (parts[k].first) o.onLine(parts[k].line);
     };
     void play(0);
