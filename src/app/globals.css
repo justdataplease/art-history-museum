@@ -1521,12 +1521,171 @@ button {
   z-index: 30;
   display: grid;
   grid-template-columns: minmax(0, 340px) minmax(0, 1fr) minmax(0, 340px);
-  grid-template-areas: "l hint r";
+  grid-template-areas: "year year year" "l hint r";
   align-items: end;
   column-gap: 24px;
   row-gap: 6px;
   padding: 0 20px 12px 22px;
   pointer-events: none;
+}
+
+.tl-year-nav {
+  --range-color: var(--gold-ink);
+  grid-area: year;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  width: min(100%, 760px);
+  padding: 3px 14px;
+  margin-bottom: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.tl-year-nav label {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.tl-year-nav output {
+  min-width: 4ch;
+  color: var(--gold-ink);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-year-track {
+  position: relative;
+  min-width: 0;
+  height: 40px;
+}
+
+.tl-year-track::before,
+.tl-year-selection {
+  position: absolute;
+  top: 18px;
+  height: 4px;
+  border-radius: 999px;
+}
+
+.tl-year-track::before {
+  content: "";
+  inset-inline: 10px;
+  background: var(--range-color);
+  opacity: 0.22;
+}
+
+.tl-year-selection {
+  left: calc(10px + (100% - 20px) * var(--range-start));
+  right: calc(10px + (100% - 20px) * var(--range-end));
+  background: var(--range-color);
+}
+
+.tl-year-track input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 40px;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.tl-year-track input:focus {
+  z-index: 2;
+}
+
+.tl-year-track input::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+
+.tl-year-track input::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+.tl-year-track input::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 20px;
+  height: 28px;
+  margin-top: -12px;
+  border: 2px solid var(--range-color);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: inset 0 0 0 5px var(--paper), inset 0 0 0 6px var(--range-color);
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.tl-year-track input::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 20px;
+  height: 28px;
+  border: 2px solid var(--range-color);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: inset 0 0 0 5px var(--paper), inset 0 0 0 6px var(--range-color);
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.tl-year-nav button {
+  min-height: 36px;
+  padding: 0 4px;
+  color: var(--gold-ink);
+  white-space: nowrap;
+}
+
+.tl-year-nav button:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tl-year-nav input:focus-visible,
+.tl-year-nav button:focus-visible {
+  outline: 2px solid var(--gold-ink);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.view-stars .tl-year-nav {
+  --range-color: var(--gold-soft);
+  --paper: #111522;
+  background: #111522;
+  border-color: rgba(233, 229, 226, 0.24);
+  color: var(--light);
+}
+
+.view-stars .tl-year-nav output,
+.view-stars .tl-year-nav button {
+  color: var(--gold-soft);
+}
+
+.view-stars .tl-year-nav :focus-visible {
+  outline-color: var(--gold-soft);
+}
+
+@media (max-width: 600px) {
+  .tl-year-nav { grid-template-columns: 1fr auto 1fr; gap: 0 8px; padding: 6px 12px 2px; border-radius: 18px; }
+  .tl-year-nav label:first-child { grid-column: 1; grid-row: 1; }
+  .tl-year-nav label { grid-column: 3; grid-row: 1; justify-self: end; }
+  .tl-year-nav label:first-child { justify-self: start; }
+  .tl-year-nav button { grid-column: 2; grid-row: 1; min-height: 28px; }
+  .tl-year-track { grid-column: 1 / -1; grid-row: 2; }
 }
 
 .tl-note-l {
@@ -1664,6 +1823,7 @@ button {
   .tl-foot {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
+      "year year"
       "hint hint"
       "l r";
   }
@@ -1676,6 +1836,7 @@ button {
   .tl-foot {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
+      "year"
       "hint"
       "l"
       "r";

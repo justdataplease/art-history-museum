@@ -50,6 +50,9 @@ const VIEWS: { id: ViewName; label: string }[] = [
 
 /** the "more below" pill's strip, kept free above the footer while the wall overflows */
 const PILL_H = 26;
+const DEFAULT_START_YEAR = 1500;
+// Match frameYears' closest zoom so both handles always describe the visible years.
+const MIN_YEAR_WINDOW = Math.ceil(YEAR_SPAN / (K_MAX * 0.9));
 
 const reducedMotion = () =>
   typeof window !== "undefined" &&
@@ -202,7 +205,9 @@ export function Timeline({ data }: { data: TimelineData }) {
       hRef.current = nh;
       const c = tRef.current;
       tRef.current = clampTransform(
-        { ...c, x: ow ? (c.x * nw) / ow : c.x },
+        ow
+          ? { ...c, x: (c.x * nw) / ow }
+          : frameYears(DEFAULT_START_YEAR, YEAR_MAX, nw),
         nw,
         overflowRef.current
       );
@@ -271,6 +276,24 @@ export function Timeline({ data }: { data: TimelineData }) {
     },
     [flyTo]
   );
+
+  const onYearRange = useCallback((edge: "start" | "end", year: number) => {
+    tweenRef.current?.kill();
+    setFilter(null);
+    setFocusP(null);
+    const w = wRef.current || 1;
+    let start = clamp(Math.round(yearAt(0, w, tRef.current)), YEAR_MIN, YEAR_MAX - MIN_YEAR_WINDOW);
+    let end = clamp(Math.round(yearAt(w, w, tRef.current)), start + MIN_YEAR_WINDOW, YEAR_MAX);
+    if (edge === "start") start = clamp(year, YEAR_MIN, end - MIN_YEAR_WINDOW);
+    else end = clamp(year, start + MIN_YEAR_WINDOW, YEAR_MAX);
+    apply(frameYears(start, end, w));
+  }, [apply]);
+
+  const showAllYears = useCallback(() => {
+    setFilter(null);
+    setFocusP(null);
+    flyTo({ k: 1, x: 0, y: 0 });
+  }, [flyTo]);
 
   // ---- wheel: native non-passive listener so ctrl/pinch zoom only the timeline
   const hasData = periods.length > 0;
@@ -681,7 +704,7 @@ export function Timeline({ data }: { data: TimelineData }) {
     setFilter(null);
     setFocusP(null);
     try { localStorage.setItem("timeline-museum:artist-selection", all ? "all" : "featured"); } catch {}
-    flyTo({ k: 1, x: 0, y: 0 }, 0);
+    flyTo({ ...tRef.current, y: 0 }, 0);
   }, [showAll, flyTo]);
 
   const closeCard = useCallback(() => {
@@ -700,6 +723,8 @@ export function Timeline({ data }: { data: TimelineData }) {
   // ---- layout for this frame
   const w = size?.w ?? 0;
   const h = size?.h ?? 0;
+  const startYear = size ? clamp(Math.round(yearAt(0, w, t)), YEAR_MIN, YEAR_MAX) : DEFAULT_START_YEAR;
+  const endYear = size ? clamp(Math.round(yearAt(w, w, t)), YEAR_MIN, YEAR_MAX) : YEAR_MAX;
   const bottom = h - footReserve;
   const ticks = size ? axisTicks(w, t) : null;
   const wall = size && view === "wall" ? wallAt(t, w, h) : null;
@@ -820,6 +845,39 @@ export function Timeline({ data }: { data: TimelineData }) {
           mid-size screens, one centred column on narrow ones. Its measured
           height is kept free of content (--foot). */}
       <footer className="tl-foot" inert={!!selected}>
+        <div className="tl-year-nav">
+          <label htmlFor="tl-year-start">From <output htmlFor="tl-year-start">{startYear}</output></label>
+          <div className="tl-year-track" style={{
+            ["--range-start" as string]: (startYear - YEAR_MIN) / YEAR_SPAN,
+            ["--range-end" as string]: (YEAR_MAX - endYear) / YEAR_SPAN,
+          }}>
+            <span className="tl-year-selection" aria-hidden />
+            <input
+              id="tl-year-start"
+              type="range"
+              min={YEAR_MIN}
+              max={YEAR_MAX}
+              step={1}
+              value={startYear}
+              aria-label="Start year"
+              aria-valuetext={`${startYear}, showing ${startYear} to ${endYear}`}
+              onChange={(e) => onYearRange("start", Number(e.currentTarget.value))}
+            />
+            <input
+              id="tl-year-end"
+              type="range"
+              min={YEAR_MIN}
+              max={YEAR_MAX}
+              step={1}
+              value={endYear}
+              aria-label="End year"
+              aria-valuetext={`${endYear}, showing ${startYear} to ${endYear}`}
+              onChange={(e) => onYearRange("end", Number(e.currentTarget.value))}
+            />
+          </div>
+          <label htmlFor="tl-year-end">To <output htmlFor="tl-year-end">{endYear}</output></label>
+          <button type="button" onClick={showAllYears}>All years</button>
+        </div>
         <p className="tl-note tl-note-l">
           <span className="tl-note-src">
             All credit goes to{" "}
