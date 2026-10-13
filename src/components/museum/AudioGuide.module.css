@@ -1,10 +1,17 @@
 /* The audio guide: its switch top-left under the back link (the music caption takes the bottom-left), its
-   subtitle above the controls hint. Same pill style as the HUD. */
+   subtitle above the controls hint. Same pill style as the HUD. Two rows: the guide's buttons, then its voice
+   (the settings button moves under it, museum.module.css). */
 .guide {
   position: absolute;
   left: 24px;
   top: 86px;
   z-index: 35;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.bar {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -30,6 +37,55 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: rgba(233, 229, 226, 0.6);
+}
+
+/* the switch between the two voices: one pill, the voice reading lit */
+.voices {
+  display: flex;
+  border: 1px solid rgba(233, 229, 226, 0.25);
+  border-radius: 999px;
+  background: rgba(10, 9, 8, 0.5);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+.voices button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: rgba(233, 229, 226, 0.6);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.voices button + button {
+  border-left: 1px solid rgba(233, 229, 226, 0.18);
+}
+.voices button:hover {
+  color: rgba(233, 229, 226, 0.9);
+}
+.voices button[aria-pressed="true"] {
+  color: var(--gold-soft);
+  background: rgba(199, 169, 122, 0.14);
+}
+.voices small {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  opacity: 0.8;
+}
+
+/* the natural voice's trouble, beside the switch */
+.note {
+  max-width: 300px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: rgba(233, 229, 226, 0.78);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }
 
 .settings.settings {
@@ -98,11 +154,15 @@
     top: calc(126px + var(--floor-toolbar-height, 0px));
     left: 12px;
     right: 12px;
+    gap: 6px;
+  }
+  .bar {
     flex-wrap: wrap;
     gap: 6px;
   }
   .toggle,
-  .small {
+  .small,
+  .voices button {
     padding: 7px 12px;
     font-size: 10px;
     letter-spacing: 0.18em;
@@ -122,11 +182,15 @@
     top: 54px;
     left: 12px;
     max-width: 27vw;
+    gap: 6px;
+  }
+  .bar {
     flex-wrap: wrap;
     gap: 6px;
   }
   .toggle,
-  .small {
+  .small,
+  .voices button {
     padding: 7px 12px;
     font-size: 10px;
     letter-spacing: 0.18em;

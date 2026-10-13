@@ -105,6 +105,13 @@ now, no Postgres, keep the architecture as is (the JSON snapshot on Vercel).
     their files are cleared from visitors' browsers. The guide makes a painting's first sentence while the
     visitor stops at it, long sentences in pieces; "Hear it" waits for the AI voice instead of reading with the
     browser's.
+  - [x] The natural voice first (owner, 2026-10-13, as on everkept): Pocket (Alba) is the guide's voice wherever
+    this device can run it (worker, WebAssembly, Cache API, 4 GB where the browser says), downloaded when the guide
+    first reads. A switch beside the guide's buttons, "Alba · natural" (with "↓ 120 MB" until it is here) or
+    "Browser voice", remembered under a new key (timeline-museum:guide-voice: earlier choices, mostly Auto, are not
+    read); a reading switched goes on from the same sentence. The browser's voice takes over only after a minute of
+    trouble (it will not load, tried again every 4 s; or slower than it is heard, piece after piece), for the visit,
+    never remembered, with a note why. Settings: "Always the natural voice" keeps it, saying it has trouble instead.
   - [ ] Recorded narration in place of the browser's voice.
   - [ ] Greek names said the Greek way (the voices are English).
 - [x] **Films about the artist** (owner, 2026-10-09). Live.

@@ -15,7 +15,7 @@ keeps its own licence:
 - Music in public/audio/ is mirrored from Wikimedia Commons; each recording
   keeps its own licence (public domain, CC0, CC BY or CC BY-SA), listed with
   attribution in public/audio/CREDITS.md.
-- The audio guide's Pocket voices (Settings → Audio guide → Natural) are not
+- The audio guide's Pocket voices (its natural voice, the default) are not
   bundled either: the visitor's browser downloads them from Hugging Face and
   runs them on the visitor's device (public/voice/pocket-worker.js,
   public/voice/pocket-core.js). Pocket TTS by Kyutai

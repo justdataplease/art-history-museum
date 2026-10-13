@@ -1,8 +1,8 @@
 "use client";
 
 // The gallery's settings (O, or the Settings button top-left): walking speed, the canvas surface, the graphics
-// (quality.ts), the on-screen controls (H), and the audio guide's voice and speed. Saved in this browser
-// (settings.ts).
+// (quality.ts), the on-screen controls (H), and the audio guide's voice (the natural voice, which of its four, and
+// the lock that keeps it; or the browser's) and speed. Saved in this browser (settings.ts).
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { GUIDE_SPEEDS, getSettings, setSettings, useSettings, type GuideVoice, type Pace } from "./settings";
@@ -11,6 +11,7 @@ import {
   NATURAL_VOICES,
   POCKET_MB,
   browserVoices,
+  naturalPossible,
   naturalVoice,
   pickBrowserVoice,
   speakBrowser,
@@ -54,11 +55,13 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true });
   }, []);
-  // the AI voice (Pocket): whether it is here already, and its download (only choosing it starts it; Auto never
-  // uses it)
+  // the natural voice (Pocket): whether it is here already, its download (only a reading, or "Hear it", starts
+  // it) and its trouble
   const natural = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getState, () => "idle" as const);
+  const trouble = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getTrouble, () => null);
   const progress = useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getProgress, () => 0);
   useSyncExternalStore(naturalVoice.subscribe, naturalVoice.getDevices, () => 0);
+  const possible = naturalPossible();
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   useEffect(() => {
     if (!("speechSynthesis" in window)) return;
@@ -70,13 +73,13 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   const sample = useRef<Speaking | null>(null);
   const [preparing, setPreparing] = useState(false);
   useEffect(() => () => sample.current?.stop(), []);
-  // with the voice chosen: the AI one waits until it can read (the browser's in its place would pass for it)
+  // with the voice chosen: the natural one waits until it can read (the browser's in its place would pass for it)
   const hear = async () => {
     sample.current?.stop();
     sample.current = null;
     const g = getSettings();
     const o = { speed: g.guideSpeed, onLine: () => {}, onEnd: () => {} };
-    if (g.guideVoice === "natural") {
+    if (g.guideVoice === "natural" && possible) {
       naturalVoice.load(g.aiVoice);
       setPreparing(true);
       const ok = await naturalVoice.whenReady();
@@ -88,22 +91,29 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
     }
     sample.current = speakBrowser([SAMPLE], pickBrowserVoice(g.browserVoice), o);
   };
-  // Pocket's model: its download until it is here (then a second voice is only its own few MB)
-  const here = naturalVoice.onDevice();
-  const mb = here === false ? POCKET_MB : null;
+  // Pocket's download for the voice chosen, until it is here (the model and the voice; then another voice is only its
+  // own few MB)
+  const mb = possible ? naturalVoice.downloadMB(s.aiVoice) : null;
   const reading = naturalVoice.voice ? voiceInfo(naturalVoice.voice) : undefined;
-  const voiceNote =
-    s.guideVoice !== "natural"
-      ? `Auto reads with the browser's most natural voice (Edge's Natural voices are the best; on a phone, the system's neural voices). Natural (AI) runs Kyutai's Pocket voices on this device: choosing it downloads them once${mb ? ` (about ${mb} MB)` : ""}. Nothing downloads unless you choose it.`
+  const voiceNote = !possible
+    ? "This device cannot run the natural voice: the guide reads with the browser's most natural voice (Edge's Natural voices are the best; on a phone, the system's neural voices)."
+    : s.guideVoice !== "natural"
+      ? `The browser's most natural voice (Edge's Natural voices are the best; on a phone, the system's neural voices), or the one you choose. Natural runs Kyutai's Pocket voices on this device${mb ? `: about ${mb} MB to download, once, when the guide first reads` : ""}.`
       : natural === "slow"
-        ? "This device cannot keep ahead of the Pocket voices while it draws the gallery: the browser's voice reads."
-        : natural === "error"
-          ? "The AI voice would not start here: the browser's voice reads."
-          : natural === "loading"
-            ? `${reading?.label ?? "The AI voice"} is downloading: ${Math.round(progress * 100)}% (${here ? "a few MB" : `about ${POCKET_MB} MB`}, once; the browser keeps it). The browser's voice reads meanwhile.`
-            : reading
-              ? `${reading.label}, a voice of Kyutai's Pocket TTS (CC BY 4.0), reads on this device's processor at its own pace: the reading speed does not change it.`
-              : `The Pocket voices sound very natural and run on this device's processor, best on a recent computer (about ${POCKET_MB} MB, once).`;
+        ? "The natural voice was too slow here while the gallery draws: the browser's voice reads for this visit. Choose Natural to try it again."
+        : natural === "failed"
+          ? "The natural voice would not load: the browser's voice reads for this visit. Choose Natural to try it again."
+          : natural === "stuck"
+            ? "The natural voice would not load. Always on: it tries again at the next painting."
+            : natural === "loading" && trouble === "retrying"
+              ? "The natural voice is having trouble loading: trying again…"
+              : natural === "loading"
+                ? `${reading?.label ?? "The natural voice"} is downloading: ${Math.round(progress * 100)}% (${mb === POCKET_MB ? `about ${POCKET_MB} MB` : "a few MB"}, once; the browser keeps it). The guide reads when it is here.`
+                : trouble === "straining"
+                  ? "The natural voice is having trouble keeping up here. Always on: it keeps reading."
+                  : reading
+                    ? `${reading.label}, a voice of Kyutai's Pocket TTS (CC BY 4.0), reads on this device's processor at its own pace: the reading speed does not change it.`
+                    : `The Pocket voices sound very natural and run on this device's processor, best on a recent computer.${mb ? " They download when the guide first reads." : ""}`;
   // the graphics: what Auto chose here and why; what waits for the next gallery
   const autoWhy = weakReason();
   const tierNow = tierFor(s.graphics);
@@ -122,7 +132,8 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
   };
   const pickAi = (aiVoice: string) => {
     setSettings({ aiVoice });
-    naturalVoice.load(aiVoice);
+    // in use: the new voice loads now (its own few MB); else at the guide's next reading
+    if (natural === "ready" || natural === "loading") naturalVoice.load(aiVoice);
   };
   return (
     <div className={styles.settingsBack} onClick={() => onClose(true)}>
@@ -185,20 +196,22 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
         </section>
         <section>
           <h3>Audio guide</h3>
-          <Choice<GuideVoice>
-            value={s.guideVoice}
-            options={[
-              { key: "auto", label: "Auto" },
-              { key: "natural", label: mb ? `Natural (AI · ${mb} MB)` : "Natural (AI)" },
-              { key: "browser", label: "Browser's voice" },
-            ]}
-            onPick={(guideVoice) => {
-              setSettings({ guideVoice });
-              if (guideVoice === "natural") naturalVoice.load(getSettings().aiVoice);
-            }}
-          />
+          {possible && (
+            <Choice<GuideVoice>
+              value={s.guideVoice}
+              options={[
+                { key: "natural", label: mb ? `Natural · ↓ ${mb} MB` : "Natural" },
+                { key: "browser", label: "Browser's voice" },
+              ]}
+              onPick={(guideVoice) => {
+                // (chosen again, after it gave way: it is tried again)
+                if (guideVoice === "natural") naturalVoice.again();
+                setSettings({ guideVoice });
+              }}
+            />
+          )}
           <p>{voiceNote}</p>
-          {s.guideVoice === "natural" && (
+          {possible && s.guideVoice === "natural" && (
             <>
               <p className={styles.voiceKind}>Pocket · very natural, made on this device, about {POCKET_MB} MB once</p>
               <div className={styles.seg}>
@@ -208,9 +221,20 @@ export function SettingsPanel({ onClose, touch }: { onClose: (relock: boolean) =
                   </button>
                 ))}
               </div>
+              <label className={styles.lock}>
+                <input
+                  type="checkbox"
+                  checked={s.naturalLock}
+                  onChange={(e) => setSettings({ naturalLock: e.target.checked })}
+                />
+                <span>
+                  Always the natural voice
+                  <small>Even when it has trouble here, the browser's voice never takes its place.</small>
+                </span>
+              </label>
             </>
           )}
-          {voices.length > 0 && s.guideVoice !== "natural" && (
+          {voices.length > 0 && (s.guideVoice !== "natural" || !possible) && (
             <select
               className={styles.voiceSelect}
               value={s.browserVoice}

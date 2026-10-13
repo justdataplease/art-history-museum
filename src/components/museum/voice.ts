@@ -1,35 +1,46 @@
 // The audio guide's voices. Two kinds, one interface (speak lines, one at a time, with the line being read):
+// - the natural voice, the guide's by default wherever this device can run it (naturalPossible): Pocket (Kyutai's
+//   Pocket TTS, public/voice/pocket-worker.js and pocket-core.js), a neural text-to-speech model, very natural, run
+//   in a worker on this device's processor, downloaded once (about 120 MB, the browser keeps it) and only when the
+//   guide first reads with it, never as the gallery opens. Four voices, Alba first. It works hard (here 0.4 s for a
+//   second of speech, and about 300 MB of memory), so it is timed as it reads. Only a serious problem that lasts
+//   (TROUBLE_MS) hands the guide to the browser's voice, for the rest of this visit (never remembered): it will not
+//   load (it is tried again every RETRY_MS), or it makes speech slower than it is heard. Locked (Settings: always the
+//   natural voice), it never gives way: it says it is having trouble. It has no speed control: it speaks at its own
+//   pace, whatever the guide's speed;
 // - the browser's own voice (Web Speech API), the most natural of those it offers: Edge's "Natural" voices,
 //   Safari's Premium and Enhanced ones, Android's network (neural) voices, Google's, never the novelty voices.
-//   The guide's voice unless the visitor chooses Pocket;
-// - Pocket (Kyutai's Pocket TTS, public/voice/pocket-worker.js and pocket-core.js): a neural text-to-speech model,
-//   very natural, run in a worker on this device's processor, downloaded once (about 120 MB, the browser keeps it)
-//   and only when the visitor chooses one of its four voices (Settings → Audio guide → Natural), never by itself.
-//   It works hard (here 0.4 s for a second of speech, and about 300 MB of memory), so it is timed as it reads: where
-//   it cannot keep ahead, the browser's voice reads (remembered on this device). It has no speed control: it speaks
-//   at its own pace, whatever the guide's speed.
 // Sentences are made one at a time, the one about to be heard first, then the next, and the guide asks for the
 // first sentence of the painting the visitor is turning to before it starts (prefetch). A long sentence is made in
 // pieces at its commas, so the voice starts sooner. The browser's voice reads at the guide's speed (settings.ts
 // guideSpeed).
 
-export type NaturalState = "idle" | "loading" | "ready" | "slow" | "error";
+/** idle: nothing loaded; loading: downloading and warming up (tried again after a failure, `trouble` "retrying");
+ *  ready: reads (`trouble` "straining": too slow for a while, but locked); stuck: would not load for TROUBLE_MS,
+ *  locked, so nothing reads (the next reading tries again); slow and failed: it gave way to the browser's voice for
+ *  this visit. */
+export type NaturalState = "idle" | "loading" | "ready" | "stuck" | "slow" | "failed";
+export type NaturalTrouble = "retrying" | "straining" | null;
 
 export interface NaturalVoiceInfo {
   id: string;
+  /** As on the guide's switch. */
+  name: string;
   label: string;
 }
 
 /** Pocket's English voices: Alba, a Scottish reader; Jane, George and Michael, British speakers of the VCTK corpus
  *  (their ids are its package's voices/<id>.bin). Natural starts with the first. */
 export const NATURAL_VOICES: NaturalVoiceInfo[] = [
-  { id: "alba", label: "Alba (Scottish)" },
-  { id: "jane", label: "Jane (British)" },
-  { id: "george", label: "George (British)" },
-  { id: "michael", label: "Michael (British)" },
+  { id: "alba", name: "Alba", label: "Alba (Scottish)" },
+  { id: "jane", name: "Jane", label: "Jane (British)" },
+  { id: "george", name: "George", label: "George (British)" },
+  { id: "michael", name: "Michael", label: "Michael (British)" },
 ];
 /** Pocket's download, MB: its package, a voice and the runtime. */
 export const POCKET_MB = 120;
+/** A second voice's download, MB, the model being here already (its file is 3 to 3.7 MB). */
+const VOICE_MB = 4;
 /** What the download is counted against until its files have all announced themselves (the worker counts its whole
  *  download from the first file, its package's list in hand: here only the least it takes, a voice's few MB when the
  *  model is in already). */
@@ -39,18 +50,20 @@ const WORKER = "/voice/pocket-worker.js";
 /** The breath between two sentences, and between two pieces of one, seconds. */
 const BREATH = 0.28;
 const JOIN = 0.05;
-/** Keeping up: seconds of work per second of speech, over Pocket's first sentences (on the processor, it need only
- *  keep ahead). */
-const TOO_SLOW = 0.9;
-const JUDGE_AFTER = 3;
+/** Too slow: more seconds of work than of speech, on a piece (it then falls behind the reading). */
+const TOO_SLOW = 1;
+/** How long a problem lasts before the browser's voice takes over (unless locked), ms: failing to load, tried again
+ *  every RETRY_MS; or too slow, piece after piece (the work of the slow pieces in a row, so the time between two
+ *  readings does not count; a piece in time starts it again). */
+const TROUBLE_MS = 60_000;
+const RETRY_MS = 4_000;
 /** Sentences kept, made (replays and the painting turned back to cost nothing). */
 const KEEP = 60;
 
-/** Pocket too slow on this device ({pocket: true}). */
-const SLOW_KEY = "timeline-museum:voice-too-slow";
 /** Where the model is kept (the worker's cache, keyed by the file's URL). */
 const POCKET_CACHE = "museum-voice-pocket";
 const POCKET_FILE = /\/flow_lm_main\.onnx$/;
+const POCKET_VOICE = /\/voices\/(\w+)\.bin$/;
 
 export interface Speaking {
   stop(): void;
@@ -61,6 +74,18 @@ export interface SpeakOptions {
   speed: number;
   onLine: (text: string) => void;
   onEnd: () => void;
+  /** The natural voice went (it gave way, or another of its voices was chosen) with these lines still to read,
+   *  from the one it was on. Without it, the reading ends. */
+  onLost?: (rest: string[]) => void;
+}
+
+/** Whether this device can run the natural voice: a worker, WebAssembly, the Cache API (a secure page) and Web
+ *  Audio, and memory enough for its 300 MB beside the gallery (at least 4 GB, where the browser says). */
+export function naturalPossible(): boolean {
+  if (typeof window === "undefined" || typeof Worker !== "function" || typeof WebAssembly !== "object") return false;
+  if (!("caches" in window) || !window.isSecureContext || typeof AudioContext !== "function") return false;
+  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  return !(typeof memory === "number" && memory < 4);
 }
 
 export function voiceInfo(id: string): NaturalVoiceInfo | undefined {
@@ -105,14 +130,6 @@ export function pieces(line: string, first: boolean): string[] {
   return out.flatMap((p, i) => breakAt(p, max, first && i === 0 ? 45 : p.length / 2));
 }
 
-function readSlow(): boolean {
-  try {
-    return (JSON.parse(localStorage.getItem(SLOW_KEY) ?? "{}") as { pocket?: boolean }).pocket === true;
-  } catch {
-    return false;
-  }
-}
-
 // ------------------------------------------------------------------------------------------------ Pocket
 
 interface Job {
@@ -124,18 +141,26 @@ interface Job {
   reject: (e: Error) => void;
 }
 const AHEAD = 0;
+/** A piece that would not come (silence, or the model's error): the reading skips it. */
+const pieceError = (why: string) => Object.assign(new Error(why), { piece: true });
 
 class NaturalVoice {
   state: NaturalState = "idle";
+  /** What it is going through, while loading or reading (see NaturalState). */
+  trouble: NaturalTrouble = null;
   /** Download progress while loading, 0..1. */
   progress = 0;
   /** The voice loaded (or loading). */
   voice: string | null = null;
   /** Bumped when the model is found on (or put on) this device, so `onDevice` readers re-render. */
   devices = 0;
+  /** Never give way to the browser's voice (Settings: always the natural voice; or the browser has none). */
+  private locked = false;
   private worker: Worker | null = null;
   private wanted: string | null = null;
   private stored: boolean | null = null;
+  /** The voices whose files are on this device. */
+  private kept = new Set<string>();
   private asked = false;
   private ctx: AudioContext | null = null;
   private queue: Job[] = [];
@@ -143,7 +168,10 @@ class NaturalVoice {
   private sentAt = 0;
   private readings = 0;
   private made = new Map<string, Promise<AudioBuffer>>();
-  private timing = { work: 0, speech: 0, n: 0 };
+  /** Since when it has failed to load (0: it has not), and the work of the slow pieces in a row, ms. */
+  private failingSince = 0;
+  private slowFor = 0;
+  private retry: ReturnType<typeof setTimeout> | null = null;
   private listeners = new Set<() => void>();
 
   subscribe = (f: () => void) => {
@@ -154,6 +182,7 @@ class NaturalVoice {
     this.listeners.forEach((f) => f());
   }
   getState = () => this.state;
+  getTrouble = () => this.trouble;
   getProgress = () => this.progress;
   getDevices = () => this.devices;
 
@@ -164,14 +193,17 @@ class NaturalVoice {
       this.asked = true;
       void (async () => {
         try {
-          if (!("caches" in window) || !(await caches.has(POCKET_CACHE))) return false;
-          const keys = await (await caches.open(POCKET_CACHE)).keys();
-          return keys.some((r) => POCKET_FILE.test(r.url));
+          if (!("caches" in window) || !(await caches.has(POCKET_CACHE))) return [];
+          return (await (await caches.open(POCKET_CACHE)).keys()).map((r) => r.url);
         } catch {
-          return false;
+          return [];
         }
-      })().then((yes) => {
-        this.stored ||= yes;
+      })().then((urls) => {
+        this.stored ||= urls.some((u) => POCKET_FILE.test(u));
+        for (const u of urls) {
+          const m = POCKET_VOICE.exec(u);
+          if (m) this.kept.add(m[1]);
+        }
         this.devices++;
         this.emit();
       });
@@ -179,25 +211,47 @@ class NaturalVoice {
     return this.stored;
   }
 
-  /** Start downloading and warming the voice chosen (once; another Pocket voice replaces the one loaded, the model
-   *  staying). Where Pocket was too slow, nothing loads ("slow": the browser's voice reads). */
+  /** What reading with `id` would download, MB: the model and the voice, the voice alone, or nothing (0). Null until
+   *  the browser has answered. */
+  downloadMB(id: string): number | null {
+    const here = this.onDevice();
+    if (here === null) return null;
+    return !here ? POCKET_MB : this.kept.has(id) ? 0 : VOICE_MB;
+  }
+
+  /** Never give way (or again may). Locked after giving way: the natural voice reads again from the next reading. */
+  setLock(on: boolean) {
+    this.locked = on;
+    if (on && (this.state === "slow" || this.state === "failed")) this.set("idle");
+  }
+
+  /** The visitor chose the natural voice again: what made it give way (or stick) is forgotten. */
+  again() {
+    if (this.state === "slow" || this.state === "failed" || this.state === "stuck") this.set("idle");
+  }
+
+  /** Start downloading and warming the voice chosen, when a reading wants it (once; another Pocket voice replaces the
+   *  one loaded, the model staying). After giving way, nothing loads for the rest of the visit. */
   load(choice: string) {
-    // Settings and the guide ask together: once
-    if (this.wanted === choice && this.state !== "error") return;
+    // a reading and the voice's sample can ask together: once
+    if (this.wanted === choice && (this.state === "loading" || this.state === "ready")) return;
+    // (not a Pocket voice: settings.ts keeps only Pocket's, so it never reaches here)
+    if (this.state === "slow" || this.state === "failed" || !voiceInfo(choice)) return;
     this.wanted = choice;
-    const slow = readSlow();
-    // (not a Pocket voice: settings.ts gives a voice since removed back to the browser's, so it never reaches here)
-    if (slow || !voiceInfo(choice)) {
-      this.drop();
-      return this.set(slow ? "slow" : "idle");
-    }
+    this.failingSince = 0;
+    this.attempt();
+  }
+
+  private attempt() {
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = null;
     if (this.worker) this.reset();
     else this.start();
-    this.voice = choice;
+    this.voice = this.wanted;
     this.progress = 0;
-    this.timing = { work: 0, speech: 0, n: 0 };
+    this.slowFor = 0;
     this.set("loading");
-    this.worker!.postMessage({ type: "load", voice: choice });
+    this.worker!.postMessage({ type: "load", voice: this.wanted });
   }
 
   /** Resolves when the voice asked for last can read (false: none will). */
@@ -210,6 +264,19 @@ class NaturalVoice {
         resolve(this.state === "ready");
       });
     });
+  }
+
+  /** The worker gone and nothing loading: memory back to the page (the browser's voice chosen, or the guide off).
+   *  Having given way, it stays so for the visit. */
+  release() {
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = null;
+    this.drop();
+    this.wanted = null;
+    this.failingSince = 0;
+    this.slowFor = 0;
+    this.trouble = null;
+    this.set(this.state === "slow" || this.state === "failed" ? this.state : "idle");
   }
 
   private set(s: NaturalState) {
@@ -230,8 +297,11 @@ class NaturalVoice {
         // (a voice chosen while another was loading: only the last one counts)
         if (m.voice !== this.voice) return;
         this.progress = 1;
-        // the model is here now, for all four voices (see onDevice)
+        this.failingSince = 0;
+        this.trouble = null;
+        // the model is here now, for all four voices, and this voice (see onDevice)
         this.stored = true;
+        this.kept.add(m.voice);
         this.devices++;
         this.set("ready");
         this.pump();
@@ -241,26 +311,31 @@ class NaturalVoice {
         this.busy = null;
         const ms = performance.now() - this.sentAt;
         const samples = m.samples as Float32Array<ArrayBuffer>;
-        // a model that runs but says nothing (silence, or NaN): it gives way, as when too slow
+        // a model that runs but says nothing (silence, or NaN): the piece is skipped, and it counts as too slow
         let peak = 0;
         for (let i = 0; i < samples.length; i += 7) peak = Math.max(peak, Math.abs(samples[i]));
         if (!(peak > 1e-3)) {
-          job.reject(new Error("silent"));
+          job.reject(pieceError("silent"));
           this.made.delete(job.key);
-          return this.giveWay();
+          this.judge(ms, 0);
+        } else {
+          const buf = new AudioBuffer({ length: samples.length, sampleRate: m.sr });
+          buf.copyToChannel(samples, 0);
+          job.resolve(buf);
+          this.judge(ms, buf.duration);
         }
-        const buf = new AudioBuffer({ length: samples.length, sampleRate: m.sr });
-        buf.copyToChannel(samples, 0);
-        job.resolve(buf);
-        this.judge(ms, buf.duration);
         this.pump();
       } else if (m.type === "error") {
-        if (this.busy && this.state === "ready") {
-          this.busy.reject(new Error(m.error));
-          this.made.delete(this.busy.key);
-          this.busy = null;
-          this.pump();
-        } else this.fail();
+        // (loading has no id)
+        if (m.id == null) return this.fail();
+        // one piece would not come: skipped, and counted as too slow (one given up on already: nothing)
+        const job = this.busy;
+        if (!job) return;
+        this.busy = null;
+        job.reject(pieceError(m.error));
+        this.made.delete(job.key);
+        this.judge(performance.now() - this.sentAt, 0);
+        this.pump();
       }
     };
     w.onerror = () => {
@@ -268,27 +343,56 @@ class NaturalVoice {
     };
   }
 
+  /** It would not load: tried again in a few seconds, until it has failed for TROUBLE_MS; then the browser's voice
+   *  reads for this visit, or, locked, nothing (stuck: the next reading tries again). */
   private fail() {
     this.drop();
-    this.set("error");
+    const now = performance.now();
+    this.failingSince ||= now;
+    if (now - this.failingSince < TROUBLE_MS) {
+      // (still "loading" for those waiting; a worker lost while it read, too: the reading waits for it again)
+      this.trouble = "retrying";
+      this.set("loading");
+      this.retry = setTimeout(() => {
+        this.retry = null;
+        if (this.state === "loading" && this.wanted) this.attempt();
+      }, RETRY_MS);
+      return;
+    }
+    this.trouble = null;
+    this.failingSince = 0;
+    if (this.locked) this.set("stuck");
+    else this.giveWay("failed");
   }
 
-  /** The model's work against the speech it made, over its first sentences: too slow, and it gives way to the
-   *  browser's voice, remembered on this device. */
+  /** The model's work against the speech it made, piece by piece: slower than it is heard for TROUBLE_MS in a row,
+   *  and it gives way to the browser's voice for this visit (locked: it says it is straining). A piece in time
+   *  starts the count again; short ones (fixed costs) say nothing. */
   private judge(ms: number, seconds: number) {
-    const t = this.timing;
-    if (t.n >= JUDGE_AFTER || seconds < 0.8) return;
-    t.work += ms / 1000;
-    t.speech += seconds;
-    if (++t.n >= JUDGE_AFTER && t.work / t.speech > TOO_SLOW) this.giveWay();
+    if (seconds > 0 && seconds < 0.8) return;
+    if (seconds > 0 && ms / 1000 <= seconds * TOO_SLOW) {
+      this.slowFor = 0;
+      if (this.trouble) {
+        this.trouble = null;
+        this.emit();
+      }
+      return;
+    }
+    this.slowFor += ms;
+    if (this.slowFor < TROUBLE_MS) return;
+    if (!this.locked) return this.giveWay("slow");
+    if (this.trouble !== "straining") {
+      this.trouble = "straining";
+      this.emit();
+    }
   }
 
-  private giveWay() {
-    try {
-      localStorage.setItem(SLOW_KEY, JSON.stringify({ pocket: true }));
-    } catch {}
+  /** The browser's voice reads for the rest of this visit (not remembered); the worker goes, and its memory. */
+  private giveWay(why: "slow" | "failed") {
     this.drop();
-    this.set("slow");
+    this.trouble = null;
+    this.slowFor = 0;
+    this.set(why);
   }
 
   private reset() {
@@ -322,7 +426,7 @@ class NaturalVoice {
   }
 
   private synth(text: string, owner: number): Promise<AudioBuffer> {
-    // no voice to make it (it gave way, or failed): the reading ends, and the guide goes on with the browser's
+    // no voice to make it (it gave way, or is being tried again): the reading's onLost
     if (!this.worker || (this.state !== "ready" && this.state !== "loading")) return Promise.reject(new Error("no voice"));
     const key = `${this.voice}|${text}`;
     const had = this.made.get(key);
@@ -362,12 +466,14 @@ class NaturalVoice {
   }
 
   /** Read the lines in turn, at Pocket's own pace (`o.speed` is the browser's voice's); the next piece is made while
-   *  one is heard. */
+   *  one is heard. A piece that would not come is skipped; the voice gone, `o.onLost` has the lines left. */
   speak(lines: string[], o: SpeakOptions): Speaking {
     const me = ++this.readings;
     const ctx = this.audio();
     void ctx.resume();
-    const parts = lines.flatMap((line, i) => pieces(line, i === 0).map((text, j) => ({ text, line, first: j === 0 })));
+    const parts = lines.flatMap((line, i) =>
+      pieces(line, i === 0).map((text, j) => ({ text, line, at: i, first: j === 0 }))
+    );
     let stopped = false;
     let current: AudioBufferSourceNode | null = null;
     // each piece asked for once: what was made is kept by the reading, even if the voice gives way meanwhile
@@ -381,8 +487,11 @@ class NaturalVoice {
         const p = make(k)!;
         void make(k + 1)?.catch(() => {});
         buf = await p;
-      } catch {
-        return stopped ? undefined : o.onEnd();
+      } catch (e) {
+        if (stopped) return;
+        if ((e as { piece?: boolean }).piece) return play(k + 1);
+        // the voice went: the rest from the start of this sentence (another voice reads it, or this one again)
+        return o.onLost ? o.onLost(lines.slice(parts[k].at)) : o.onEnd();
       }
       if (stopped) return;
       const src = ctx.createBufferSource();
@@ -420,16 +529,17 @@ class NaturalVoice {
 export const naturalVoice = new NaturalVoice();
 
 // The guide's earlier AI voices are gone (Piper's light voice, about 75 MB, and Kokoro's studio voice, about
-// 330 MB): their files, kept by the browser in these caches, go too, and their too-slow verdicts. Nothing else on
-// this site uses either cache (Pocket's is POCKET_CACHE).
+// 330 MB): their files, kept by the browser in these caches, go too. Nothing else on this site uses either cache
+// (Pocket's is POCKET_CACHE). So does the too-slow verdict once remembered on this device: giving way now lasts a
+// visit.
 const GONE_CACHES = ["museum-voice", "transformers-cache"];
+const GONE_KEYS = ["timeline-museum:voice-too-slow"];
 if (typeof window !== "undefined") {
   try {
     if ("caches" in window) for (const name of GONE_CACHES) void caches.delete(name).catch(() => {});
   } catch {}
   try {
-    if (readSlow()) localStorage.setItem(SLOW_KEY, JSON.stringify({ pocket: true }));
-    else localStorage.removeItem(SLOW_KEY);
+    for (const key of GONE_KEYS) localStorage.removeItem(key);
   } catch {}
 }
 
@@ -487,6 +597,8 @@ export function pickBrowserVoice(uri: string): SpeechSynthesisVoice | null {
 export function speakBrowser(lines: string[], voice: SpeechSynthesisVoice | null, o: SpeakOptions): Speaking {
   const synth = window.speechSynthesis;
   let stopped = false;
+  // (paused, then cancelled for the other voice: Chrome would keep the next lines paused)
+  if (synth.paused) synth.resume();
   if (!lines.length) {
     o.onEnd();
     return { stop() {}, pause() {}, resume() {} };

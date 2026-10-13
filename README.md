@@ -47,9 +47,9 @@ you can visit, freely, without an account.
 On a computer, use **W A S D** to move (at a run; the settings have walking
 speeds) and the mouse to look, **Space** to jump, **C** to sit, **G** for the
 audio guide and **O** for the settings: speed, the canvas texture, the audio
-guide's voice (the browser's most natural one, or, if you choose it, one of
-Kyutai's Pocket voices run on your computer: a one-time download of about
-120 MB, heavy on a slower machine) and
+guide's voice (one of Kyutai's Pocket voices, run on your computer wherever it
+can run: a one-time download of about 120 MB when the guide first reads; or
+the browser's most natural one: a switch beside the guide's buttons) and
 reading speed, and hiding the controls (**H**).
 On a phone, use the left stick to walk and the right stick to look around.
 You can also drag to look or double-tap the floor to go there. Click or tap a painting to
