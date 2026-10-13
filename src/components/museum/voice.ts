@@ -3,11 +3,12 @@
 //   Pocket TTS, public/voice/pocket-worker.js and pocket-core.js), a neural text-to-speech model, very natural, run
 //   in a worker on this device's processor, downloaded once (about 120 MB, the browser keeps it) and only when the
 //   guide first reads with it, never as the gallery opens. Four voices, Alba first. It works hard (here 0.4 s for a
-//   second of speech, and about 300 MB of memory), so it is timed as it reads. Only a serious problem that lasts
-//   (TROUBLE_MS) hands the guide to the browser's voice, for the rest of this visit (never remembered): it will not
-//   load (it is tried again every RETRY_MS), or it makes speech slower than it is heard. Locked (Settings: always the
-//   natural voice), it never gives way: it says it is having trouble. It has no speed control: it speaks at its own
-//   pace, whatever the guide's speed;
+//   second of speech, and about 300 MB of memory), so it is timed as it reads, and rests when the guide has read
+//   nothing for REST_MS: the worker goes, with its memory, and the next reading loads it again from the browser's
+//   cache (here about 1 s more). Only a serious problem that lasts (TROUBLE_MS) hands the guide to the browser's
+//   voice, for the rest of this visit (never remembered): it will not load (it is tried again every RETRY_MS), or it
+//   makes speech slower than it is heard. Locked (Settings: always the natural voice), it never gives way: it says
+//   it is having trouble. It has no speed control: it speaks at its own pace, whatever the guide's speed;
 // - the browser's own voice (Web Speech API), the most natural of those it offers: Edge's "Natural" voices,
 //   Safari's Premium and Enhanced ones, Android's network (neural) voices, Google's, never the novelty voices.
 // Sentences are made one at a time, the one about to be heard first, then the next, and the guide asks for the
@@ -15,10 +16,10 @@
 // pieces at its commas, so the voice starts sooner. The browser's voice reads at the guide's speed (settings.ts
 // guideSpeed).
 
-/** idle: nothing loaded; loading: downloading and warming up (tried again after a failure, `trouble` "retrying");
- *  ready: reads (`trouble` "straining": too slow for a while, but locked); stuck: would not load for TROUBLE_MS,
- *  locked, so nothing reads (the next reading tries again); slow and failed: it gave way to the browser's voice for
- *  this visit. */
+/** idle: nothing loaded (or it rests); loading: downloading and warming up (tried again after a failure, `trouble`
+ *  "retrying"); ready: reads (`trouble` "straining": too slow for a while, but locked); stuck: would not load for
+ *  TROUBLE_MS, locked, so nothing reads (the next reading tries again); slow and failed: it gave way to the browser's
+ *  voice for this visit. */
 export type NaturalState = "idle" | "loading" | "ready" | "stuck" | "slow" | "failed";
 export type NaturalTrouble = "retrying" | "straining" | null;
 
@@ -59,6 +60,8 @@ const TROUBLE_MS = 60_000;
 const RETRY_MS = 4_000;
 /** Sentences kept, made (replays and the painting turned back to cost nothing). */
 const KEEP = 60;
+/** Nothing read, nor asked for, this long, ms: the worker goes, and its 300 MB, until the guide reads again. */
+const REST_MS = 120_000;
 
 /** Where the model is kept (the worker's cache, keyed by the file's URL). */
 const POCKET_CACHE = "museum-voice-pocket";
@@ -172,6 +175,11 @@ class NaturalVoice {
   private failingSince = 0;
   private slowFor = 0;
   private retry: ReturnType<typeof setTimeout> | null = null;
+  /** Readings begun and not yet over (one paused among them); the rest's timer; the slow pieces' count as it went
+   *  to rest (loaded again, it goes on from there: rest is no new start). */
+  private open = 0;
+  private resting: ReturnType<typeof setTimeout> | null = null;
+  private restSlow: number | null = null;
   private listeners = new Set<() => void>();
 
   subscribe = (f: () => void) => {
@@ -249,7 +257,8 @@ class NaturalVoice {
     else this.start();
     this.voice = this.wanted;
     this.progress = 0;
-    this.slowFor = 0;
+    this.slowFor = this.restSlow ?? 0;
+    this.restSlow = null;
     this.set("loading");
     this.worker!.postMessage({ type: "load", voice: this.wanted });
   }
@@ -275,8 +284,32 @@ class NaturalVoice {
     this.wanted = null;
     this.failingSince = 0;
     this.slowFor = 0;
+    this.restSlow = null;
     this.trouble = null;
     this.set(this.state === "slow" || this.state === "failed" ? this.state : "idle");
+  }
+
+  /** Something read or was asked for: the worker stays REST_MS more. */
+  private touch() {
+    if (this.resting) clearTimeout(this.resting);
+    this.resting = setTimeout(() => {
+      this.resting = null;
+      this.rest();
+    }, REST_MS);
+  }
+
+  /** Nothing read for REST_MS: the worker goes, and its memory, until the next reading loads it again (from the
+   *  browser's cache). Not trouble and not the visitor's choice: what would make it give way stands (its trouble,
+   *  the slow pieces' count). A reading open (paused, too) or a sentence being made keeps it. */
+  private rest() {
+    if (this.state !== "ready") return;
+    if (this.open || this.busy || this.queue.length) return this.touch();
+    this.restSlow = this.slowFor;
+    this.drop();
+    this.wanted = null;
+    // (an idle audio context still runs its thread; the next reading resumes it)
+    void this.ctx?.suspend();
+    this.set("idle");
   }
 
   private set(s: NaturalState) {
@@ -409,6 +442,8 @@ class NaturalVoice {
     this.worker?.terminate();
     this.worker = null;
     this.voice = null;
+    if (this.resting) clearTimeout(this.resting);
+    this.resting = null;
   }
 
   private audio(): AudioContext {
@@ -417,6 +452,7 @@ class NaturalVoice {
 
   /** One sentence at a time to the worker, the ones a reading is waiting for first. */
   private pump() {
+    this.touch();
     if (this.busy || this.state !== "ready" || !this.worker || !this.queue.length) return;
     const i = Math.max(0, this.queue.findIndex((j) => j.owner !== AHEAD));
     const job = this.queue.splice(i, 1)[0];
@@ -476,12 +512,24 @@ class NaturalVoice {
     );
     let stopped = false;
     let current: AudioBufferSourceNode | null = null;
+    // open until it ends, is stopped, or the voice goes: the worker does not rest meanwhile
+    this.open++;
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      this.open--;
+      this.touch();
+    };
     // each piece asked for once: what was made is kept by the reading, even if the voice gives way meanwhile
     const got: Promise<AudioBuffer>[] = [];
     const make = (k: number) => (k < parts.length ? (got[k] ??= this.synth(parts[k].text, me)) : null);
     const play = async (k: number) => {
       if (stopped) return;
-      if (k >= parts.length) return o.onEnd();
+      if (k >= parts.length) {
+        close();
+        return o.onEnd();
+      }
       let buf: AudioBuffer;
       try {
         const p = make(k)!;
@@ -490,6 +538,7 @@ class NaturalVoice {
       } catch (e) {
         if (stopped) return;
         if ((e as { piece?: boolean }).piece) return play(k + 1);
+        close();
         // the voice went: the rest from the start of this sentence (another voice reads it, or this one again)
         return o.onLost ? o.onLost(lines.slice(parts[k].at)) : o.onEnd();
       }
@@ -509,6 +558,7 @@ class NaturalVoice {
     return {
       stop: () => {
         stopped = true;
+        close();
         // (not what was asked for ahead: the guide stops one painting as it starts the next, made ahead)
         this.forget(me);
         if (current) {

@@ -323,6 +323,19 @@ function useStreamedTexture(
     return () => releaseTexture(shown.url);
   }, [shown]);
 
+  // A lost and restored context keeps no textures, and a painting's bitmap is closed once uploaded
+  // (exhibit-texture.ts): the one on show is let go and loaded anew.
+  const [restored, setRestored] = useState(0);
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const onRestored = () => {
+      setShown(null);
+      setRestored((n) => n + 1);
+    };
+    canvas.addEventListener("webglcontextrestored", onRestored);
+    return () => canvas.removeEventListener("webglcontextrestored", onRestored);
+  }, [gl]);
+
   useEffect(() => {
     if (!url) {
       // nothing wanted any more: drop (and so release) what is on show
@@ -360,6 +373,7 @@ function useStreamedTexture(
         maxSize: gl.capabilities.maxTextureSize,
         // the renderer's best (canvases are mostly seen at an angle down the walls), less in the fast graphics tier
         anisotropy: Math.min(currentQuality().anisotropy, gl.capabilities.getMaxAnisotropy()),
+        renderer: gl,
       },
       () => {
         // retrying after a transient failure: report it, the loader keeps at it
@@ -376,7 +390,7 @@ function useStreamedTexture(
       cancelUpload?.();
       if (!owned) releaseTexture(url);
     };
-  }, [url, track, priority, gl, invalidate, epoch]);
+  }, [url, track, priority, gl, invalidate, epoch, restored]);
 
   return url && shown ? shown.tex : null;
 }

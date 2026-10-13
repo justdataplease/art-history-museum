@@ -8,8 +8,14 @@
 // - Uploads are staggered: one gl.initTexture per animation frame, so twelve
 //   paintings arriving together don't stall a single frame.
 // - Ref-counted cache with a short release delay: StrictMode's double effects
-//   and quick back-navigation reuse the decoded image; unused textures are
-//   disposed (and their bitmaps closed) shortly after the last user leaves.
+//   and quick back-navigation reuse the texture; unused textures are disposed
+//   shortly after the last user leaves.
+// - A bitmap is closed once it has been uploaded (three's onUpdate): the GPU's
+//   copy is the only one kept, not the decoded image as well (as large again,
+//   in the page's memory). Such a texture cannot be uploaded again, so it is
+//   reused only by a renderer that still holds it; anywhere else (another
+//   gallery's renderer, its GPU copy freed, a lost and restored context:
+//   PaintingExhibit) it is loaded anew, from the browser's cache.
 // - Transient failures (HTTP 429 / 5xx, network errors: Wikimedia answers
 //   bursts with 429s) are retried with exponential backoff and jitter,
 //   honouring Retry-After when the response exposes it: MAX_ATTEMPTS over
@@ -29,6 +35,11 @@ interface Entry {
   promise: Promise<THREE.Texture>;
   texture: THREE.Texture | null;
   bitmap: ImageBitmap | null;
+  /** The bitmap was closed after its upload: the GPU holds the only copy. */
+  closed: boolean;
+  /** The image's size (a closed bitmap reads 0 × 0). */
+  width: number;
+  height: number;
   timer: ReturnType<typeof setTimeout> | null;
   /** Aborts the fetch (and any backoff wait) while still loading. */
   abort: AbortController;
@@ -69,6 +80,8 @@ export interface LoadOptions {
   /** Longest side allowed (renderer maxTextureSize); larger images are downscaled while decoding. */
   maxSize?: number;
   anisotropy?: number;
+  /** The renderer it is for: a texture whose bitmap is closed is reused only where this still holds it. */
+  renderer?: THREE.WebGLRenderer;
 }
 
 /** A response that was not ok, with the server's Retry-After (ms) when readable. */
@@ -269,7 +282,12 @@ async function loadWithRetry(
  * so a caller waiting on it can stop waiting while the retries go on.
  */
 export function acquireTexture(url: string, opts: LoadOptions = {}, onStall?: () => void): Promise<THREE.Texture> {
-  const existing = entries.get(url);
+  let existing = entries.get(url);
+  if (existing?.closed && existing.refs === 0 && opts.renderer && !opts.renderer.properties.has(existing.texture!)) {
+    // nothing left to upload it from: loaded anew
+    evict(url, existing);
+    existing = undefined;
+  }
   if (existing) {
     existing.refs++;
     if (existing.timer) {
@@ -290,6 +308,9 @@ export function acquireTexture(url: string, opts: LoadOptions = {}, onStall?: ()
     promise: null as unknown as Promise<THREE.Texture>,
     texture: null,
     bitmap: null,
+    closed: false,
+    width: 0,
+    height: 0,
     timer: null,
     abort: new AbortController(),
     loading: true,
@@ -313,6 +334,20 @@ export function acquireTexture(url: string, opts: LoadOptions = {}, onStall?: ()
       const tex = makeTexture(src, opts.anisotropy ?? 8);
       tex.name = url;
       entry.texture = tex;
+      entry.width = src.width;
+      entry.height = src.height;
+      const bmp = entry.bitmap;
+      if (bmp) {
+        // uploaded (three calls this once it is): the bitmap goes, the GPU's copy stays
+        tex.onUpdate = () => {
+          tex.onUpdate = null;
+          bmp.close();
+          if (entry.bitmap === bmp) entry.bitmap = null;
+          entry.closed = true;
+          // were three to upload it again, it would leave it blank rather than read a closed bitmap
+          tex.source.dataReady = false;
+        };
+      }
       if (track) manager.itemEnd(url);
       if (entries.get(url) !== entry) {
         // Everyone let go (and the entry was evicted) while it was loading.
@@ -372,19 +407,27 @@ function scheduleRelease(url: string, entry: Entry) {
   entry.timer = setTimeout(() => {
     entry.timer = null;
     if (entry.refs > 0 || entries.get(url) !== entry) return;
-    entries.delete(url);
-    entry.texture?.dispose();
-    entry.bitmap?.close();
-    entry.texture = null;
-    entry.bitmap = null;
+    evict(url, entry);
   }, RELEASE_DELAY_MS);
+}
+
+/** Out of the cache for good, nobody holding it: its GPU copy and its bitmap go. */
+function evict(url: string, entry: Entry) {
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = null;
+  if (entries.get(url) === entry) entries.delete(url);
+  entry.texture?.dispose();
+  entry.bitmap?.close();
+  entry.texture = null;
+  entry.bitmap = null;
 }
 
 /**
  * Free the cached paintings' GPU copies once no exhibit is left (exhibit-shared.ts):
  * each renderer's dispose listener goes with them, so a texture reused by the
- * next gallery doesn't pin the last one's renderer. Bitmaps stay open and the
- * release timers run as before; a texture picked up again just uploads anew.
+ * next gallery doesn't pin the last one's renderer. The release timers run as
+ * before; a texture picked up again uploads anew from its bitmap, or, its
+ * bitmap closed, is loaded anew (acquireTexture).
  */
 export function disposeCachedTextures(): void {
   for (const e of entries.values()) if (e.refs === 0) e.texture?.dispose();
@@ -399,11 +442,10 @@ export function textureStats(): { textures: number; held: number; mb: number; lo
   let loading = 0;
   for (const e of entries.values()) {
     if (e.loading) loading++;
-    const img = e.texture?.image as { width?: number; height?: number } | undefined;
-    if (!img?.width || !img.height) continue;
+    if (!e.texture || !e.width || !e.height) continue;
     textures++;
     if (e.refs > 0) held++;
-    bytes += img.width * img.height * 4 * (4 / 3);
+    bytes += e.width * e.height * 4 * (4 / 3);
   }
   return { textures, held, mb: +(bytes / 1e6).toFixed(1), loading, backoff: backoff.size };
 }

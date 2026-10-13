@@ -143,10 +143,46 @@ function arcPoint(u: number, c: THREE.Vector2): THREE.Vector2 {
   return new THREE.Vector2(a * a * 0.62 + 2 * a * u * -0.1 + u * u * -0.58 + c.x, a * a * 0.58 + 2 * a * u * 0.32 + u * u * -0.52 + c.y);
 }
 
+// A work's bitmap is closed once it is on the GPU (exhibit-texture.ts): its
+// pixels are read back from there, drawn small into a target (the work's
+// bottom on row 0, as its pre-flipped bitmap would draw). Rare (once per work,
+// kept below), so nothing is kept for it: kept, it would hold the renderer.
+const isClosed = (img: unknown) => typeof ImageBitmap !== "undefined" && img instanceof ImageBitmap && !img.width;
+function readBack(renderer: THREE.WebGLRenderer, tex: THREE.Texture, w: number, h: number): Uint8ClampedArray | null {
+  const material = new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    uniforms: { map: { value: tex } },
+    vertexShader: "in vec3 position; in vec2 uv; out vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    // (sampled linear from the sRGB texture, stored as sRGB again by the target: its own bytes)
+    fragmentShader: "precision highp float; uniform sampler2D map; in vec2 vUv; out vec4 color; void main() { color = texture(map, vUv); }",
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.NoBlending,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+  quad.frustumCulled = false;
+  const rt = new THREE.WebGLRenderTarget(w, h, { colorSpace: THREE.SRGBColorSpace });
+  const prev = renderer.getRenderTarget();
+  try {
+    renderer.setRenderTarget(rt);
+    renderer.render(new THREE.Scene().add(quad), new THREE.Camera());
+    const px = new Uint8Array(w * h * 4);
+    renderer.readRenderTargetPixels(rt, 0, 0, w, h, px);
+    return new Uint8ClampedArray(px.buffer);
+  } catch {
+    return null;
+  } finally {
+    renderer.setRenderTarget(prev);
+    rt.dispose();
+    quad.geometry.dispose();
+    material.dispose();
+  }
+}
+
 // the work's own brushwork as a relief proxy: local contrast of its image
 // (crests of impasto photograph light), at half the overlay's resolution
 const grains = new WeakMap<object, Grain | null>();
-function grainOf(tex: THREE.Texture | null | undefined, w: number, h: number): Grain | null {
+function grainOf(renderer: THREE.WebGLRenderer, tex: THREE.Texture | null | undefined, w: number, h: number): Grain | null {
   const img = tex?.image as CanvasImageSource | undefined;
   if (!tex || !img || typeof document === "undefined") return null;
   const gw = Math.max(8, Math.ceil(w / 2));
@@ -155,17 +191,26 @@ function grainOf(tex: THREE.Texture | null | undefined, w: number, h: number): G
   if (hit !== undefined && (!hit || (hit.w === gw && hit.h === gh))) return hit;
   let out: Grain | null = null;
   try {
-    const c = document.createElement("canvas");
-    c.width = gw;
-    c.height = gh;
-    const g = c.getContext("2d", { willReadFrequently: true })!;
-    // a pre-flipped ImageBitmap (the exhibits decode with flipY) has the work's bottom on row 0
-    if (typeof ImageBitmap !== "undefined" && img instanceof ImageBitmap && !tex.flipY) {
-      g.translate(0, gh);
-      g.scale(1, -1);
+    let px: Uint8ClampedArray;
+    if (isClosed(img)) {
+      const back = readBack(renderer, tex, gw, gh);
+      if (!back) throw new Error("unreadable");
+      // the work's top on row 0, as drawn below
+      px = new Uint8ClampedArray(back.length);
+      for (let y = 0; y < gh; y++) px.set(back.subarray((gh - 1 - y) * gw * 4, (gh - y) * gw * 4), y * gw * 4);
+    } else {
+      const c = document.createElement("canvas");
+      c.width = gw;
+      c.height = gh;
+      const g = c.getContext("2d", { willReadFrequently: true })!;
+      // a pre-flipped ImageBitmap (the exhibits decode with flipY) has the work's bottom on row 0
+      if (typeof ImageBitmap !== "undefined" && img instanceof ImageBitmap && !tex.flipY) {
+        g.translate(0, gh);
+        g.scale(1, -1);
+      }
+      g.drawImage(img, 0, 0, gw, gh);
+      px = g.getImageData(0, 0, gw, gh).data;
     }
-    g.drawImage(img, 0, 0, gw, gh);
-    const px = g.getImageData(0, 0, gw, gh).data;
     const n = gw * gh;
     const lum = new Float32Array(n);
     for (let i = 0; i < n; i++) lum[i] = (0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2]) / 255;
@@ -201,10 +246,15 @@ function grainOf(tex: THREE.Texture | null | undefined, w: number, h: number): G
 
 // a small, cached thumbnail of each painting image for sampling colours
 const thumbs = new WeakMap<object, { data: Uint8ClampedArray; n: number; flipped: boolean } | null>();
-function sampleMap(tex: THREE.Texture | null | undefined, u: number, v: number): THREE.Color | null {
+function sampleMap(renderer: THREE.WebGLRenderer, tex: THREE.Texture | null | undefined, u: number, v: number): THREE.Color | null {
   const img = tex?.image as (CanvasImageSource & { width?: number }) | undefined;
   if (!tex || !img || typeof document === "undefined") return null;
   let t = thumbs.get(img as object);
+  if (t === undefined && isClosed(img)) {
+    const back = readBack(renderer, tex, 48, 48);
+    t = back && { data: back, n: 48, flipped: true };
+    thumbs.set(img as object, t);
+  }
   if (t === undefined) {
     try {
       const n = 48;
@@ -989,7 +1039,7 @@ export class FxEngine {
     b.on = e;
     if (patch) b.patch = patch;
     if (!b.stroke) {
-      const grain = e ? grainOf((e.mesh.material as THREE.MeshStandardMaterial).map, s.w, s.h) : null;
+      const grain = e ? grainOf(this.o.renderer, (e.mesh.material as THREE.MeshStandardMaterial).map, s.w, s.h) : null;
       const spec = { color: b.color, width: b.width, reach: b.reach, seed: b.seed++ };
       b.stroke = new BrushStroke(s, at.sx, at.sy, spec, b.load, grain, { clip: at.clip, from });
       // start where the last stroke stopped (as seen: a frame stands proud of
@@ -1600,7 +1650,7 @@ export class FxEngine {
       const colors = [new THREE.Color().setRGB(0.62, 0.55, 0.42)];
       const map = (first.canvas.mesh.material as THREE.MeshStandardMaterial).map;
       if (mid.uv) {
-        const c = sampleMap(map, mid.uv.x, mid.uv.y);
+        const c = sampleMap(this.o.renderer, map, mid.uv.x, mid.uv.y);
         if (c) colors.push(c, c);
       }
       this.particles.flakes(mid.point, frame.normal, seed, colors);
