@@ -109,7 +109,7 @@ const TimelineHeader = memo(function TimelineHeader({
           </Link>
         </nav>
       </div>
-      <FilterDropdown periods={periods} artists={artists} filter={filter} onChange={onFilter} hidden={inert} showAll={showAll} onCollection={onCollection} />
+      <FilterDropdown periods={periods} artists={artists} filter={filter} onChange={onFilter} hidden={inert} />
     </header>
   );
 });
@@ -707,6 +707,27 @@ export function Timeline({ data }: { data: TimelineData }) {
     flyTo({ ...tRef.current, y: 0 }, 0);
   }, [showAll, flyTo]);
 
+  // Explore lists every artist, whatever the wall shows: one the wall does not hang yet (Featured) turns it to
+  // All artists, and once they are on it, it flies to them.
+  const [pending, setPending] = useState<Filter>(null);
+  useEffect(() => {
+    if (pending?.type === "artist" && meta.has(pending.slug)) {
+      setPending(null);
+      onFilter(pending);
+    }
+  }, [pending, meta, onFilter]);
+  const onExplore = useCallback(
+    (f: Filter) => {
+      if (f?.type === "artist" && !meta.has(f.slug)) {
+        onCollection(true);
+        setPending(f);
+        return;
+      }
+      onFilter(f);
+    },
+    [meta, onCollection, onFilter]
+  );
+
   const closeCard = useCallback(() => {
     setSelected(null);
     const el = openerRef.current;
@@ -832,9 +853,9 @@ export function Timeline({ data }: { data: TimelineData }) {
         view={view}
         onView={setView}
         periods={periods}
-        artists={artists}
+        artists={data.artists}
         filter={filter}
-        onFilter={onFilter}
+        onFilter={onExplore}
         inert={!!selected}
         showAll={showAll}
         onCollection={onCollection}

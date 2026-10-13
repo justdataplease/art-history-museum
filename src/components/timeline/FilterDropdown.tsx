@@ -82,16 +82,12 @@ export const FilterDropdown = memo(function FilterDropdown({
   filter,
   onChange,
   hidden,
-  showAll,
-  onCollection,
 }: {
   periods: Period[];
   artists: Artist[];
   filter: Filter;
   onChange: (f: Filter) => void;
   hidden: boolean;
-  showAll: boolean;
-  onCollection: (all: boolean) => void;
 }) {
   const [activePanel, setActivePanel] = useState<"explore" | "welcome" | null>(null);
   const open = activePanel === "explore";
@@ -259,7 +255,7 @@ export const FilterDropdown = memo(function FilterDropdown({
       countries: [...countries.entries()].sort((a, b) => a[0].localeCompare(b[0])),
     };
   }, [artists]);
-  // a pick the listed artists no longer offer (Featured after All) lapses
+  // a pick the listed artists do not offer lapses
   const continent = pickedContinent && places.continents.includes(pickedContinent) ? pickedContinent : null;
   const country = pickedCountry && places.countries.some(([k]) => k === pickedCountry) ? pickedCountry : null;
 
@@ -356,7 +352,7 @@ export const FilterDropdown = memo(function FilterDropdown({
                 id={searchId}
                 type="search"
                 aria-label="Find an artist"
-                placeholder={showAll ? `Find one of ${artists.length} artists` : "Find a featured artist"}
+                placeholder={`Find one of ${artists.length} artists`}
                 autoComplete="off"
                 spellCheck={false}
                 value={query}
@@ -514,21 +510,7 @@ export const FilterDropdown = memo(function FilterDropdown({
                 ))}
             {tab === "artists" && !shown.length && (
               <p className="filter-empty">
-                {!showAll ? (
-                  <>
-                    No match in Featured{place ? ` from ${place}` : ""}.{" "}
-                    <button
-                      type="button"
-                      className="filter-all"
-                      onClick={() => {
-                        onCollection(true);
-                        document.getElementById(searchId)?.focus();
-                      }}
-                    >
-                      Search all artists
-                    </button>
-                  </>
-                ) : place ? (
+                {place ? (
                   <>
                     No artist {q ? "by that name " : ""}from {place}.{" "}
                     <button type="button" className="filter-all" onClick={() => pickPlace(null, null)}>
