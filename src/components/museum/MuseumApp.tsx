@@ -654,17 +654,22 @@ export function MuseumApp({
         : undefined,
     [layout.exits, neighbours, leave]
   );
+  // the end of a floor with more above (a gallery of more than MAX_ROOMS_PER_FLOOR rooms): the gallery goes on
+  // upstairs, so E takes the elevator up before any door to another artist
+  const onwards = layout.elevator ? up : null;
   useEffect(() => {
     if (!atEnd || !walkEnabled) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
       if ((e.target as Element | null)?.closest("input, textarea, select, [contenteditable]")) return;
-      if (e.code === "KeyE") leave("next");
-      else if (e.code === "KeyQ") leave("prev");
+      if (e.code === "KeyE") {
+        if (onwards) void ride("up");
+        else leave("next");
+      } else if (e.code === "KeyQ") leave("prev");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [atEnd, walkEnabled, leave]);
+  }, [atEnd, walkEnabled, leave, onwards, ride]);
 
   const lift = useMemo(
     () =>
@@ -1047,7 +1052,20 @@ export function MuseumApp({
 
       {atEnd && walkEnabled && !leaving && (
         <div className={styles.lift} role="group" aria-label="The galleries beyond">
-          <span className={styles.liftTitle}>End of the gallery · walk through a door</span>
+          <span className={styles.liftTitle}>
+            {onwards
+              ? `End of floor ${floors[floorNo - 1]?.number ?? floorNo} · the gallery goes on upstairs`
+              : "End of the gallery · walk through a door"}
+          </span>
+          {onwards && (
+            <button type="button" className={styles.elevator} onClick={() => void ride("up")} disabled={riding}>
+              <span className={styles.elevatorArrow}>▲</span>
+              <span>
+                {onwards.label}
+                <small>{onwards.works} works · by the elevator{touch ? "" : " · press E"}</small>
+              </span>
+            </button>
+          )}
           {(["next", "prev"] as const).map((side) => {
             const l = side === "prev" ? neighbours!.prev : neighbours!.next;
             return (
@@ -1057,7 +1075,7 @@ export function MuseumApp({
                   {l ? l.name : "The timeline"}
                   <small>
                     {l ? (l.why ? `Related · ${l.why}` : doorLabel(side, l)) : "Back to"}
-                    {touch ? "" : side === "prev" ? " · press Q" : " · press E"}
+                    {touch ? "" : side === "prev" ? " · press Q" : onwards ? "" : " · press E"}
                   </small>
                 </span>
               </button>
