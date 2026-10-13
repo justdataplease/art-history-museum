@@ -12,7 +12,8 @@
 // voice. A switch beside the guide's buttons chooses between the two (remembered on this device; Settings too),
 // and a reading switched goes on from the same sentence. After a serious problem that lasts, the natural voice
 // gives way to the browser's for the visit, with a note why (unless locked in Settings). The natural voice starts
-// on a painting's first sentence as soon as the visitor stops at it, before the guide begins. All at the visitor's
+// on a painting's first sentence as soon as the visitor stops at it, before the guide begins; gone to rest (nothing
+// read for two minutes, voice.ts), it loads again as the visitor heads for a work it reads. All at the visitor's
 // speed (the 1× button, or Settings), but the natural voice, which keeps its own pace.
 // The sentence being read shows as a subtitle; the gallery music steps back while the guide speaks.
 //
@@ -44,6 +45,8 @@ const NEAR = 2.8;
 const FACING = 0.5; // cosine: within about 60° of the view direction
 const DWELL_MS = 900;
 const CHECK_MS = 300;
+/** Heading for a work the guide reads within this (m), a natural voice gone to rest loads again (voice.ts wake). */
+const WAKE_NEAR = 7;
 /** Yearly Wikipedia pageviews of a work's article from which it counts as famous (about 2,000 works). */
 const FAMOUS_VIEWS = 5000;
 
@@ -381,10 +384,11 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
   );
 
   /** The natural voice makes a work's first sentence while the visitor is stopping at it (it reads it a moment
-   *  later), once it is here. */
+   *  later), once it is here (loading again after a rest: as soon as it is). */
   const prepare = useCallback(
     async (pl: Placement) => {
-      if (naturalVoice.state !== "ready" || voiceKind(getSettings().guideVoice, naturalVoice.state) !== "natural") return;
+      if (voiceKind(getSettings().guideVoice, naturalVoice.state) !== "natural") return;
+      if (!(naturalVoice.state === "loading" ? await naturalVoice.whenReady() : naturalVoice.state === "ready")) return;
       const s = await scriptOf(pl);
       if (s && !s.work.audio) naturalVoice.prefetch(toSentences(s.work.lines));
     },
@@ -431,20 +435,31 @@ export function AudioGuide({ placements, cameraRef, artists, gallerySlug, active
     let candidate: string | null = null;
     let since = 0;
     let prepared = false;
+    let was: [number, number] | null = null;
     const iv = setInterval(() => {
       const cam = cameraRef.current;
       if (!cam) return;
+      // walking (not standing about, which would only wake the voice to rest again)
+      const moving = !!was && Math.hypot(cam.position.x - was[0], cam.position.z - was[1]) > 0.3;
+      was = [cam.position.x, cam.position.z];
       cam.getWorldDirection(dir);
       const fl = Math.hypot(dir.x, dir.z) || 1;
       let best: Placement | null = null;
       let bestD = NEAR;
+      let ahead = false;
       for (const pl of placements) {
         const dx = pl.position[0] - cam.position.x, dz = pl.position[2] - cam.position.z;
         const d = Math.hypot(dx, dz);
-        if (d >= bestD || d < 0.01) continue;
+        if (d >= WAKE_NEAR || d < 0.01) continue;
         if ((dx * dir.x + dz * dir.z) / (d * fl) < FACING) continue;
+        if (mode !== "famous" || famous.has(pl.painting.slug)) ahead = true;
+        if (d >= bestD) continue;
         best = pl;
         bestD = d;
+      }
+      // heading for a work it reads: the natural voice, gone to rest, loads again (back as the visitor gets there)
+      if (ahead && moving && naturalVoice.state === "idle" && voiceKind(getSettings().guideVoice, "idle") === "natural") {
+        naturalVoice.wake(getSettings().aiVoice);
       }
       // in "famous works", only the famous ones start it
       if (best && mode === "famous" && !famous.has(best.painting.slug)) best = null;

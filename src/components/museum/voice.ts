@@ -4,11 +4,12 @@
 //   in a worker on this device's processor, downloaded once (about 120 MB, the browser keeps it) and only when the
 //   guide first reads with it, never as the gallery opens. Four voices, Alba first. It works hard (here 0.4 s for a
 //   second of speech, and about 300 MB of memory), so it is timed as it reads, and rests when the guide has read
-//   nothing for REST_MS: the worker goes, with its memory, and the next reading loads it again from the browser's
-//   cache (here about 1 s more). Only a serious problem that lasts (TROUBLE_MS) hands the guide to the browser's
-//   voice, for the rest of this visit (never remembered): it will not load (it is tried again every RETRY_MS), or it
-//   makes speech slower than it is heard. Locked (Settings: always the natural voice), it never gives way: it says
-//   it is having trouble. It has no speed control: it speaks at its own pace, whatever the guide's speed;
+//   nothing for REST_MS: the worker goes, with its memory, and loads again from the browser's cache (here about
+//   1 s) as the visitor heads for a work the guide reads (wake). Only a serious problem that lasts (TROUBLE_MS)
+//   hands the guide to the browser's voice, for the rest of this visit (never remembered): it will not load (it is
+//   tried again every RETRY_MS), or it makes speech slower than it is heard. Locked (Settings: always the natural
+//   voice), it never gives way: it says it is having trouble. It has no speed control: it speaks at its own pace,
+//   whatever the guide's speed;
 // - the browser's own voice (Web Speech API), the most natural of those it offers: Edge's "Natural" voices,
 //   Safari's Premium and Enhanced ones, Android's network (neural) voices, Google's, never the novelty voices.
 // Sentences are made one at a time, the one about to be heard first, then the next, and the guide asks for the
@@ -248,6 +249,12 @@ class NaturalVoice {
     this.wanted = choice;
     this.failingSince = 0;
     this.attempt();
+  }
+
+  /** The visitor is heading for a work the guide will read: a worker gone to rest loads again now, so it is back as
+   *  they get there (a second or so), not only when the reading starts. Nothing else loads here. */
+  wake(choice: string) {
+    if (this.state === "idle" && this.restSlow !== null) this.load(choice);
   }
 
   private attempt() {
