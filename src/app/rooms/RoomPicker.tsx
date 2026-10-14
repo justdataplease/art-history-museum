@@ -5,7 +5,7 @@
 // hang and change it (add artists and paintings, leave works out, keep others, drag works to their places and
 // floors, drag the floors), walk it, save it, share the link. Everything is in the room's URL (/room?...,
 // src/lib/room-query.ts), so the link is the room; it records only what the visitor changed. Saved rooms are kept
-// in this browser ("My rooms"); the recreated museums (src/lib/museum-rooms.ts) are rooms made the same way.
+// in this browser and listed on My rooms (/my-rooms, beside the recreated museums).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -14,7 +14,6 @@ import {
   MAX_WORKS,
   hasFilters,
   parsePin,
-  parseSelection,
   pinText,
   reorderPlan,
   selectionQuery,
@@ -24,15 +23,12 @@ import {
   type Pin,
   type Selection,
 } from "@/lib/room-query";
-import { MUSEUM_ROOMS } from "@/lib/museum-rooms";
 import { GROUNDS, ROOM_STYLES, styleSwatch } from "@/components/museum/theme";
 import { findNames, nameEntry } from "@/components/timeline/artist-search";
 import { AddWorks, type ArtistOption, type FoundWork } from "./AddWorks";
 import { useDragSort, type DragPlace } from "./drag";
+import { readSaved, writeSaved } from "./saved";
 import styles from "./RoomPicker.module.css";
-
-/** The recreated museums shown (beta), from src/lib/museum-rooms.ts; the others' links (/museums/<slug>) still work. */
-const SHOWN_MUSEUMS = MUSEUM_ROOMS.filter((m) => m.slug === "national-gallery-of-greece" || m.slug === "louvre");
 
 interface Term {
   id: string;
@@ -58,11 +54,6 @@ interface Preview {
   /** As they hang; `plan`: the floor's place in the visitor's plan (0-based), null for an era's floor. */
   floors: { label: string; works: PreviewWork[]; plan: number | null }[];
 }
-interface SavedRoom {
-  title: string;
-  query: string;
-  savedAt: string;
-}
 interface Props {
   terms: Term[];
   nationalities: { name: string; works: number }[];
@@ -71,7 +62,6 @@ interface Props {
   initial: Selection;
 }
 
-const MY_ROOMS = "timeline-museum:my-rooms";
 const GROUPS: { key: string; label: string; kinds: string[]; hint: string }[] = [
   { key: "time", label: "Era or period", kinds: ["era", "tradition", "period"], hint: "Baroque, Ukiyo-e …" },
   { key: "movement", label: "Movement or style", kinds: ["movement", "umbrella", "historical-period"], hint: "Tenebrism, Fauvism …" },
@@ -94,19 +84,6 @@ const NEW_PLAN: FloorSpec[] = [
   { label: "Before 1800", from: null, to: 1799, style: null, wall: null, works: null, intro: null, who: [], ground: null, number: null },
   { label: "From 1800", from: 1800, to: null, style: null, wall: null, works: null, intro: null, who: [], ground: null, number: null },
 ];
-
-function readSaved(): SavedRoom[] {
-  try {
-    return JSON.parse(localStorage.getItem(MY_ROOMS) ?? "[]") as SavedRoom[];
-  } catch {
-    return [];
-  }
-}
-function writeSaved(rooms: SavedRoom[]) {
-  try {
-    localStorage.setItem(MY_ROOMS, JSON.stringify(rooms.slice(0, 60)));
-  } catch {}
-}
 
 /** "vincent-van-gogh/the-starry-night" as words, for a work whose title has not been seen yet. */
 const keyTitle = (key: string) => {
@@ -135,14 +112,11 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
   const [artistQuery, setArtistQuery] = useState("");
   const [museumQuery, setMuseumQuery] = useState("");
   const [titles, setTitles] = useState<Record<string, string>>({});
-  const [saved, setSaved] = useState<SavedRoom[]>([]);
   const nameRef = useRef<HTMLInputElement>(null);
   const byId = useMemo(() => new Map(terms.map((t) => [t.id, t])), [terms]);
   const artistBySlug = useMemo(() => new Map(artists.map((a) => [a.slug, a])), [artists]);
   const museumById = useMemo(() => new Map(museums.map((m) => [m.id, m])), [museums]);
   const query = selectionQuery(sel);
-
-  useEffect(() => setSaved(readSaved()), []);
 
   useEffect(() => {
     const ctl = new AbortController();
@@ -267,7 +241,6 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
     const room = { title: titleOf(sel), query, savedAt: new Date().toISOString() };
     const next = [room, ...readSaved().filter((r) => r.query !== query)];
     writeSaved(next);
-    setSaved(next);
   };
   const save = () => {
     if (!sel.title) {
@@ -288,15 +261,6 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
       setTimeout(() => setCopied(null), 2000);
     } catch {}
   };
-  const forget = (q: string) => {
-    const next = readSaved().filter((r) => r.query !== q);
-    writeSaved(next);
-    setSaved(next);
-  };
-  const load = (q: string) => {
-    setSel(parseSelection(Object.fromEntries(new URLSearchParams(q))));
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
   const years = (t: Term) => (t.start != null ? ` (${t.start}–${t.end ?? ""})` : "");
   const count = preview;
   const pinned = new Set(sel.include.map(workKey));
@@ -311,7 +275,10 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
   return (
     <main className={styles.page}>
       <header className={styles.head}>
-        <Link href="/" className={styles.back}>← Timeline</Link>
+        <nav className={styles.headLinks}>
+          <Link href="/" className={styles.back}>← Timeline</Link>
+          <Link href="/my-rooms" className={styles.back}>My rooms</Link>
+        </nav>
         <h1>Make a room</h1>
         <p>
           Hang your own room, the way a museum curator would: choose what hangs, design the room, leave out what
@@ -320,29 +287,6 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
           same room.
         </p>
       </header>
-
-      {SHOWN_MUSEUMS.length > 0 && (
-        <>
-          <h2 className={styles.section} id="museums">Recreate a museum (beta)</h2>
-          <p className={styles.note}>
-            Real museums made with these same tools: their works, their floors, their colours. Open one, or load it
-            here to change it.
-          </p>
-          <ul className={styles.museums}>
-            {SHOWN_MUSEUMS.map((m) => (
-              <li key={m.slug}>
-                <b>{m.name}</b>
-                <small>{m.city}</small>
-                <span>{m.note}</span>
-                <span className={styles.museumActions}>
-                  <Link href={`/room?${m.query}`} className={styles.enter}>Walk it</Link>
-                  <button type="button" onClick={() => load(m.query)}>Load it here</button>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
 
       <section className={styles.presets} aria-label="Ready-made rooms">
         {PRESETS.map((p) => (
@@ -669,26 +613,6 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
           </ul>
         </section>
       ))}
-
-      <h2 className={styles.section}>My rooms</h2>
-      {saved.length > 0 ? (
-        <>
-          <p className={styles.note}>Saved in this browser. The link is the room: copy it to share, or to open it elsewhere.</p>
-          <ul className={styles.saved}>
-            {saved.map((r) => (
-              <li key={r.query}>
-                <Link href={`/room?${r.query}`} className={styles.savedTitle}>{r.title}</Link>
-                <small>{new Date(r.savedAt).toLocaleDateString()}</small>
-                <button type="button" onClick={() => load(r.query)}>Edit</button>
-                <button type="button" onClick={() => copy(r.query, r.query)}>{copied === r.query ? "Copied" : "Copy link"}</button>
-                <button type="button" onClick={() => forget(r.query)} aria-label={`Delete ${r.title}`}>Delete</button>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <p className={styles.note}>Rooms you save, enter or share are kept here, in this browser.</p>
-      )}
 
       <footer className={styles.go}>
         <p aria-live="polite">

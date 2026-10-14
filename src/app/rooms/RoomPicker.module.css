@@ -17,6 +17,11 @@
   font-weight: 500;
   color: var(--ink);
 }
+.headLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .head p {
   margin: 0;
   font-size: 16px;
