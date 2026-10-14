@@ -31,8 +31,8 @@ import { AddWorks, type ArtistOption, type FoundWork } from "./AddWorks";
 import { useDragSort, type DragPlace } from "./drag";
 import styles from "./RoomPicker.module.css";
 
-/** The recreated museums (src/lib/museum-rooms.ts): hidden for now; their links (/museums/<slug>) still work. */
-const SHOW_MUSEUMS = false;
+/** The recreated museums shown (beta), from src/lib/museum-rooms.ts; the others' links (/museums/<slug>) still work. */
+const SHOWN_MUSEUMS = MUSEUM_ROOMS.filter((m) => m.slug === "national-gallery-of-greece" || m.slug === "louvre");
 
 interface Term {
   id: string;
@@ -321,15 +321,15 @@ export function RoomPicker({ terms, nationalities, artists, museums, initial }: 
         </p>
       </header>
 
-      {SHOW_MUSEUMS && MUSEUM_ROOMS.length > 0 && (
+      {SHOWN_MUSEUMS.length > 0 && (
         <>
-          <h2 className={styles.section} id="museums">Recreate a museum</h2>
+          <h2 className={styles.section} id="museums">Recreate a museum (beta)</h2>
           <p className={styles.note}>
             Real museums made with these same tools: their works, their floors, their colours. Open one, or load it
             here to change it.
           </p>
           <ul className={styles.museums}>
-            {MUSEUM_ROOMS.map((m) => (
+            {SHOWN_MUSEUMS.map((m) => (
               <li key={m.slug}>
                 <b>{m.name}</b>
                 <small>{m.city}</small>

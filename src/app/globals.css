@@ -106,8 +106,10 @@ button {
 }
 
 @media (max-width: 720px) {
-  .tl-modes { gap: 8px; }
+  .tl-modes { gap: 8px; flex-wrap: wrap; }
   .tl-modes .tl-switcher { order: initial; flex: 1 1 auto; }
+  /* Featured, All artists, Make a room, Museums: their own row on a phone, never past its edge */
+  .tl-modes .tl-collection { flex: 1 1 100%; justify-content: center; }
   .tl-collection button, .tl-collection .tl-room-link { padding: 6px 8px; font-size: 10px; }
 }
 
