@@ -12,7 +12,7 @@
 //   whatever the guide's speed;
 // - the browser's own voice (Web Speech API), the most natural of those it offers: Edge's "Natural" voices,
 //   Safari's Premium and Enhanced ones, Android's network (neural) voices, Google's, never the novelty voices.
-// Sentences are made one at a time, the one about to be heard first, then the next, and the guide asks for the
+// Sentences are made one at a time, the one about to be heard first, then the next few, and the guide asks for the
 // first sentence of the painting the visitor is turning to before it starts (prefetch). A long sentence is made in
 // pieces at its commas, so the voice starts sooner. The browser's voice reads at the guide's speed (settings.ts
 // guideSpeed).
@@ -59,6 +59,9 @@ const TOO_SLOW = 1;
  *  readings does not count; a piece in time starts it again). */
 const TROUBLE_MS = 60_000;
 const RETRY_MS = 4_000;
+/** Pieces made ahead of the one heard: a long piece after a short one (a sentence's end, a short line) is ready in
+ *  time, the voice making speech in about half the time it lasts. A stopped reading's are forgotten. */
+const MAKE_AHEAD = 3;
 /** Sentences kept, made (replays and the painting turned back to cost nothing). */
 const KEEP = 60;
 /** Nothing read, nor asked for, this long, ms: the worker goes, and its 300 MB, until the guide reads again. */
@@ -508,8 +511,9 @@ class NaturalVoice {
     for (const text of pieces(lines[0], true).slice(0, 2)) void this.synth(text, AHEAD).catch(() => {});
   }
 
-  /** Read the lines in turn, at Pocket's own pace (`o.speed` is the browser's voice's); the next piece is made while
-   *  one is heard. A piece that would not come is skipped; the voice gone, `o.onLost` has the lines left. */
+  /** Read the lines in turn, at Pocket's own pace (`o.speed` is the browser's voice's); the next few pieces are made
+   *  while one is heard (MAKE_AHEAD). A piece that would not come is skipped; the voice gone, `o.onLost` has the
+   *  lines left. */
   speak(lines: string[], o: SpeakOptions): Speaking {
     const me = ++this.readings;
     const ctx = this.audio();
@@ -540,7 +544,7 @@ class NaturalVoice {
       let buf: AudioBuffer;
       try {
         const p = make(k)!;
-        void make(k + 1)?.catch(() => {});
+        for (let j = k + 1; j <= k + MAKE_AHEAD; j++) void make(j)?.catch(() => {});
         buf = await p;
       } catch (e) {
         if (stopped) return;
