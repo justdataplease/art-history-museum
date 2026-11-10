@@ -89,6 +89,23 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
   period (the "Surprise me" at a gallery's end); `/furniture` (development only) every
   room style's furniture (the layout picks among it room by room), for modelling it.
 
+- **A real building, to plan** (`src/lib/spaces.ts`): a recreated museum can be walked as its building stands
+  instead of as suites of rooms joined by an elevator. A space is a small description: each room a rectangle in
+  metres where it really is (measured from OpenStreetMap's indoor survey, `scripts/osm-rooms.mjs`), its wall
+  height, its look (a room style and what the real room changes of it: wall and floor, plinth, frieze, vault,
+  glass), the doors between the rooms, the free-standing walls, and the works with a known place (the Mona Lisa
+  on its own wall). A room's link names its space (`sp=louvre-denon`); the link's floor plan then gives each room
+  of the space its works, so they are chosen, kept and moved with the room picker like any other room's.
+  `plan-layout.ts` hangs each room's works on its own walls, clear of its doors (small works two high) and cuts a
+  long gallery into bays that hang, light and load one by one; `plan-nav.ts` is where one may walk, what a line
+  of sight meets and the way from room to room (`layout.ts` `confine`, `planRoute`, `firstWallHit` follow it when
+  a layout has a `plan`); `plan-geometry.ts` builds each room's walls with their doors, plinth, frieze, cornice,
+  ceiling, arches on columns and floor; `PlanRooms.tsx` draws the rooms around the visitor, each with its own
+  materials (the room AO and the floor's boards follow the room's own frame, `room-shading.ts` `uRoomFrame`),
+  all the floors sharing one reflection (`room-floor.tsx` `PlanFloors`), and each room gets its own reflection
+  probe the first time one stands in it (`Room.tsx` `EnvSetup`). A plan's rooms are daylit from their glass, so
+  they use fewer lights than a suite (six spots, two area lights; four and one in the fast tier).
+
 - **Rooms that differ** (`layout.ts`): each room has its own width (`SuiteRoom.halfWidth`: the suite's
   `hallWidth` or, now and then, wider) and each doorway its own centre (`Doorway.x`: on the axis or stepped
   to one side, zigzagging), seeded by the works so a gallery is the same on every visit. A palace's arches and
@@ -197,7 +214,13 @@ Postgres.
 - `node scripts/suite-check.mjs`: walks a gallery suite (collision, doorways,
   navigator, inspect).
 - `node scripts/perf-probe.mjs <slug> [baseUrl] [label]`: rendering cost.
+- `FX_CODE=<access phrase> node scripts/check-fx.mjs [baseUrl]`: hidden-tools startup on fast/full desktop
+  and touch, unchanged light counts at unlock, effects budgets, marker hits, restoration and zero idle frames.
 - `node scripts/shot-museum.mjs <slug> <prefix> [baseUrl]`: gallery screenshots.
+- `node scripts/osm-rooms.mjs <south,west,north,east> <level> [axisRoom] [filter]`: a building's rooms and doors
+  from OpenStreetMap's indoor survey, in metres in the building's own frame (what a space is measured from).
+- `node scripts/shot-space.mjs <slug> [outDir] [prefix] [tier] [baseUrl] [--at name:x,z,yaw]`: a recreated
+  building room by room (a view down each room, a wall, the ceiling), to set beside photographs of it.
 - `node scripts/error-sweep.mjs [baseUrl]`: console-error sweep.
 - `npm run check-layout`: collection and room-navigation checks up to 10,000 works.
 - `npm run test:performance`: painting-upload priority, cancellation and frame pacing; identical hall geometry

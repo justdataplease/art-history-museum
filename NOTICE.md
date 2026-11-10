@@ -27,3 +27,7 @@ keeps its own licence:
   apply to the speech the model makes: no voice impersonation without the
   speaker's consent, and generated speech is never to be presented as a
   genuine recording of a real person.
+- The floor plans of recreated buildings (src/lib/spaces.ts: the rooms' places, sizes and doors) are measured
+  from OpenStreetMap's indoor survey. © OpenStreetMap contributors, Open Database License (ODbL),
+  https://www.openstreetmap.org/copyright. The plans are a derived work of that survey and are offered under the
+  same licence.

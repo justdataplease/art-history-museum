@@ -202,6 +202,10 @@ export interface HallDims {
   roomZ1?: number;
   /** Rails' distance in from the side walls (layout.trackInset). */
   trackInset?: number;
+  /** A room of a real building's plan (plan-nav.ts): its wall faces, and how high its spots hang. The rail then
+   *  runs `trackInset` out from the work's own wall, wherever the room stands. */
+  rect?: { x0: number; x1: number; z0: number; z1: number };
+  railY?: number;
 }
 
 const ADAPTER = { w: 0.05, h: 0.036, l: 0.12 };
@@ -239,6 +243,8 @@ export function hallFromPlacement(pl: Placement, given?: Partial<HallDims>): Hal
     roomZ0: given?.roomZ0,
     roomZ1: given?.roomZ1,
     trackInset: given?.trackInset ?? TRACK_INSET,
+    rect: given?.rect,
+    railY: given?.railY,
     lengthKnown: given?.hallLength !== undefined || lengthFromWall !== undefined,
   };
 }
@@ -267,10 +273,23 @@ export function planFixture(
 ): FixturePlan {
   const nx = Math.sin(pl.rotationY);
   const nz = Math.cos(pl.rotationY);
-  const railY = hall.wallHeight - TRACK_DROP;
+  const railY = hall.railY ?? hall.wallHeight - TRACK_DROP;
   let mount: THREE.Vector3;
   let railAxis: "x" | "z";
-  if (Math.abs(nx) > 0.5) {
+  if (hall.rect) {
+    // out from the work's own wall (a room's, or a free-standing one), along it within the room
+    const inset = hall.trackInset ?? TRACK_INSET;
+    const y = railY - RAIL_HALF_H - ADAPTER.h / 2 + 0.003;
+    if (Math.abs(nx) > 0.5) {
+      const z = THREE.MathUtils.clamp(railAt ?? pl.position[2], hall.rect.z0 + 0.3, hall.rect.z1 - 0.3);
+      mount = new THREE.Vector3(pl.position[0] + nx * (inset - WALL_GAP), y, z);
+      railAxis = "z";
+    } else {
+      const x = THREE.MathUtils.clamp(railAt ?? pl.position[0], hall.rect.x0 + 0.3, hall.rect.x1 - 0.3);
+      mount = new THREE.Vector3(x, y, pl.position[2] + nz * (inset - WALL_GAP));
+      railAxis = "x";
+    }
+  } else if (Math.abs(nx) > 0.5) {
     const railX = Math.sign(pl.position[0] || -nx) * (hall.hallWidth / 2 - (hall.trackInset ?? TRACK_INSET));
     // stay on the rail: it runs from the cross rail to just short of the entrance wall
     let z = railAt ?? pl.position[2];

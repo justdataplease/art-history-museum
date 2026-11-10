@@ -14,7 +14,7 @@ import {
   inspectPose,
   planRoute,
   seatNear,
-  spawnZ,
+  entryPose,
   supportAt,
   type GalleryLayout,
   type Placement,
@@ -268,8 +268,11 @@ export function EntryDolly({
   useEffect(() => {
     if (!entering || arrived.current) return;
     if (fromX !== undefined) camera.position.x = fromX;
+    // (a plan's way in may run along x)
+    const pose = entryPose(layout);
     const tween = gsap.to(camera.position, {
-      z: spawnZ(layout),
+      ...(layout.plan ? { x: pose.spawnX } : {}),
+      z: pose.spawnZ,
       duration: 3.0,
       ease: "power2.inOut",
       delay: 0.45,

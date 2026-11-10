@@ -42,9 +42,10 @@ export type EraKey =
  */
 export type FrameStyle = "tabernacle" | "baroque" | "gilt-simple" | "wood" | "floater" | "mount" | "print" | "miniature";
 
-/** parquet: oak strips laid in herringbone (point de Hongrie), as in the Louvre's galleries; marble: polished
+/** parquet: oak strips laid in herringbone; chevron: long oak boards in wide chevron bands (point de Hongrie), pale,
+ *  as the Louvre's picture galleries have it; marble: polished
  *  white slabs with grey veins in running bond (the National Gallery in Athens); concrete: stone or concrete slabs. */
-export type FloorKind = "oak-dark" | "oak-light" | "concrete" | "parquet" | "marble";
+export type FloorKind = "oak-dark" | "oak-light" | "concrete" | "parquet" | "chevron" | "marble";
 
 /**
  * laylight — 19th-century top-lit gallery: coved cornice, flat ceiling band
@@ -60,8 +61,9 @@ export type CeilingKind = "laylight" | "lightbox" | "vault";
  * plaster — lime plaster / distemper with a visible trowel texture
  * damask  — silk damask wall covering (figure reads through sheen)
  * paint   — smooth modern emulsion on board
+ * panel   — fabric stretched on tall panels, their joints showing (the Louvre's picture galleries)
  */
-export type WallFinish = "plaster" | "damask" | "paint";
+export type WallFinish = "plaster" | "damask" | "paint" | "panel";
 
 
 /**
@@ -104,6 +106,33 @@ export interface RoomStyle {
   gilt?: string;
   /** The columns' marble. */
   marble?: string;
+  // ---- a real room's own measures (a recreated building: src/lib/spaces.ts); a style leaves them out
+  /** A vault's coves: how far they spring in from the walls (default: up to 2.6 m; a barrel vault's reach
+   *  nearly to its skylight). */
+  coveRadius?: number;
+  /** How high a vault's coves rise (default: as far as they reach in: a quarter circle). */
+  coveRise?: number;
+  /** Half the width of the ceiling's glass (default: what the ceiling kind gives). */
+  glassHalfWidth?: number;
+  /** The glass's panes across and along each bay (default: the ceiling kind's). */
+  panes?: [number, number];
+  /** A plinth of marble or stone along the foot of the walls: its height and colour. */
+  dado?: { height: number; color: string };
+  /** The spots' strength and softness (default: the era's, exhibit-lights.ts): a daylit palace room's are faint
+   *  and wide. */
+  spot?: { level: number; penumbra: number };
+  /** The spots hang by the skylight, without a track of rails below the ceiling. */
+  noTrack?: boolean;
+  /** A band of marble under the cornice (the Grande Galerie's grey frieze): its height and colour. */
+  frieze?: { height: number; color: string };
+  /** The cornice gilded (a red salon's). */
+  giltCornice?: boolean;
+  /** The columns' pedestals: their height and marble (none: the columns stand on the floor). */
+  pedestal?: { height: number; color: string };
+  /** The marble of an arch across the gallery and of its piers. */
+  archStone?: string;
+  /** Another style's furniture (the red rooms' plain leather benches are a modern museum's). */
+  furniture?: EraKey;
 }
 
 export interface GalleryTheme {
@@ -631,6 +660,32 @@ export function roomTheme(periodSlug: string, style?: string | null, wall?: stri
   return t;
 }
 
+/** What a real room changes of its style (src/lib/spaces.ts): colours and the room's own measures. */
+export interface RoomLook {
+  wall?: string;
+  ground?: string;
+  trim?: string;
+  ceiling?: string;
+  /** The frames' moulding (a room of plain modern frames among the gilt). */
+  frame?: Partial<GalleryTheme["frame"]>;
+  light?: Partial<GalleryTheme["light"]>;
+  room?: Partial<RoomStyle>;
+}
+
+/** One room of a recreated building: its style, with what the real room changes of it. A new object each call
+ *  (a building's rooms are few; MuseumApp keeps them for the gallery's life). */
+export function spaceTheme(periodSlug: string, style: string, look: RoomLook = {}): GalleryTheme {
+  const t = roomTheme(periodSlug, style, look.wall, look.ground);
+  return {
+    ...t,
+    trim: look.trim ?? t.trim,
+    ceiling: look.ceiling ?? t.ceiling,
+    frame: { ...t.frame, ...look.frame },
+    light: { ...t.light, ...look.light },
+    room: { ...t.room, ...look.room },
+  };
+}
+
 /** The floors a room may have instead of its style's own (the room picker's "Floor"). */
 export const GROUNDS: { key: FloorKind; label: string }[] = [
   { key: "marble", label: "White marble" },
@@ -638,6 +693,7 @@ export const GROUNDS: { key: FloorKind; label: string }[] = [
   { key: "oak-light", label: "Light oak boards" },
   { key: "oak-dark", label: "Dark oak boards" },
   { key: "parquet", label: "Oak parquet, herringbone" },
+  { key: "chevron", label: "Pale oak in wide chevrons" },
 ];
 export const isGround = (k: string | null | undefined): k is FloorKind => GROUNDS.some((g) => g.key === k);
 /** Each floor's colour, sheen and slab or board width: marble polished; the others as a style has them. */
@@ -647,6 +703,8 @@ const GROUND_LOOK: Record<FloorKind, { tint: string; roughness: number; plank: n
   "oak-light": { tint: THEMES.impressionist.floor.tint, roughness: THEMES.impressionist.room.floorRoughness, plank: THEMES.impressionist.room.plankWidth },
   "oak-dark": { tint: THEMES.nineteenth.floor.tint, roughness: THEMES.nineteenth.room.floorRoughness, plank: THEMES.nineteenth.room.plankWidth },
   parquet: { tint: THEMES.palace.floor.tint, roughness: THEMES.palace.room.floorRoughness, plank: THEMES.palace.room.plankWidth },
+  // boards of 12 cm in bands a metre wide, waxed
+  chevron: { tint: "#a98a5f", roughness: 0.34, plank: 0.12 },
 };
 
 const byPeriod = new Map<string, GalleryTheme>();

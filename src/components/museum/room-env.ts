@@ -40,6 +40,11 @@ function probeZ(layout: GalleryLayout, room = 0): number {
   return r ? (r.z0 + r.z1) / 2 : 0;
 }
 
+/** The middle of a room across the hall (a suite's rooms stand on the axis; a plan's anywhere). */
+function probeX(layout: GalleryLayout, room = 0): number {
+  return (layout.rooms[room] ?? layout.rooms[0])?.cx ?? 0;
+}
+
 /** Shared between Lighting (writes) and EnvSetup (reads before capture). */
 export const roomState = { dim: 1 };
 
@@ -88,13 +93,14 @@ export function initialEnvironment(
   const W = 2 * (room?.halfWidth ?? layout.hallWidth / 2);
   const L = room ? room.z1 - room.z0 : layout.hallLength;
   const zc = probeZ(layout);
+  const xc = probeX(layout);
   const spec = ceilingSpec(layout, theme);
   const s = new THREE.Scene();
   const disposables: { dispose(): void }[] = [];
   const add = (geo: THREE.BufferGeometry, color: THREE.Color, pos: [number, number, number], rotX = 0, rotY = 0) => {
     const m = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, toneMapped: false });
     const mesh = new THREE.Mesh(geo, m);
-    mesh.position.set(pos[0], pos[1] - PROBE_Y, pos[2] - zc);
+    mesh.position.set(pos[0] - xc, pos[1] - PROBE_Y, pos[2] - zc);
     mesh.rotation.set(rotX, rotY, 0);
     s.add(mesh);
     disposables.push(geo, m);
@@ -104,24 +110,24 @@ export function initialEnvironment(
   const floor = lin(theme.floor.tint, theme.floor.kind === "concrete" || theme.floor.kind === "marble" ? 0.6 : 0.5);
   const ceil = lin(theme.ceiling, 0.45);
   // walls
-  add(new THREE.PlaneGeometry(L, H), wall, [-W / 2, H / 2, zc], 0, Math.PI / 2);
-  add(new THREE.PlaneGeometry(L, H), wall, [W / 2, H / 2, zc], 0, -Math.PI / 2);
-  add(new THREE.PlaneGeometry(W, H), wall, [0, H / 2, zc - L / 2]);
-  add(new THREE.PlaneGeometry(W, H), wall, [0, H / 2, zc + L / 2], 0, Math.PI);
+  add(new THREE.PlaneGeometry(L, H), wall, [xc - W / 2, H / 2, zc], 0, Math.PI / 2);
+  add(new THREE.PlaneGeometry(L, H), wall, [xc + W / 2, H / 2, zc], 0, -Math.PI / 2);
+  add(new THREE.PlaneGeometry(W, H), wall, [xc, H / 2, zc - L / 2]);
+  add(new THREE.PlaneGeometry(W, H), wall, [xc, H / 2, zc + L / 2], 0, Math.PI);
   // floor + ceiling
-  add(new THREE.PlaneGeometry(W, L), floor, [0, 0, zc], -Math.PI / 2);
-  add(new THREE.PlaneGeometry(W, L), ceil, [0, H, zc], Math.PI / 2);
+  add(new THREE.PlaneGeometry(W, L), floor, [xc, 0, zc], -Math.PI / 2);
+  add(new THREE.PlaneGeometry(W, L), ceil, [xc, H, zc], Math.PI / 2);
   // the laylight / lightbox glass (just under the proxy ceiling plane)
   add(
     new THREE.PlaneGeometry(2 * spec.wellX, spec.wellZ1 - spec.wellZ0),
     lin(theme.room.daylight, theme.room.daylightLevel * 0.55),
-    [0, H - 0.02, (spec.wellZ0 + spec.wellZ1) / 2],
+    [xc, H - 0.02, (spec.wellZ0 + spec.wellZ1) / 2],
     Math.PI / 2
   );
   // warm spot pools on the walls where the paintings hang
   const pool = lin(theme.light.spot, 0.45);
   for (const pl of layout.placements) {
-    if (pl.room !== 0) continue;
+    if (pl.room !== (layout.plan?.entry.zone ?? 0)) continue;
     const g = new THREE.PlaneGeometry(pl.w + 0.6, pl.h + 0.8);
     const [x, y, z] = pl.position;
     const inset = 0.01;
@@ -163,7 +169,7 @@ export function captureProbe(
     generateMipmaps: false,
   });
   const cam = new THREE.CubeCamera(0.05, Math.max(60, layout.hallLength * 2), cubeRT);
-  cam.position.set(0, PROBE_Y, probeZ(layout, room));
+  cam.position.set(probeX(layout, room), PROBE_Y, probeZ(layout, room));
   cam.updateMatrixWorld(true);
 
   // Direct light + emissive only: no env contribution during the capture.

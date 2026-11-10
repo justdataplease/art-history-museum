@@ -222,11 +222,27 @@ const VERT_APPLY = /* glsl */ `
 vRoomPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
 vRoomNrm = normalize(mat3(modelMatrix) * objectNormal);
 `;
+// One room of a real building's plan (plan-geometry.ts): the room's own frame, x across and z along it about its
+// centre (uRoomFrame: the centre's x and z, the cosine and sine of its turn), so the box AO, the wash and the
+// floor's boards all follow the room wherever it stands.
+export const ROOM_FRAME_PARS = /* glsl */ `
+uniform vec4 uRoomFrame;
+`;
+export const ROOM_FRAME_APPLY = /* glsl */ `
+{
+  vec2 rfd = vRoomPos.xz - uRoomFrame.xy;
+  vRoomPos.xz = vec2(rfd.x * uRoomFrame.z - rfd.y * uRoomFrame.w, rfd.x * uRoomFrame.w + rfd.y * uRoomFrame.z);
+  vRoomNrm.xz = vec2(vRoomNrm.x * uRoomFrame.z - vRoomNrm.z * uRoomFrame.w, vRoomNrm.x * uRoomFrame.w + vRoomNrm.z * uRoomFrame.z);
+}
+`;
 
 export interface RoomPatchOptions {
   /** Unique key per shader variant (three caches programs by it). */
   key: string;
   roomHalf: THREE.Vector3;
+  /** One room of a real building's plan: where it stands and how it is turned (ROOM_FRAME_PARS); a suite's rooms
+   *  stand about the origin. */
+  frame?: THREE.Vector4;
   /** A suite's cross walls (see crossWalls); none when omitted. */
   cross?: CrossWalls;
   /** strength, radius (m), share of direct light affected */
@@ -265,16 +281,18 @@ export function patchRoomMaterial<T extends THREE.MeshStandardMaterial>(
     uShadowGap: {
       value: new THREE.Vector2(opts.shadowGap?.bottom ?? 0, opts.shadowGap?.top ?? 0),
     },
+    ...(opts.frame ? { uRoomFrame: { value: opts.frame } } : {}),
     ...(opts.extraUniforms ?? {}),
   };
+  const framed = !!opts.frame;
   const useMottle = (opts.mottle ?? 0) > 0;
   const useGap = !!opts.shadowGap;
   mat.userData.roomUniforms = uniforms;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", `#include <common>\n${VERT_PARS}`)
-      .replace("#include <worldpos_vertex>", `#include <worldpos_vertex>\n${VERT_APPLY}`);
+      .replace("#include <common>", `#include <common>\n${VERT_PARS}${framed ? ROOM_FRAME_PARS : ""}`)
+      .replace("#include <worldpos_vertex>", `#include <worldpos_vertex>\n${VERT_APPLY}${framed ? ROOM_FRAME_APPLY : ""}`);
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
@@ -318,7 +336,7 @@ ${opts.extraDirect ?? ""}
 ${ROOM_AO_APPLY}`
       );
   };
-  mat.customProgramCacheKey = () => `room:${opts.key}:${useMottle ? 1 : 0}${useGap ? 1 : 0}`;
+  mat.customProgramCacheKey = () => `room:${opts.key}:${useMottle ? 1 : 0}${useGap ? 1 : 0}${framed ? "f" : ""}`;
   mat.needsUpdate = true;
   return mat;
 }

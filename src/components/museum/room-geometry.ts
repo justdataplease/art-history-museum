@@ -28,12 +28,20 @@ const WHITE = new THREE.Color(1, 1, 1);
 
 export class GeoBatch {
   private parts: THREE.BufferGeometry[] = [];
+  /** The colour of what is added next without one of its own (a coloured batch). */
+  private current: THREE.Color | null = null;
 
   /** `colored`: every part carries a vertex colour (the furniture: one material, many fabrics). */
   constructor(
     private roundedBoxes: Map<string, THREE.BufferGeometry> | null = null,
     private colored = false
   ) {}
+
+  /** From here on, what is added without a colour of its own takes this one (null: white). */
+  setColor(color: THREE.Color | null): this {
+    this.current = color;
+    return this;
+  }
 
   /** Add a geometry (consumed), optionally transformed into world space, in `color` when the batch is colored. */
   add(g: THREE.BufferGeometry, m?: THREE.Matrix4, color?: THREE.Color): this {
@@ -43,7 +51,7 @@ export class GeoBatch {
     }
     const count = g.attributes.position.count;
     if (this.colored) {
-      const c = color ?? WHITE;
+      const c = color ?? this.current ?? WHITE;
       const rgb = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
         rgb[i * 3] = c.r;
@@ -280,7 +288,7 @@ function xform(x: number, y: number, z: number, rotY = 0): THREE.Matrix4 {
 // ------------------------------------------------------------------ profiles
 
 /** Quarter-round cove of radius r from (0, h0) up to (r, h0 + r). */
-function coveProfile(r: number, h0: number, steps = 8): [number, number][] {
+export function coveProfile(r: number, h0: number, steps = 8): [number, number][] {
   const pts: [number, number][] = [];
   for (let i = 0; i <= steps; i++) {
     const t = (i / steps) * (Math.PI / 2);
@@ -290,7 +298,7 @@ function coveProfile(r: number, h0: number, steps = 8): [number, number][] {
 }
 
 // skirting: plinth with an ogee top (heights in m)
-const SKIRTING: [number, number][] = [
+export const SKIRTING: [number, number][] = [
   [0.024, 0],
   [0.024, 0.165],
   [0.03, 0.172],
@@ -302,7 +310,7 @@ const SKIRTING: [number, number][] = [
 ];
 
 // picture rail: small rounded moulding, ~6 cm tall
-const PICTURE_RAIL: [number, number][] = [
+export const PICTURE_RAIL: [number, number][] = [
   [0.0, -0.03],
   [0.012, -0.03],
   [0.022, -0.022],
@@ -314,7 +322,7 @@ const PICTURE_RAIL: [number, number][] = [
 ];
 
 // door architrave (face width ~13 cm)
-const ARCHITRAVE: [number, number][] = [
+export const ARCHITRAVE: [number, number][] = [
   [0.0, 0.0],
   [0.022, 0.0],
   [0.03, 0.012],
@@ -353,7 +361,7 @@ export interface CeilingSpec {
 }
 
 /** The ceiling of one room spanning z0..z1 (far and near wall faces). */
-function roomCeilingSpec(
+export function roomCeilingSpec(
   W: number,
   H: number,
   z0: number,
@@ -364,9 +372,11 @@ function roomCeilingSpec(
   const railX = W / 2 - inset;
   if (theme.room.ceiling === "vault") {
     // coves as deep as the room allows springing from the top of the walls, a skylight between them
-    const r = Math.max(1.2, Math.min(2.6, W / 2 - 1.9, (z1 - z0) / 2 - 1.9));
+    const r = theme.room.coveRadius
+      ? Math.max(0.6, Math.min(theme.room.coveRadius, W / 2 - 0.9, (z1 - z0) / 2 - 0.9))
+      : Math.max(1.2, Math.min(2.6, W / 2 - 1.9, (z1 - z0) / 2 - 1.9));
     const band = 0.35;
-    const wellX = W / 2 - r - band;
+    const wellX = Math.min(theme.room.glassHalfWidth ?? Infinity, W / 2 - r - band);
     const wellZ0 = z0 + r + band;
     const wellZ1 = z1 - r - band;
     const len = wellZ1 - wellZ0;
@@ -382,18 +392,18 @@ function roomCeilingSpec(
       wellX,
       wellZ0,
       wellZ1,
-      yCeil: H + r,
-      yGlass: H + r + 0.55,
+      yCeil: H + (theme.room.coveRise ?? r),
+      yGlass: H + (theme.room.coveRise ?? r) + 0.55,
       bays,
       beamW: 0.2,
       beamDepth: 0.3,
-      panes: [4, 3],
+      panes: theme.room.panes ?? [4, 3],
       z0,
       z1,
     };
   }
   if (theme.room.ceiling === "laylight") {
-    const wellX = Math.min(railX - 0.42, W / 2 - 1.6);
+    const wellX = Math.min(theme.room.glassHalfWidth ?? Infinity, railX - 0.42, W / 2 - 1.6);
     const wellZ0 = z0 + inset + 0.75;
     const wellZ1 = z1 - inset - 0.75;
     const len = wellZ1 - wellZ0;
@@ -415,7 +425,7 @@ function roomCeilingSpec(
       bays,
       beamW,
       beamDepth: 0.34,
-      panes: [4, 3],
+      panes: theme.room.panes ?? [4, 3],
       z0,
       z1,
     };
@@ -1120,7 +1130,7 @@ export function buildHall(layout: GalleryLayout, theme: GalleryTheme): HallGeome
 }
 
 /** One floor quad per piece (turned with it) carrying its local coordinates for an SDF blob. */
-function buildBenchShadows(pieces: Furnishing[]): THREE.BufferGeometry {
+export function buildBenchShadows(pieces: Furnishing[]): THREE.BufferGeometry {
   const pos: number[] = [];
   const loc: number[] = [];
   const half: number[] = [];
@@ -1167,7 +1177,7 @@ export function disposeHall(h: HallGeometry) {
 // ------------------------------------------------------------ palace parts
 
 // a vault's cornice at the springing (d out from the wall, h above the top of the wall)
-const VAULT_CORNICE: [number, number][] = [
+export const VAULT_CORNICE: [number, number][] = [
   [0.0, -0.32],
   [0.03, -0.32],
   [0.03, -0.26],
@@ -1180,7 +1190,7 @@ const VAULT_CORNICE: [number, number][] = [
   [0.0, 0.04],
 ];
 // a gilt bead in the cornice
-const GILT_BEAD: [number, number][] = [
+export const GILT_BEAD: [number, number][] = [
   [0.0, -0.025],
   [0.05, -0.025],
   [0.07, -0.012],
@@ -1192,7 +1202,7 @@ const GILT_BEAD: [number, number][] = [
 
 /** The wall above an arch: from the springing (y0) to the top of the wall, less an elliptical head of half
  *  width hw and rise `rise`; facing +z at z = 0, UVs in metres. */
-function archSpandrel(hw: number, y0: number, rise: number, H: number): THREE.BufferGeometry {
+export function archSpandrel(hw: number, y0: number, rise: number, H: number): THREE.BufferGeometry {
   const shape = new THREE.Shape();
   shape.moveTo(-hw, y0);
   const n = 24;
@@ -1207,7 +1217,7 @@ function archSpandrel(hw: number, y0: number, rise: number, H: number): THREE.Bu
 }
 
 /** The underside of an arch through the wall's thickness (zb..zf), facing in toward its centre. */
-function archSoffit(hw: number, y0: number, rise: number, zb: number, zf: number): THREE.BufferGeometry {
+export function archSoffit(hw: number, y0: number, rise: number, zb: number, zf: number): THREE.BufferGeometry {
   const n = 24;
   const pos: number[] = [];
   const nor: number[] = [];
@@ -1302,7 +1312,7 @@ function column(marble: GeoBatch, gilt: GeoBatch, trim: GeoBatch, x: number, z: 
 }
 
 /** A vault's coffering in gilt: ribs across each cove, a ring at mid-height, ribs up the corners' groins. */
-function vaultRibs(gilt: GeoBatch, sp: CeilingSpec, W: number): void {
+export function vaultRibs(gilt: GeoBatch, sp: CeilingSpec, W: number): void {
   const r = sp.coveR;
   const b = sp.coveBase;
   const R = r - 0.02;

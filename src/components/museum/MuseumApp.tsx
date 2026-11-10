@@ -17,7 +17,10 @@ import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import gsap from "gsap";
 import type { ArtistWithPaintings, GalleryLink, GuideArtist } from "@/lib/types";
-import { buildLayout, entryGate, entryZ, EYE_HEIGHT, type Placement } from "./layout";
+import { buildLayout, entryGate, entryPose, EYE_HEIGHT, type Placement } from "./layout";
+import { buildPlanLayout } from "./plan-layout";
+import { shellRail } from "./plan-geometry";
+import { spaceById } from "@/lib/spaces";
 import { furnishSizes, furnitureOf } from "./furniture";
 import type { ElevatorApi, LiftDirection } from "./Elevator";
 import { doorLabel, type ExitSide } from "./ExitDoors";
@@ -30,7 +33,7 @@ import { FxGate } from "./fx/Gate";
 import { SettingsPanel } from "./SettingsPanel";
 import { getSettings, setSettings, useSetting } from "./settings";
 import { galleryQuality } from "./quality";
-import { galleryTheme, roomTheme } from "./theme";
+import { galleryTheme, roomTheme, spaceTheme } from "./theme";
 import { createSettleTracker, type SettleTracker } from "./renderer-motion";
 import { preloadFloorImages } from "./preload-floor";
 import styles from "./museum.module.css";
@@ -100,11 +103,26 @@ export function MuseumApp({
   // a custom room may choose its room style, wall colour and hanging order (src/lib/rooms.ts)
   const design = artist.room;
   const floorInfo = artist.gallery ?? design;
-  const theme = useMemo(
+  const baseTheme = useMemo(
     () => (design ? roomTheme(artist.periodSlug, design.style, design.wall, design.ground) : galleryTheme(artist.periodSlug)),
     [artist.periodSlug, design]
   );
+  // a real building (src/lib/spaces.ts): each of its rooms has its own look, and the layout is its plan
+  const space = useMemo(() => spaceById(design?.space), [design]);
+  const themes = useMemo(
+    () => (space ? space.rooms.map((r) => spaceTheme(artist.periodSlug, r.style, r.look)) : undefined),
+    [space, artist.periodSlug]
+  );
   const layout = useMemo(() => {
+    if (space && themes) {
+      return buildPlanLayout(space, artist.paintings, {
+        furnish: themes.map((t) => furnishSizes(furnitureOf(t.room.furniture ? { era: t.room.furniture } : t))),
+        rails: space.rooms.map((r, i) =>
+          shellRail({ x0: r.x0, x1: r.x1, z0: r.z0, z1: r.z1, height: r.h, alongX: r.x1 - r.x0 > r.z1 - r.z0 }, themes[i])
+        ),
+      });
+    }
+    const theme = baseTheme;
     // the room style's furniture, arranged room by room; a palace gallery's arches; a room with floors has an
     // elevator by the doors
     return buildLayout(artist.paintings, {
@@ -118,7 +136,9 @@ export function MuseumApp({
       // the films about the artist: a corner of the second room, behind a free-standing wall
       films: !design && !!artist.films?.length,
     });
-  }, [artist, theme, design, floorInfo, neighbours]);
+  }, [artist, baseTheme, design, floorInfo, neighbours, space, themes]);
+  // (the room the visitor comes into: its frames, its lights' colour, the first reflections)
+  const theme = layout.plan && themes ? themes[layout.plan.zones[layout.plan.entry.zone].shell] : baseTheme;
   const screening = useScreening(useMemo(() => artist.films ?? [], [artist.films]), layout);
   const films = layout.nook ? screening.films.length : 0;
   // the flagship (a thumbnail, in a suite) and the entrance room's nearest works
@@ -222,11 +242,12 @@ export function MuseumApp({
     () => ({
       fov: FOV,
       near: 0.05,
-      far: 200,
-      position: [0, EYE_HEIGHT, entryZ(layout)] as [number, number, number],
+      // (a real building's long gallery is seen from end to end)
+      far: layout.plan ? Math.max(200, layout.hallWidth + 40) : 200,
+      position: [entryPose(layout).x, EYE_HEIGHT, entryPose(layout).z] as [number, number, number],
       // A rotation stops R3F from aiming the camera at the origin (which
-      // pitched the entry view down); the default −z looks down the hall.
-      rotation: [0, 0, 0] as [number, number, number],
+      // pitched the entry view down); the default −z looks down the hall (a plan's way in has its own).
+      rotation: [0, entryPose(layout).yaw, 0] as [number, number, number],
     }),
     [layout]
   );
@@ -706,7 +727,7 @@ export function MuseumApp({
   const dpr = useMemo(() => [Math.min(1, dprCap), dprCap] as [number, number], [dprCap]);
 
   return (
-    <div className={`mus-root${artist.gallery ? ` ${styles.floored}` : ""}${hud ? "" : ` ${styles.hudOff}`}`}>
+    <div className={`mus-root${artist.gallery ? ` ${styles.floored}` : ""}${artist.room ? ` ${styles.roomed}` : ""}${hud ? "" : ` ${styles.hudOff}`}`}>
       <Canvas
         shadows={false}
         frameloop={live ? "demand" : "never"}
@@ -718,6 +739,7 @@ export function MuseumApp({
           artist={artist}
           layout={layout}
           theme={theme}
+          themes={themes}
           inspect={inspect}
           onSelect={selectPainting}
           onAim={onAim}

@@ -29,7 +29,7 @@ import {
 import { ReflectiveFloor } from "./room-floor";
 import { furnitureOf } from "./furniture";
 import { RoomSigns } from "./room-signs";
-import { CROSS_SLOTS, patchRoomMaterial, roomCross, setCrossWindow } from "./room-shading";
+import { CROSS_SLOTS, patchRoomMaterial, roomCross, setCrossWindow, type CrossWalls } from "./room-shading";
 import {
   damaskTextures,
   laylightTexture,
@@ -70,6 +70,11 @@ export function EnvSetup({
   const captured = useRef(false);
   const countdown = useRef(-1);
   const retired = useRef<Retired>([]);
+  // A real building's rooms differ (one red, the next midnight blue): each gets its own probe the first time the
+  // visitor stands in it, kept for when they come back.
+  const byShell = useRef(new Map<number, THREE.WebGLRenderTarget>());
+  const shellNow = useRef(-1);
+  const shellOf = (room: number) => layout.plan?.zones[room]?.shell ?? 0;
 
   // A lost and restored WebGL context keeps no render-target contents: the
   // proxy and the probe come back empty. Rebuild both from scratch.
@@ -108,6 +113,8 @@ export function EnvSetup({
       invalidate();
     };
     invalidate();
+    const kept = byShell.current;
+    shellNow.current = -1;
     return () => {
       built = true;
       buildProxy.current = null;
@@ -115,6 +122,8 @@ export function EnvSetup({
       pmremRef.current = null;
       if (scene.environment === envRef.current?.texture) scene.environment = null;
       setGalleryEnv(null);
+      kept.forEach((rt) => rt !== envRef.current && rt.dispose());
+      kept.clear();
       envRef.current?.dispose();
       envRef.current = null;
       pending.forEach((p) => {
@@ -157,6 +166,25 @@ export function EnvSetup({
     // probe, a restored context a fresh one)
   }, [ready, texturesDrawn, fallback, invalidate, layout, theme, contextGen]);
 
+  // Walking into another room of a plan: its own probe (kept from an earlier visit, or taken once the room's
+  // lights are up).
+  useEffect(() => {
+    if (!layout.plan) return;
+    return runtime.onRoomChange((room) => {
+      const shell = shellOf(room);
+      if (shell === shellNow.current || shellNow.current < 0) return;
+      shellNow.current = shell;
+      const have = byShell.current.get(shell);
+      if (have) swapEnvironment(scene, envRef, retired.current, have, byShell.current);
+      else {
+        captured.current = false;
+        countdown.current = 3;
+      }
+      invalidate();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime, layout, scene, invalidate]);
+
   useFrame((state) => {
     if (countdown.current < 0 || captured.current) return;
     if (countdown.current > 0) {
@@ -181,10 +209,18 @@ export function EnvSetup({
     // test hook (see Gallery's SuiteDirector): where and when it was taken
     const w = window as unknown as { __MUSEUM_DEBUG__?: boolean; __museumProbe?: unknown };
     if (w.__MUSEUM_DEBUG__) w.__museumProbe = { room: runtime.currentRoom(), atMs: Math.round(performance.now()) };
-    // the generator's work is done: free its internal targets and programs
-    pm.dispose();
-    pmremRef.current = null;
-    swapEnvironment(scene, envRef, retired.current, probe);
+    // the generator's work is done: free its internal targets and programs (a plan keeps it for its other
+    // rooms' probes: a new one would compile its programs again as the visitor walks in)
+    if (layout.plan) pmremRef.current = pm;
+    else {
+      pm.dispose();
+      pmremRef.current = null;
+    }
+    if (layout.plan) {
+      shellNow.current = shellOf(runtime.currentRoom());
+      byShell.current.set(shellNow.current, probe);
+    }
+    swapEnvironment(scene, envRef, retired.current, probe, byShell.current);
     state.invalidate();
   });
 
@@ -193,18 +229,19 @@ export function EnvSetup({
 
 type Retired = { rt: THREE.WebGLRenderTarget; timer: ReturnType<typeof setTimeout> }[];
 
-/** Make `rt` the gallery environment; the one it replaces is retired. */
+/** Make `rt` the gallery environment; the one it replaces is retired (unless it is kept: a room's own probe). */
 function swapEnvironment(
   scene: THREE.Scene,
   envRef: { current: THREE.WebGLRenderTarget | null },
   retired: Retired,
-  rt: THREE.WebGLRenderTarget
+  rt: THREE.WebGLRenderTarget,
+  kept?: Map<number, THREE.WebGLRenderTarget>
 ) {
   const old = envRef.current;
   envRef.current = rt;
   scene.environment = rt.texture;
   setGalleryEnv(rt.texture);
-  if (old) {
+  if (old && old !== rt && !(kept && [...kept.values()].includes(old))) {
     // exhibits re-bind on their next React commit; free the old one after that
     const entry = {
       rt: old,
@@ -375,6 +412,17 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
     const roomHalf = new THREE.Vector3(outerHalf(layout), top, L / 2);
     // shared with the floor and the films' corner (the window of cross walls moves for all of them)
     const cross = roomCross(layout);
+    return createRoomMaterials(theme, roomHalf, cross);
+  }, [layout, theme]);
+}
+
+export type RoomMaterials = ReturnType<typeof createRoomMaterials>;
+
+/** The room's materials for a theme: walls, ceiling, trim, track, seating, gilding and marble, with the room AO of
+ *  the box `roomHalf` (a suite's, with its cross walls; or one room of a real building's plan, `frame`: where it
+ *  stands and how it is turned, room-shading.ts). */
+export function createRoomMaterials(theme: GalleryTheme, roomHalf: THREE.Vector3, cross: CrossWalls, frame?: THREE.Vector4) {
+  {
     const textures: THREE.Texture[] = [];
     const finish = theme.room.wallFinish;
 
@@ -402,9 +450,9 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         wall.bumpScale = 0.6;
         textures.push(map);
       } else {
-        // painted board: even colour, only a fine orange-peel texture
+        // painted board: even colour, only a fine orange-peel texture (fabric on panels: its weave)
         bump.repeat.set(1 / 0.35, 1 / 0.35);
-        wall.bumpScale = 0.12;
+        wall.bumpScale = finish === "panel" ? 0.22 : 0.12;
       }
       wall.bumpMap = bump;
       textures.push(bump);
@@ -418,11 +466,26 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
     patchRoomMaterial(wall, {
       key: `wall-${finish}-${useWash ? "wash" : "nowash"}`,
       roomHalf,
+      frame,
       cross,
       ao: [0.5, 0.38, 0.3],
       mottle: finish === "paint" ? 0.006 : 0.03,
       mottleScale: 0.4,
-      shadowGap: theme.room.classical ? undefined : { bottom: 0.045, top: 0.018 },
+      shadowGap: theme.room.classical || finish === "panel" ? undefined : { bottom: 0.045, top: 0.018 },
+      // fabric stretched on panels: a joint every 1.9 m along the wall and one across it at 4.6 m
+      extraColor:
+        finish === "panel"
+          ? `{
+  vec3 pan = abs(normalize(vRoomNrm));
+  float pal = pan.x > 0.5 ? vRoomPos.z : vRoomPos.x;
+  float ppx = fwidth(pal);
+  float pf = fract(pal / 1.9);
+  float seam = 1.0 - smoothstep(0.003, 0.003 + ppx, min(pf, 1.0 - pf) * 1.9);
+  seam = max(seam, 1.0 - smoothstep(0.003, 0.003 + fwidth(vRoomPos.y), abs(vRoomPos.y - 4.6)));
+  seam *= 1.0 - smoothstep(0.03, 0.25, ppx);
+  diffuseColor.rgb *= 1.0 - 0.3 * seam;
+}`
+          : undefined,
       extraUniforms: { uWash: wash },
       extraPars: "uniform vec3 uWash;",
       extraDirect: useWash
@@ -454,6 +517,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       {
         key: "ceiling",
         roomHalf,
+      frame,
         cross,
         ao: [0.42, 0.3, 0.25],
         mottle: 0.02,
@@ -475,7 +539,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         roughness: stone ? 0.82 : theme.room.classical ? 0.42 : 0.6,
         metalness: 0,
       }),
-      { key: "trim", roomHalf, cross, ao: [0.45, 0.25, 0.3], mottle: stone ? 0.05 : 0.0, mottleScale: 2.2 }
+      { key: "trim", roomHalf, frame, cross, ao: [0.45, 0.25, 0.3], mottle: stone ? 0.05 : 0.0, mottleScale: 2.2 }
     );
 
     const track = new THREE.MeshStandardMaterial({
@@ -488,7 +552,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
     // (the merged primitives have no meaningful UVs); upholstery is plain;
     // lacquer, paint and steel have no grain. A wooden floor shares the same
     // grain texture (one canvas, one upload).
-    const furniture = furnitureOf(theme);
+    const furniture = furnitureOf(theme.room.furniture ? { era: theme.room.furniture } : theme);
     const grainy = furniture.wood.finish === "grain";
     const woodFloor = theme.floor.kind !== "concrete" && theme.floor.kind !== "marble";
     const grain =
@@ -501,6 +565,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
       return patchRoomMaterial(m, {
         key,
         roomHalf,
+      frame,
         cross,
         ao: [0.0, 0.3, 0.0],
         replaceMap: `{
@@ -535,6 +600,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
     patchRoomMaterial(benchSeat, {
       key: `bench-up-${fabric.weave}`,
       roomHalf,
+      frame,
       cross,
       ao: [0.0, 0.3, 0.0],
       replaceMap: `{
@@ -580,20 +646,34 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         metalness: 1,
         roughness: 0.32,
       }),
-      { key: "gilt", roomHalf, cross, ao: [0.45, 0.35, 0.3] }
+      { key: "gilt", roomHalf, frame, cross, ao: [0.45, 0.35, 0.3] }
     );
     const marble = patchRoomMaterial(
       new THREE.MeshStandardMaterial({
-        color: new THREE.Color(theme.room.marble ?? "#d9d3c7"),
+        // a plan's room has several marbles, each part in its own colour (plan-geometry.ts)
+        color: frame ? new THREE.Color(1, 1, 1) : new THREE.Color(theme.room.marble ?? "#d9d3c7"),
+        vertexColors: !!frame,
         metalness: 0,
         roughness: 0.18,
       }),
       {
         key: "marble",
         roomHalf,
+      frame,
         cross,
         ao: [0.4, 0.3, 0.2],
-        extraColor: `{
+        extraColor: frame
+          ? `{
+  vec3 mp = vRoomPos * vec3(1.7, 1.1, 1.7);
+  float n = roomNoise(mp) * 0.55 + roomNoise(mp * 2.3 + 3.1) * 0.3 + roomNoise(mp * 6.1 + 1.7) * 0.15;
+  float cloud = roomNoise(mp * 0.6 + 4.0);
+  float vein = 1.0 - smoothstep(0.0, 0.018, abs(n - 0.5));
+  float vein2 = 1.0 - smoothstep(0.0, 0.01, abs(roomNoise(mp * 3.7 + 9.0) - 0.5));
+  diffuseColor.rgb *= 0.86 + 0.16 * n + 0.14 * (cloud - 0.5);
+  vec3 pale = min(diffuseColor.rgb * 1.7 + 0.07, vec3(0.9));
+  diffuseColor.rgb = mix(diffuseColor.rgb, pale, max(vein * 0.4 * cloud, vein2 * 0.3));
+}`
+          : `{
   vec3 mp = vRoomPos * vec3(2.2, 0.55, 2.2);
   float n = roomNoise(mp) * 0.55 + roomNoise(mp * 2.3 + 3.1) * 0.3 + roomNoise(mp * 6.1 + 1.7) * 0.15;
   float vein = 1.0 - smoothstep(0.0, 0.03, abs(n - 0.5));
@@ -657,7 +737,7 @@ function useRoomMaterials(layout: GalleryLayout, theme: GalleryTheme) {
         textures.forEach((t) => t.dispose());
       },
     };
-  }, [layout, theme]);
+  }
 }
 
 export function Room({

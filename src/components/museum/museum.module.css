@@ -1004,6 +1004,18 @@
   .top.top {
     padding: 8px 12px;
   }
+  /* a custom room's edit, save and share stop short of the settings and the source link in the corner */
+  .roomed .top.top {
+    padding-right: 132px;
+  }
+  .roomed .placard.placard {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .roomed .placard.placard h1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .placard.placard {
     padding: 5px 14px;
   }
@@ -1054,6 +1066,9 @@
 @media (max-width: 640px) {
   .floorPicker { max-width: min(230px, 70vw); }
   .floored { --floor-toolbar-height: 34px; }
+  /* a custom room's own row (edit, save, share) under its title: the navigator hangs below it, so the audio guide
+     and the hint move down as far */
+  .roomed { --floor-toolbar-height: 44px; }
   .floored :global(.mus-click-to-start) { padding: 24px; text-align: center; }
   .floored :global(.mus-click-to-start h2) { font-size: 20px; letter-spacing: 0.18em; }
 }

@@ -19,7 +19,9 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { BlurPass } from "@react-three/drei/materials/BlurPass";
-import { crossUniforms, crossWalls, ROOM_AO_APPLY, ROOM_AO_PARS, ROOM_NOISE_GLSL, type CrossWalls } from "./room-shading";
+import {
+  crossUniforms, crossWalls, ROOM_AO_APPLY, ROOM_AO_PARS, ROOM_FRAME_APPLY, ROOM_FRAME_PARS, ROOM_NOISE_GLSL, type CrossWalls,
+} from "./room-shading";
 import { concreteTexture, woodGrainTexture } from "./textures";
 import { onReflection, reflectionOn } from "./quality";
 import type { GalleryTheme } from "./theme";
@@ -51,10 +53,13 @@ interface FloorProps {
   grain?: THREE.Texture;
   /** A suite's cross walls (room AO along their foot). */
   cross?: CrossWalls;
+  /** One room of a real building's plan: where it stands and how it is turned (room-shading.ts), so its boards
+   *  run down the room and the AO follows its own walls. */
+  frame?: THREE.Vector4;
 }
 
 function createFloorMaterial(
-  { W, L, H, theme, grain, cross }: FloorProps,
+  { W, L, H, theme, grain, cross, frame }: FloorProps,
   tReflect: THREE.Texture,
   tReflectBlur: THREE.Texture,
   textureMatrix: THREE.Matrix4
@@ -63,6 +68,7 @@ function createFloorMaterial(
   const marble = kind === "marble";
   const wood = kind !== "concrete" && !marble;
   const parquet = kind === "parquet";
+  const chevron = kind === "chevron";
   // only a map made here is disposed with the floor
   let ownMap: THREE.Texture | null = null;
   const map =
@@ -84,6 +90,8 @@ function createFloorMaterial(
     uPlank: {
       value: parquet
         ? new THREE.Vector2(pw, 5)
+        : chevron
+        ? new THREE.Vector2(pw, 1.05)
         : marble
         ? new THREE.Vector2(pw, pw / 2)
         : wood
@@ -94,12 +102,13 @@ function createFloorMaterial(
     },
     // grain / aggregate tile size in metres
     uGrain: { value: wood ? new THREE.Vector2(0.62, 1.2) : new THREE.Vector2(1.1, 1.1) },
-    uPlankVar: { value: kind === "oak-dark" ? 0.16 : parquet ? 0.18 : marble ? 0.05 : 0.12 },
+    uPlankVar: { value: kind === "oak-dark" ? 0.16 : parquet ? 0.18 : chevron ? 0.13 : marble ? 0.05 : 0.12 },
     uOrigin: { value: new THREE.Vector2(-W / 2, -L / 2) },
     uRoomHalf: { value: new THREE.Vector3(W / 2, H, L / 2) },
     uRoomAO: { value: new THREE.Vector3(0.55, 0.32, 0.25) },
     // shared with the room materials (Room moves the window of cross walls)
     ...crossUniforms(cross ?? crossWalls({ doorways: [], rooms: [], hallWidth: W, nook: null })),
+    ...(frame ? { uRoomFrame: { value: frame } } : {}),
   };
 
   mat.onBeforeCompile = (shader) => {
@@ -111,13 +120,15 @@ function createFloorMaterial(
 uniform mat4 textureMatrix;
 varying vec4 vReflUv;
 varying vec3 vRoomPos;
-varying vec3 vRoomNrm;`
+varying vec3 vRoomNrm;
+${frame ? ROOM_FRAME_PARS : ""}`
       )
       .replace(
         "#include <worldpos_vertex>",
         `#include <worldpos_vertex>
 vRoomPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
 vRoomNrm = normalize(mat3(modelMatrix) * objectNormal);
+${frame ? ROOM_FRAME_APPLY : ""}
 vReflUv = textureMatrix * vec4(position, 1.0);`
       );
 
@@ -186,6 +197,41 @@ float floorJoint = 1.0;
   floorJoint = jointMask(es, 0.0008, px, sw) * jointMask(ea, 0.0008, px, n * sw);
   diffuseColor.rgb *= grain.rgb * tone * hue * mix(0.35, 1.0, floorJoint);
   floorRough = (1.0 + (h2 - 0.5) * 0.2 + (wear - 0.5) * 0.14) * mix(1.6, 1.0, floorJoint);
+}
+`
+          : chevron
+          ? `
+float floorRough = 1.0;
+float floorJoint = 1.0;
+{
+  // long oak boards in chevron bands down the room (point de Hongrie): each band's boards slant 45 degrees, one
+  // way and then the other, their ends meeting point to point on the band lines; a band reads lighter or darker
+  // than its neighbours as the light takes its grain
+  vec2 fp = vRoomPos.xz - uOrigin;
+  float sw = uPlank.x;
+  float bw = uPlank.y;
+  float band = floor(fp.x / bw);
+  float fx = fract(fp.x / bw);
+  float dirn = mod(band, 2.0) < 0.5 ? 1.0 : -1.0;
+  float v = fp.y + dirn * (fx - 0.5) * bw;
+  float pitch = sw * 1.41421356;
+  float row = floor(v / pitch);
+  float fr = fract(v / pitch);
+  vec2 id = vec2(band, row);
+  float h = roomHash2(id);
+  float h2 = roomHash2(id * 1.37 + 4.0);
+  vec2 baseUv = fp / uGrain;
+  vec2 buv = vec2(fr * sw, fx * bw * 1.41421356) / uGrain;
+  vec4 grain = textureGrad(map, buv + vec2(h * 0.53, h2 * 7.31), dFdx(baseUv), dFdy(baseUv));
+  float tone = (1.0 + (h - 0.5) * uPlankVar) * (1.0 + dirn * 0.045);
+  vec3 hue = vec3(1.0 + (h2 - 0.5) * 0.05, 1.0, 1.0 - (h2 - 0.5) * 0.07);
+  float wear = roomNoise(vec3(fp * 0.21, 1.3)) * 0.6 + roomNoise(vec3(fp * 0.73, 7.7)) * 0.4;
+  tone *= 1.0 + (wear - 0.5) * 0.09;
+  float es = min(fr, 1.0 - fr) * sw;
+  float eb = min(fx, 1.0 - fx) * bw;
+  floorJoint = jointMask(es, 0.0007, fwidth(v) * 0.7071, sw) * jointMask(eb, 0.0009, fwidth(fp.x), bw);
+  diffuseColor.rgb *= grain.rgb * tone * hue * mix(0.4, 1.0, floorJoint);
+  floorRough = (1.0 + (h2 - 0.5) * 0.18 + (wear - 0.5) * 0.14 - dirn * 0.05) * mix(1.6, 1.0, floorJoint);
 }
 `
           : marble
@@ -295,7 +341,8 @@ float floorJoint = 1.0;
       )
       .replace("#include <aomap_fragment>", `#include <aomap_fragment>\n${ROOM_AO_APPLY}`);
   };
-  mat.customProgramCacheKey = () => `room-floor:${parquet ? "parquet" : marble ? "marble" : wood ? "wood" : "concrete"}`;
+  mat.customProgramCacheKey = () =>
+    `room-floor:${parquet ? "parquet" : chevron ? "chevron" : marble ? "marble" : wood ? "wood" : "concrete"}${frame ? ":f" : ""}`;
   return { mat, ownMap, uniforms };
 }
 
@@ -443,5 +490,140 @@ export function ReflectiveFloor(props: FloorProps) {
     <mesh ref={meshRef} rotation-x={-Math.PI / 2} material={res.mat}>
       <planeGeometry args={[W, L]} />
     </mesh>
+  );
+}
+
+// ------------------------------------------------------------- a real building's floors
+
+/** One room's floor of a plan (plan-geometry.ts): its geometry (in world space, on y = 0), its theme and frame. */
+export interface FloorPiece {
+  geometry: THREE.BufferGeometry;
+  theme: GalleryTheme;
+  /** A wooden floor's grain (shared with the room's furniture). */
+  grain?: THREE.Texture;
+  frame: THREE.Vector4;
+  /** Half the room across, its height, half its length. */
+  half: THREE.Vector3;
+}
+
+/**
+ * The floors of a real building's rooms: each its own material (one room parquet, the next marble), all sharing
+ * ONE reflection pass (the scene mirrored in y = 0, once a frame, whatever the number of rooms). `shown[i]`: the
+ * room is drawn (the rooms around the visitor).
+ */
+export function PlanFloors({ pieces, shown }: { pieces: FloorPiece[]; shown: boolean[] }) {
+  const gl = useThree((s) => s.gl);
+  const camera = useThree((s) => s.camera);
+  const scene = useThree((s) => s.scene);
+  const invalidate = useThree((s) => s.invalidate);
+  const groupRef = useRef<THREE.Group>(null);
+
+  const res = useMemo(() => {
+    const params = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: THREE.HalfFloatType, generateMipmaps: false };
+    const fbo1 = new THREE.WebGLRenderTarget(RESOLUTION, RESOLUTION, { ...params, depthBuffer: true });
+    const fbo2 = new THREE.WebGLRenderTarget(RESOLUTION, RESOLUTION, { ...params, depthBuffer: false });
+    const blur = new BlurPass({ gl, resolution: RESOLUTION, width: 360, height: 110 });
+    const textureMatrix = new THREE.Matrix4();
+    const floors = pieces.map((p) =>
+      createFloorMaterial(
+        { W: 2 * p.half.x, L: 2 * p.half.z, H: p.half.y, theme: p.theme, grain: p.grain, frame: p.frame },
+        fbo1.texture,
+        fbo2.texture,
+        textureMatrix
+      )
+    );
+    return { fbo1, fbo2, blur, textureMatrix, floors, virtualCamera: new THREE.PerspectiveCamera() };
+  }, [gl, pieces]);
+
+  useEffect(() => {
+    const entries = res.floors.map((f) => ({ uniforms: f.uniforms, mix: f.uniforms.uReflectMix.value }));
+    entries.forEach((e) => reflectors.add(e));
+    applyReflections();
+    const off = onReflection(() => invalidate());
+    return () => {
+      off();
+      entries.forEach((e) => reflectors.delete(e));
+      res.fbo1.dispose();
+      res.fbo2.dispose();
+      res.blur.renderTargetA.dispose();
+      res.blur.renderTargetB.dispose();
+      res.blur.convolutionMaterial.dispose();
+      res.blur.screen.geometry.dispose();
+      res.floors.forEach((f) => {
+        f.mat.dispose();
+        f.ownMap?.dispose();
+      });
+    };
+  }, [res, invalidate]);
+
+  const tmp = useMemo(
+    () => ({
+      plane: new THREE.Plane(),
+      normal: new THREE.Vector3(0, 1, 0),
+      camPos: new THREE.Vector3(),
+      rot: new THREE.Matrix4(),
+      look: new THREE.Vector3(),
+      view: new THREE.Vector3(),
+      target: new THREE.Vector3(),
+      clip: new THREE.Vector4(),
+      q: new THREE.Vector4(),
+    }),
+    []
+  );
+
+  useFrame(() => {
+    const group = groupRef.current;
+    if (!group || !reflectionOn()) return;
+    // the main camera mirrored in the floor (y = 0), with an oblique near plane on it (as ReflectiveFloor)
+    camera.updateMatrixWorld();
+    const t = tmp;
+    t.camPos.setFromMatrixPosition(camera.matrixWorld);
+    if (t.camPos.y <= 0) return;
+    t.view.copy(t.camPos).negate().reflect(t.normal).negate();
+    t.rot.extractRotation(camera.matrixWorld);
+    t.look.set(0, 0, -1).applyMatrix4(t.rot).add(t.camPos);
+    t.target.copy(t.look).negate().reflect(t.normal).negate();
+    const vc = res.virtualCamera;
+    vc.position.copy(t.view);
+    vc.up.set(0, 1, 0).applyMatrix4(t.rot).reflect(t.normal);
+    vc.lookAt(t.target);
+    vc.far = (camera as THREE.PerspectiveCamera).far;
+    vc.updateMatrixWorld();
+    vc.projectionMatrix.copy(camera.projectionMatrix);
+    res.textureMatrix.set(0.5, 0.0, 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0);
+    res.textureMatrix.multiply(vc.projectionMatrix);
+    res.textureMatrix.multiply(vc.matrixWorldInverse);
+    t.plane.set(t.normal, 0).applyMatrix4(vc.matrixWorldInverse);
+    t.clip.set(t.plane.normal.x, t.plane.normal.y, t.plane.normal.z, t.plane.constant);
+    const pm = vc.projectionMatrix;
+    t.q.x = (Math.sign(t.clip.x) + pm.elements[8]) / pm.elements[0];
+    t.q.y = (Math.sign(t.clip.y) + pm.elements[9]) / pm.elements[5];
+    t.q.z = -1.0;
+    t.q.w = (1.0 + pm.elements[10]) / pm.elements[14];
+    t.clip.multiplyScalar(2.0 / t.clip.dot(t.q));
+    pm.elements[2] = t.clip.x;
+    pm.elements[6] = t.clip.y;
+    pm.elements[10] = t.clip.z + 1.0;
+    pm.elements[14] = t.clip.w;
+
+    group.visible = false;
+    const xr = gl.xr.enabled;
+    gl.xr.enabled = false;
+    gl.setRenderTarget(res.fbo1);
+    gl.state.buffers.depth.setMask(true);
+    if (!gl.autoClear) gl.clear();
+    gl.render(scene, vc);
+    res.blur.render(gl, res.fbo1, res.fbo2);
+    gl.xr.enabled = xr;
+    group.visible = true;
+    gl.setRenderTarget(null);
+  });
+
+  return (
+    <group ref={groupRef}>
+      {pieces.map((p, i) => (
+        <mesh key={i} geometry={p.geometry} material={res.floors[i].mat} visible={shown[i] ?? true} matrixAutoUpdate={false} />
+      ))}
+    </group>
   );
 }

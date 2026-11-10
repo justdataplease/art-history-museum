@@ -5,6 +5,8 @@ import { notFound } from "next/navigation";
 import { buildRoom, parseSelection } from "@/lib/rooms";
 import { FLAGSHIP_THUMB_PX, paintingTextureUrl, wallTexturePx } from "@/lib/img";
 import { buildLayout, entryPreloads } from "@/components/museum/layout";
+import { buildPlanLayout } from "@/components/museum/plan-layout";
+import { spaceById } from "@/lib/spaces";
 import { MuseumApp } from "@/components/museum/MuseumApp";
 import { roomTheme } from "@/components/museum/theme";
 
@@ -35,7 +37,10 @@ export default async function RoomPage({ searchParams }: Props) {
 
   // the textures the entry doors wait for, as on an artist's gallery (src/app/museum/[slug]/page.tsx)
   const theme = roomTheme(room.periodSlug, room.room?.style, room.room?.wall, room.room?.ground);
-  const layout = buildLayout(room.paintings, { works: theme.works, keepOrder: room.room?.keepOrder });
+  const space = spaceById(room.room?.space);
+  const layout = space
+    ? buildPlanLayout(space, room.paintings)
+    : buildLayout(room.paintings, { works: theme.works, keepOrder: room.room?.keepOrder });
   const bySlug = new Map(room.paintings.map((p) => [p.slug, p]));
   entryPreloads(layout, 2).forEach(({ slug: s, thumb }, i) => {
     const p = bySlug.get(s);

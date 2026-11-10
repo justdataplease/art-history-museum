@@ -33,6 +33,7 @@
 
 import * as THREE from "three";
 import { pathDistance, roomAt, type GalleryLayout, type Placement } from "./layout";
+import { planZoneTrack } from "./plan-nav";
 import type { LightPlan } from "./exhibit-geometry";
 import type { ExhibitLights } from "./exhibit-lights";
 
@@ -73,6 +74,13 @@ export const ARCH_REACH = 3;
 /** Exhibits in full within this many rooms, as frame + canvas within LITE_REACH. */
 export const FULL_REACH = 1;
 export const LITE_REACH = 2;
+/** A real building's plan (plan-nav.ts): its rooms' architecture is drawn this many doors and bays away (a long
+ *  gallery is one room, so all of it), its works hung as frame and canvas one bay further than a suite's. */
+export const PLAN_ARCH_REACH = 2;
+export const PLAN_LITE_REACH = 2;
+/** A plan's rooms are lit from above by their glass, the spots only lifting the pictures a little: a third of a
+ *  suite's pool is enough (each light costs every lit pixel). */
+export const PLAN_POOL_MAX = 6;
 /** Laylight area lights (each costs every lit fragment an LTC evaluation):
  *  the visitor's room, the one behind and the two ahead (seen down the
  *  enfilade). A suite of up to this many rooms keeps one per room for good. */
@@ -168,6 +176,8 @@ export class SuiteRuntime {
   readonly areaSlots: AreaSlot[] = [];
   /** Close-up textures for the works the visitor stands at (not in the fast graphics tier). */
   private readonly near: boolean;
+  /** The room the visitor comes in by (a suite's first; a plan's entrance). */
+  private readonly entryRoom: number;
 
   constructor(
     layout: GalleryLayout,
@@ -178,15 +188,19 @@ export class SuiteRuntime {
       start: P2;
       /** The graphics tier's area lights (AREA_POOL at full) and close-up textures (quality.ts). */
       areaPool?: number;
+      /** The most spotlights (default: POOL_MAX, or a plan's PLAN_POOL_MAX). */
+      poolMax?: number;
       near?: boolean;
     },
   ) {
     this.layout = layout;
     this.suite = layout.rooms.length > 1;
     this.near = opts.near ?? true;
+    const entryRoom = (this.entryRoom = roomAt(layout, opts.start.z, opts.start.x));
     const gate = new Set(opts.gate);
     this.exhibits = layout.placements.map((pl, i) => {
       const hw = layout.rooms[pl.room]?.halfWidth ?? layout.hallWidth / 2;
+      const cx = layout.rooms[pl.room]?.cx ?? 0;
       const nx = Math.sin(pl.rotationY);
       const nz = Math.cos(pl.rotationY);
       const [x, , z] = pl.position;
@@ -199,11 +213,11 @@ export class SuiteRuntime {
         lights: lights[i],
         gain: 1,
         level: this.suite ? 0 : 1,
-        tier: this.suite ? (pl.room === 0 ? "wall" : i === 0 ? "thumb" : "none") : "wall",
+        tier: this.suite ? (pl.room === entryRoom ? "wall" : i === 0 ? "thumb" : "none") : "wall",
         gate: gate.has(pl.painting.slug),
         isAnchor: i === 0,
         view: {
-          x: THREE.MathUtils.clamp(x + nx * VIEW_DIST, -hw + 0.6, hw - 0.6),
+          x: THREE.MathUtils.clamp(x + nx * VIEW_DIST, cx - hw + 0.6, cx + hw - 0.6),
           z: z + nz * VIEW_DIST,
         },
         wall: [
@@ -222,7 +236,8 @@ export class SuiteRuntime {
       return e;
     });
 
-    this.poolSize = this.suite ? Math.min(POOL_MAX, this.heads.length) : this.heads.length;
+    const poolMax = opts.poolMax ?? (layout.plan ? PLAN_POOL_MAX : POOL_MAX);
+    this.poolSize = this.suite ? Math.min(poolMax, this.heads.length) : this.heads.length;
     for (let i = 0; i < this.poolSize; i++) {
       const light = new THREE.SpotLight(opts.color, 0, 0, 0.3, 0.3, 2);
       light.castShadow = false;
@@ -232,7 +247,7 @@ export class SuiteRuntime {
       this.slots.push({ light, head: null, level: 0, goal: 0 });
     }
     // light the starting view at full strength (behind the closed doors)
-    this.room = roomAt(layout, opts.start.z);
+    this.room = entryRoom;
     const nArea = Math.min(layout.rooms.length, opts.areaPool ?? AREA_POOL);
     for (const room of this.areaRooms(nArea)) this.areaSlots.push({ room, level: 1, goal: 1 });
     this.plan({ x: opts.start.x, y: EYE, z: opts.start.z });
@@ -277,7 +292,24 @@ export class SuiteRuntime {
 
   /** Level of detail of the exhibits in `room` now (null: not mounted). */
   lodOf(room: number): Lod | null {
-    return lodAt(room, this.room);
+    return this.lodFor(room, this.room);
+  }
+
+  /** Level of detail of the exhibits in `room` with the visitor in `current`: by rooms along a suite, by doors
+   *  and bays in a real building's plan. */
+  lodFor(room: number, current: number): Lod | null {
+    const plan = this.layout.plan;
+    if (!plan) return lodAt(room, current);
+    const d = plan.hops[current]?.[room] ?? Infinity;
+    return d <= FULL_REACH ? "full" : d <= PLAN_LITE_REACH ? "lite" : null;
+  }
+
+  /** A plan's rooms whose architecture is drawn now (by their place in the plan). */
+  shellsShown(): boolean[] {
+    const plan = this.layout.plan;
+    if (!plan) return [];
+    const here = plan.zones[this.room]?.shell;
+    return plan.shells.map((sh) => sh.index === here || sh.zones.some((z) => (plan.hops[this.room]?.[z] ?? Infinity) <= PLAN_ARCH_REACH));
   }
 
   /** First cross wall of the room AO's window (CROSS_SLOTS walls from here). */
@@ -370,7 +402,12 @@ export class SuiteRuntime {
   // ------------------------------------------------------------- internals
 
   private trackRoom(p: P3): void {
-    const { doorways } = this.layout;
+    const { doorways, plan } = this.layout;
+    if (plan) {
+      const zone = planZoneTrack(plan, this.room, p.x, p.z);
+      if (zone !== this.room) this.setRoom(zone);
+      return;
+    }
     let r = this.room;
     // change rooms only once clear of the doorway's depth
     while (r < doorways.length && p.z < doorways[r].z - doorways[r].thickness / 2) r++;
@@ -390,6 +427,14 @@ export class SuiteRuntime {
   /** The rooms the area lights belong to: the visitor's, one behind it (with three or more), the rest ahead. */
   private areaRooms(count: number): number[] {
     const n = this.layout.rooms.length;
+    const plan = this.layout.plan;
+    if (plan) {
+      // the visitor's bay or room, then the nearest by doors and bays
+      const hops = plan.hops[this.room] ?? [];
+      return Array.from({ length: n }, (_, i) => i)
+        .sort((a, b) => (hops[a] ?? Infinity) - (hops[b] ?? Infinity) || a - b)
+        .slice(0, count);
+    }
     const lo = Math.max(0, Math.min(n - count, this.room - (count >= 3 ? 1 : 0)));
     return Array.from({ length: count }, (_, i) => lo + i);
   }
@@ -417,7 +462,7 @@ export class SuiteRuntime {
     this.lastPlan = { ...p };
     this.cull(p);
     const layout = this.layout;
-    const here = roomAt(layout, p.z);
+    const here = roomAt(layout, p.z, p.x);
     const dist = this.exhibits.map((e) => pathDistance(p, e.view, layout));
 
     // ---- lights
@@ -468,7 +513,7 @@ export class SuiteRuntime {
       } else if (!this.suite) {
         tier = "wall";
       } else if (!this.open) {
-        tier = e.placement.room === 0 ? "wall" : e.isAnchor ? "thumb" : e.tier;
+        tier = e.placement.room === this.entryRoom ? "wall" : e.isAnchor ? "thumb" : e.tier;
       } else if (e.placement.room === this.room || dist[e.index] < TIER_UP) {
         tier = "wall";
       } else {
@@ -585,6 +630,15 @@ export class SuiteRuntime {
    */
   private cull(p: P3): void {
     if (!this.suite) return;
+    if (this.layout.plan) {
+      // a plan's rooms: whatever is hung shows (its doors are not tested)
+      for (const e of this.exhibits) {
+        const show = this.lodOf(e.placement.room) !== null;
+        e.seen = show;
+        if (e.group && e.group.visible !== show) e.group.visible = show;
+      }
+      return;
+    }
     const here = roomAt(this.layout, p.z);
     // each room's wedge once (the exhibits of a room share it)
     const wedges: Wedge[] = [];

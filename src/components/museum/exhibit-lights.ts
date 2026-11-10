@@ -57,6 +57,18 @@ export interface ExhibitLights {
  *  flagship's screen has a cross rail of its own, in front of its face; the films' free-standing wall a side
  *  rail of its own, as if it were the room's left wall). */
 export function roomDims(layout: GalleryLayout, pl: Placement): HallDims {
+  const plan = layout.plan;
+  if (plan) {
+    const sh = plan.shells[plan.zones[pl.room]?.shell ?? 0];
+    return {
+      hallWidth: sh.x1 - sh.x0,
+      hallLength: layout.hallLength,
+      wallHeight: sh.height,
+      trackInset: sh.rail.inset,
+      railY: sh.rail.y,
+      rect: { x0: sh.x0, x1: sh.x1, z0: sh.z0, z1: sh.z1 },
+    };
+  }
   const room = layout.rooms[pl.room];
   const screen = layout.screen && pl === layout.placements[0] ? layout.screen : null;
   const wall = pl.partition ? layout.nook?.wall : null;
@@ -77,7 +89,7 @@ export function planExhibitLights(
 ): ExhibitLights {
   const { w, h } = placement;
   const frame = frameMetrics(theme.frame.style, w, h, theme.frame.width, frameAllowance(w, h));
-  const spot = spotTune(theme.era);
+  const spot = theme.room.spot ?? spotTune(theme.era);
   const hall = hallFromPlacement(placement, dims);
   const outer = { x0: -w / 2 - frame.outer, x1: w / 2 + frame.outer, y0: -h / 2 - frame.outer, y1: h / 2 + frame.outer };
   const heads = planLights(placement, hall, outer, frame.canvasZ, {

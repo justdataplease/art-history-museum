@@ -115,3 +115,37 @@ up close and at a bench. Compare them with the photos from step 2 and adjust the
 
 Commit and deploy only when the owner asks (main, no co-author lines; deploy with `npx vercel deploy --prod
 --yes` from this machine).
+
+## 6. The building itself, to plan (a space)
+
+When the owner wants the real building, "exactly as is" (its rooms where they stand, their sizes, doors and
+materials), make it a space (`src/lib/spaces.ts`) instead of floors of generated rooms. The Louvre's Denon wing
+(`louvre-denon`) is the worked example; nothing is stored but the description.
+
+- **Measure the plan.** OpenStreetMap often has a museum's rooms surveyed (`indoor=room` outlines with names,
+  door nodes, levels): `node scripts/osm-rooms.mjs <south,west,north,east> <level> "<a long room>"` prints every
+  room of a level in metres in the building's own frame, and the doors by it. Set each room's rectangle from it
+  (x east, z south; the gap between two rooms is the wall between them, 1 to 2 m in an old palace) and each door
+  (the wall it is in, its place along it). A door to a part not recreated has `to: null` and stays shut; one
+  door is the `entrance`. No survey: the museum's own plan and known measures, and say so in the comment.
+- **Look at each room** (step 2's photos, at least one of every room and of its end walls: they show the doors).
+  From them: the wall height (count against a door or a visitor), and the room's `look` over its style: wall and
+  floor (`chevron`: pale oak in wide chevrons), `wallFinish: "panel"` (fabric panels with joints), `dado` (the
+  plinth), `frieze`, `coveRadius` / `coveRise` (how the vault springs: a barrel vault cut by its skylight rises
+  more than it reaches in), `panes`, `giltCornice`, `marble` / `pedestal` / `archStone` (columns under arches
+  across a gallery: `arches: "bays"`), `furniture` (another style's seats), and a soft `spot` with `noTrack` for
+  a daylit room. A long gallery takes `bay` (about 30 m: it hangs, lights and loads bay by bay) and `from` (the
+  end its works begin at). A free-standing wall is a `walls` entry; a work with a known place is a `pins` entry
+  (a room's wall by its side, or a free-standing wall's face).
+- **Give the rooms their works.** The museum's entry in `src/lib/museum-rooms.ts` gets `space: "<id>"` and a
+  plan whose floors are the space's rooms, in the same order (years, `who`, `works` each); works whose room is
+  known are kept there (`artist/painting@N`, N the room's place). The visitor changes the hang in Make a room as
+  for any room.
+- **Check it** with `node scripts/shot-space.mjs <slug>` (every room: a view down it, a wall, its ceiling;
+  `--at name:x,z,yaw` for a view of your own) beside the photos, on both graphics tiers. Walk the doors too:
+  from a script, put the camera before a door, hold W, and read where it ends (`window.__museum`); each door must
+  let through, each wall and free-standing wall must stop. Headless Chrome on this machine draws on the
+  integrated graphics, so frames a second measured there stand for a weak laptop: compare with an artist's long
+  gallery (the Denon wing runs level with one).
+- What a space does not have yet: floors joined by an elevator (one level per space), sculpture, rooms that are
+  not rectangles (a rotunda is drawn as its bounding room), and a second row of large pictures above the first.

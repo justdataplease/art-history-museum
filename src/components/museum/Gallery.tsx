@@ -7,19 +7,19 @@ import type { ArtistWithPaintings, GalleryLink, RoomFloor } from "@/lib/types";
 import {
   confine,
   entryGate,
-  entryZ,
+  entryPose,
   EYE_HEIGHT,
-  spawnZ,
   type GalleryLayout,
   type Placement,
 } from "./layout";
 import type { GalleryTheme } from "./theme";
 import { PaintingExhibit } from "./PaintingExhibit";
 import { EnvSetup, Lighting, Room } from "./Room";
+import { PlanRooms } from "./PlanRooms";
 import { EntryDolly, InspectCamera, Player, TouchPlayer, type LockApi } from "./Controls";
 import { isMoving } from "./renderer-motion";
 import { planExhibitLights, roomDims } from "./exhibit-lights";
-import { lodAt, SuiteRuntime, type Lod } from "./suite-runtime";
+import { SuiteRuntime, type Lod } from "./suite-runtime";
 import { textureStats } from "./exhibit-texture";
 import { FxSlot } from "./fx/Slot";
 import { Elevator, type ElevatorApi, type LiftDirection } from "./Elevator";
@@ -56,6 +56,8 @@ export interface GalleryProps {
   artist: ArtistWithPaintings;
   layout: GalleryLayout;
   theme: GalleryTheme;
+  /** A real building's plan (layout.plan): each of its rooms' own theme, by the room's place in the plan. */
+  themes?: GalleryTheme[];
   inspect: Placement | null;
   onSelect: (pl: Placement) => void;
   onAim: (aimed: boolean) => void;
@@ -124,23 +126,30 @@ export interface GalleryProps {
 }
 
 export const Gallery = memo(function Gallery(props: GalleryProps) {
-  const { artist, layout, theme } = props;
+  const { artist, layout, theme, themes } = props;
+  /** The theme of the room a work hangs in (a plan's rooms each have their own). */
+  const themeOf = useMemo(() => {
+    const plan = layout.plan;
+    return (pl: Placement) => (plan && themes ? themes[plan.zones[pl.room]?.shell ?? 0] ?? theme : theme);
+  }, [layout, theme, themes]);
   const meshRegistry = useRef(new Map<string, THREE.Mesh>());
   const focusSlug = props.inspect?.painting.slug ?? null;
 
   // Every exhibit's track heads, planned up front; their lights are a fixed
   // pool in the runtime (one per head in a single room, POOL_MAX in a suite).
   const lights = useMemo(
-    () => layout.placements.map((pl) => planExhibitLights(pl, theme, roomDims(layout, pl))),
-    [layout, theme]
+    () => layout.placements.map((pl) => planExhibitLights(pl, themeOf(pl), roomDims(layout, pl))),
+    [layout, themeOf]
   );
   const runtime = useMemo(
     () =>
       new SuiteRuntime(layout, lights, {
         color: theme.light.spot,
         gate: entryGate(layout),
-        start: { x: 0, z: entryZ(layout) },
-        areaPool: props.quality.areaLights,
+        start: { x: entryPose(layout).x, z: entryPose(layout).z },
+        // (a plan's rooms: fewer lights, each of its bays' glass being far larger than a suite room's)
+        areaPool: layout.plan ? Math.max(1, Math.floor(props.quality.areaLights / 2)) : props.quality.areaLights,
+        poolMax: layout.plan && props.quality.tier === "fast" ? 4 : undefined,
         near: props.quality.near,
       }),
     // the tier is the gallery's for its life (a light count change would recompile every lit program)
@@ -158,12 +167,17 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
     const t = new Map<string, Lod>();
     // nearest rooms first: the order newcomers are mounted in
     const byNear = [...layout.placements].sort((a, b) => Math.abs(a.room - room) - Math.abs(b.room - room));
+    // (a plan's rooms: nearest by doors and bays, not by number)
+    if (layout.plan) {
+      const hops = layout.plan.hops[room] ?? [];
+      byNear.sort((a, b) => (hops[a.room] ?? Infinity) - (hops[b.room] ?? Infinity));
+    }
     for (const pl of byNear) {
-      const lod = lodAt(pl.room, room);
+      const lod = runtime.lodFor(pl.room, room);
       if (lod) t.set(pl.painting.slug, lod);
     }
     return t;
-  }, [layout, room]);
+  }, [layout, room, runtime]);
   const [mounted, setMounted] = useState(target);
   const mountedRef = useRef(mounted);
   const targetRef = useRef(target);
@@ -221,13 +235,17 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
       go(r: number) {
         const n = layout.rooms.length;
         const to = Math.max(0, Math.min(n - 1, r));
+        const plan = layout.plan;
+        const e = entryPose(layout);
         // just inside the room's doorway (the spawn point in the first room),
-        // facing down the room
+        // facing down the room; in a plan, the middle of the room or bay, facing down it
         const d = layout.doorways[to - 1];
-        const p = to === 0 ? { x: 0, z: spawnZ(layout) } : { x: d.x, z: d.z - d.thickness / 2 - 1.6 };
+        const zone = plan?.zones[to];
+        const p = to === e.room ? { x: e.spawnX, z: e.spawnZ } : zone ? { x: (zone.x0 + zone.x1) / 2 + 0.9, z: (zone.z0 + zone.z1) / 2 + 0.9 } : { x: d.x, z: d.z - d.thickness / 2 - 1.6 };
         confine(p, layout);
         camera.position.set(p.x, EYE_HEIGHT, p.z);
-        camera.rotation.set(0, 0, 0, "YXZ");
+        const yaw = to === e.room ? e.yaw : zone && plan ? (plan.shells[zone.shell].alongX ? Math.PI / 2 : 0) : 0;
+        camera.rotation.set(0, yaw, 0, "YXZ");
         camera.updateMatrixWorld();
         runtime.teleport(to);
         invalidate();
@@ -274,8 +292,14 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
     <>
       <CameraLayers />
       <EnvSetup layout={layout} theme={theme} ready={!!props.ready} runtime={runtime} />
-      <Lighting layout={layout} theme={theme} focused={!!props.inspect} runtime={runtime} />
-      <Room layout={layout} theme={theme} runtime={runtime} />
+      {layout.plan && themes ? (
+        <PlanRooms layout={layout} themes={themes} runtime={runtime} focused={!!props.inspect} />
+      ) : (
+        <>
+          <Lighting layout={layout} theme={theme} focused={!!props.inspect} runtime={runtime} />
+          <Room layout={layout} theme={theme} runtime={runtime} />
+        </>
+      )}
       {/* the spotlight pool: a fixed count from the first frame */}
       <primitive object={runtime.root} />
       {layout.placements.map((pl, i) => {
@@ -287,7 +311,7 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
             artistName={pl.painting.artistName ?? artist.name}
             focusSlug={focusSlug}
             registry={meshRegistry.current}
-            theme={theme}
+            theme={themeOf(pl)}
             lights={lights[i]}
             runtime={runtime}
             lod={lod}

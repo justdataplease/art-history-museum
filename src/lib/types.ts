@@ -76,6 +76,8 @@ export interface Painting {
   artistName?: string;
   /** The phase of the artist's life it belongs to (an index into ArtistWithPaintings.phases). */
   phase?: number;
+  /** In a recreated building (src/lib/spaces.ts): the room of the space it hangs in (its place in the space). */
+  section?: number;
 }
 
 /** A phase of an artist's life ("Blue Period", 1901–1904): an artist's gallery splits its rooms at them. */
@@ -153,6 +155,9 @@ export interface RoomInfo {
   /** The works hang in the order given (by artist, best known first, or placed by hand), not re-sorted by year. */
   keepOrder: boolean;
   intro: string | null;
+  /** A real building the room is walked in (src/lib/spaces.ts): every room's works are here at once, each
+   *  carrying its room (Painting.section), and there is no elevator. */
+  space?: string | null;
 }
 
 export interface TimelineData {

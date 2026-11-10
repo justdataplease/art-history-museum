@@ -17,6 +17,7 @@ import { artistOrigin } from "./countries";
 import { FEATURED_ARTIST_SLUGS } from "@/components/timeline/featured-artists";
 import { paintingTextureUrl } from "./img";
 import { hasFilters, parsePin, selectionQuery, workFloor, workKey, type FloorSpec, type Selection } from "./room-query";
+import { spaceById } from "./spaces";
 
 export { parseSelection } from "./room-query";
 
@@ -334,16 +335,26 @@ const ownOrder = (works: IndexWork[], s: Selection) =>
 export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | null> {
   const { floors } = selectWorks(s);
   if (!floors.length || !floors[0].works.length) return null;
-  const floorNo = Math.min(s.floor, floors.length);
-  const floor = floors[floorNo - 1];
+  // a real building (src/lib/spaces.ts): every room's works at once, each carrying its room (the plan floor's
+  // place is the room's place in the space); walked room to room, there is no elevator
+  const space = s.floors === "plan" && s.plan.length ? spaceById(s.space) : null;
+  const floorNo = space ? 1 : Math.min(s.floor, floors.length);
+  const floor = space ? { eras: [], works: floors.flatMap((f) => f.works) } : floors[floorNo - 1];
   const slugs = [...new Set(floor.works.map((w) => w[0]))];
   const loaded = new Map((await Promise.all(slugs.map((a) => getArtist(a)))).filter(Boolean).map((a) => [a!.slug, a!]));
   const paintings: Painting[] = [];
-  for (const [artistSlug, paintingSlug] of hangOrder(floor.works, s)) {
-    const a = loaded.get(artistSlug);
-    const p = a?.paintings.find((x) => x.slug === paintingSlug);
-    // slugs are unique per artist only: two artists' "self-portrait" must not collide in one room
-    if (a && p && p.imageUrl) paintings.push({ ...p, slug: `${artistSlug}--${p.slug}`, artistSlug, artistName: a.name });
+  for (const f of space ? floors : [floor]) {
+    for (const [artistSlug, paintingSlug] of hangOrder(f.works, s)) {
+      const a = loaded.get(artistSlug);
+      const p = a?.paintings.find((x) => x.slug === paintingSlug);
+      // slugs are unique per artist only: two artists' "self-portrait" must not collide in one room
+      if (a && p && p.imageUrl) {
+        paintings.push({
+          ...p, slug: `${artistSlug}--${p.slug}`, artistSlug, artistName: a.name,
+          ...(space ? { section: (f as Floor).index ?? 0 } : {}),
+        });
+      }
+    }
   }
   if (!paintings.length) return null;
   const guide: GuideArtist[] = [...loaded.values()].map((a) => ({
@@ -355,14 +366,16 @@ export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | nul
   const subtitle = describeSelection(s, (slug) => loaded.get(slug)?.name);
   const title = s.title ?? subtitle;
   const labels = floorLabels(s, floors, title);
-  const roomFloors: RoomFloor[] = floors.map((f, i) => ({
-    label: labels[i],
-    href: `/room?${selectionQuery(s, i + 1)}`,
-    works: f.works.length,
-    number: f.spec?.number ?? s.firstFloor + (f.index ?? i),
-  }));
+  const roomFloors: RoomFloor[] = space
+    ? [{ label: space.name, href: `/room?${selectionQuery(s)}`, works: paintings.length, number: s.firstFloor }]
+    : floors.map((f, i) => ({
+        label: labels[i],
+        href: `/room?${selectionQuery(s, i + 1)}`,
+        works: f.works.length,
+        number: f.spec?.number ?? s.firstFloor + (f.index ?? i),
+      }));
   const years = paintings.map((p) => p.year).filter((y): y is number => y != null);
-  const spec = floor.spec;
+  const spec = space ? undefined : (floor as Floor).spec;
   return {
     slug: `room-${floorNo}`,
     periodSlug,
@@ -387,6 +400,7 @@ export async function buildRoom(s: Selection): Promise<ArtistWithPaintings | nul
       ground: spec?.ground ?? s.ground,
       keepOrder: ownOrder(floor.works, s),
       intro: spec?.intro ?? s.intro,
+      space: space?.id ?? null,
     },
   };
 }

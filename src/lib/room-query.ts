@@ -29,6 +29,8 @@
 //          consecutive): a work hangs on the first floor whose years (and, when given, whose artists'
 //          nationalities) hold it
 //   fs     the number of the first floor (0 for a museum that counts from the ground floor; default 1)
+//   sp     a real building (src/lib/spaces.ts: louvre-denon): the floor plan's floors are then its rooms, in order,
+//          and the room is walked as the building stands, room to room through its doors (no elevator)
 
 import { isGround, isRoomStyle } from "@/components/museum/theme";
 
@@ -73,6 +75,8 @@ export interface Selection {
   exclude: string[];
   /** With nothing else chosen, the collection's highlights hang around the kept works (else only those). */
   highlights: boolean;
+  /** A real building the room is walked in (src/lib/spaces.ts): the plan's floors are its rooms. */
+  space: string | null;
 }
 
 export const MAX_DEFAULT = 60;
@@ -81,7 +85,7 @@ export const MAX_WORKS = 240;
 export const EMPTY_SELECTION: Selection = {
   terms: [], artists: [], nationalities: [], museums: [], from: null, to: null, words: [], include: [],
   max: MAX_DEFAULT, title: null, floor: 1, style: null, wall: null, ground: null, order: "year", floors: "era", plan: [],
-  firstFloor: 1, intro: null, exclude: [], highlights: false,
+  firstFloor: 1, intro: null, exclude: [], highlights: false, space: null,
 };
 
 type Params = Record<string, string | string[] | undefined>;
@@ -189,6 +193,7 @@ export function parseSelection(p: Params): Selection {
     intro: one(p.intro).trim().slice(0, 400) || null,
     exclude: list(p.x, 150).filter((x) => WORK_KEY.test(x)),
     highlights: one(p.hl) === "1",
+    space: /^[a-z0-9-]{1,40}$/.test(one(p.sp)) ? one(p.sp) : null,
   };
 }
 
@@ -212,6 +217,7 @@ export function selectionQuery(s: Selection, floor?: number): string {
   if (s.floors === "plan" && s.plan.length) q.set("fl", planQuery(s.plan));
   else if (s.floors === "one") q.set("floors", "one");
   if (s.firstFloor !== 1) q.set("fs", String(s.firstFloor));
+  if (s.space) q.set("sp", s.space);
   if (s.intro) q.set("intro", s.intro);
   if (s.exclude.length) q.set("x", s.exclude.join(","));
   if (s.highlights && s.include.length && !hasFilters(s)) q.set("hl", "1");

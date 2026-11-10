@@ -1,5 +1,8 @@
 import type { Painting } from "@/lib/types";
 import type { WorkScale } from "./theme";
+import {
+  planConfine, planFirstHit, planPathDistance, planWalkClear, planWaypoints, planZoneAt, type PlanLayout,
+} from "./plan-nav";
 
 export interface Placement {
   painting: Painting;
@@ -111,6 +114,8 @@ export interface SuiteRoom {
   /** Half the room's width: its side walls stand at x = ±halfWidth. Rooms differ (never narrower than the
    *  suite's hallWidth); a cross wall reaches as far as the wider of the rooms either side. */
   halfWidth: number;
+  /** The room's centre across the hall (a real building's plan, plan-nav.ts; a suite's rooms stand on the axis). */
+  cx?: number;
   /** Year span of the dated works hung in the room (null: none is dated). */
   years: [number, number] | null;
   /** The phase of the artist's life the room shows ("Blue Period"), when the gallery follows phases. */
@@ -173,6 +178,10 @@ export interface GalleryLayout {
   trackInset: number;
   /** The films about the artist, in a corner of one room (LayoutOptions.films). */
   nook: FilmNook | null;
+  /** A real building's floor plan (plan-layout.ts): its rooms stand where they do, joined by their doors.
+   *  `rooms` are then its zones and `doorways` is empty; where one walks, what is in sight and how far apart
+   *  things are all follow the plan (plan-nav.ts). */
+  plan?: PlanLayout;
 }
 
 /**
@@ -278,7 +287,7 @@ export function frameAllowance(w: number, h: number): number {
 }
 
 /** Space a work needs on its label side, beyond the canvas edge. */
-function labelReach(w: number, h: number, label = 1): number {
+export function labelReach(w: number, h: number, label = 1): number {
   return frameAllowance(w, h) + PLACARD_GAP * label + PLACARD_W * label;
 }
 
@@ -1016,10 +1025,10 @@ function elevatorSpot(W: number): ElevatorSpot {
 
 /** Works this famous (English Wikipedia views a year) are roped off: the Mona Lisa, The Starry Night, Girl with
  *  a Pearl Earring, The Birth of Venus ... about a dozen. */
-const ROPED_VIEWS = 500_000;
+export const ROPED_VIEWS = 500_000;
 
 /** A rope 1.1 m out from the wall across the work and back to the wall either side (the label stays outside). */
-function ropeOff(pl: Placement): Barrier {
+export function ropeOff(pl: Placement): Barrier {
   const nx = Math.sin(pl.rotationY);
   const nz = Math.cos(pl.rotationY);
   const tx = nz;
@@ -1226,12 +1235,21 @@ export function spawnZ(layout: GalleryLayout): number {
   return layout.hallLength / 2 - 3.1;
 }
 
+/** Where the visitor stands as the doors open, where the entry walk ends, the way they face (yaw about y: 0
+ *  looks down a suite, toward −z) and the room they come into. A real building's plan has its own way in. */
+export function entryPose(layout: GalleryLayout): { x: number; z: number; spawnX: number; spawnZ: number; yaw: number; room: number } {
+  const e = layout.plan?.entry;
+  if (e) return { x: e.x, z: e.z, spawnX: e.spawnX, spawnZ: e.spawnZ, yaw: e.yaw, room: e.zone };
+  return { x: 0, z: entryZ(layout), spawnX: 0, spawnZ: spawnZ(layout), yaw: 0, room: 0 };
+}
+
 /** The `n` works nearest the entrance (all in the first room). */
 function nearestEntrance(layout: GalleryLayout, n: number): string[] {
+  const e = entryPose(layout);
   return layout.placements
     .slice(1)
-    .filter((p) => p.room === 0)
-    .sort((a, b) => b.position[2] - a.position[2])
+    .filter((p) => p.room === e.room)
+    .sort((a, b) => Math.hypot(a.position[0] - e.x, a.position[2] - e.z) - Math.hypot(b.position[0] - e.x, b.position[2] - e.z))
     .slice(0, n)
     .map((p) => p.painting.slug);
 }
@@ -1245,7 +1263,7 @@ export function entryPreloads(layout: GalleryLayout, n = 4): { slug: string; thu
   const anchor = layout.placements[0];
   if (!anchor) return [];
   return [
-    { slug: anchor.painting.slug, thumb: anchor.room !== 0 },
+    { slug: anchor.painting.slug, thumb: anchor.room !== entryPose(layout).room },
     ...nearestEntrance(layout, n).map((slug) => ({ slug, thumb: false })),
   ];
 }
@@ -1258,8 +1276,10 @@ export function entryGate(layout: GalleryLayout, n = 4): string[] {
   return [anchor.painting.slug, ...nearestEntrance(layout, n)];
 }
 
-/** Room holding the floor point at depth z (the cross walls' centre planes divide them). */
-export function roomAt(layout: GalleryLayout, z: number): number {
+/** Room holding the floor point at depth z (the cross walls' centre planes divide them); in a real building's
+ *  plan, the room at (x, z). */
+export function roomAt(layout: GalleryLayout, z: number, x = 0): number {
+  if (layout.plan) return planZoneAt(layout.plan, x, z);
   let lo = 0;
   let hi = layout.doorways.length;
   while (lo < hi) {
@@ -1318,8 +1338,10 @@ const STEP_UP = 0.15;
  *  furniture: but over a bench once the feet are up at its top (a jump onto it, standing on it). */
 export function confine(p: { x: number; z: number }, layout: GalleryLayout, feet = 0): void {
   const m = WALL_MARGIN;
-  // each room its own width (the room at the visitor's depth)
+  const plan = layout.plan;
+  // each room its own width (the room at the visitor's depth); a real building's plan: inside its rooms and doors
   const clampHall = () => {
+    if (plan) return planConfine(plan, p);
     p.z = Math.min(layout.hallLength / 2 - m, Math.max(-layout.hallLength / 2 + m, p.z));
     const hw = halfWidthAt(layout, p.z);
     p.x = Math.min(hw - m, Math.max(-hw + m, p.x));
@@ -1356,6 +1378,8 @@ export function confine(p: { x: number; z: number }, layout: GalleryLayout, feet
   }
   const w = layout.nook?.wall;
   if (w) pushOut(p, w.face - w.thickness - grow, w.face + grow, w.z0 - grow, w.z1 + 1, BODY_RADIUS);
+  // a plan's free-standing walls
+  for (const fw of plan?.partitions ?? []) pushOut(p, fw.x0 - grow, fw.x1 + grow, fw.z0 - grow, fw.z1 + grow, BODY_RADIUS);
   clampHall();
 }
 
@@ -1370,6 +1394,8 @@ function seatsOf(layout: GalleryLayout): Bench[] {
     return { position: f.position, size: [2 * hx, 2 * hz], ...(f.top ? { top: f.top } : {}) };
   });
   for (const c of columnsOf(layout)) out.push({ position: [c.x, c.z], size: [2 * c.r + 0.1, 2 * c.r + 0.1] });
+  // a plan's columns stand on pedestals wider than their shafts
+  for (const c of layout.plan?.columns ?? []) out.push({ position: [c.x, c.z], size: [3.4 * c.r, 3.4 * c.r] });
   for (const { box: [x0, x1, z0, z1] } of layout.barriers) {
     out.push({ position: [(x0 + x1) / 2, (z0 + z1) / 2], size: [x1 - x0 + 0.1, z1 - z0 + 0.1] });
   }
@@ -1413,6 +1439,16 @@ export function seatNear(layout: GalleryLayout, x: number, z: number, reach = 1.
 /** Seats, and the flagship's screen as one more (bench-like) obstacle. */
 function blockers(layout: GalleryLayout): Bench[] {
   const s = layout.screen;
+  if (layout.plan?.partitions.length) {
+    const grow = 2 * (WALL_MARGIN - BODY_RADIUS);
+    return [
+      ...seatsOf(layout),
+      ...layout.plan.partitions.map((w): Bench => ({
+        position: [(w.x0 + w.x1) / 2, (w.z0 + w.z1) / 2],
+        size: [w.x1 - w.x0 + grow, w.z1 - w.z0 + grow],
+      })),
+    ];
+  }
   if (!s) return seatsOf(layout);
   const depth = s.thickness + 2 * (WALL_MARGIN - BODY_RADIUS);
   return [...seatsOf(layout), { position: [0, s.z], size: [2 * s.halfWidth, depth] }];
@@ -1489,27 +1525,32 @@ function roundNook(layout: GalleryLayout): [P2, P2] | null {
  * any bench in the way, then string-pulled so no corner a straight line can cut remains.
  */
 export function planRoute(a: P2, b: P2, layout: GalleryLayout): P2[] {
-  const walls = wallBoxes(layout);
+  const plan = layout.plan;
+  const walls = plan ? [] : wallBoxes(layout);
   const stops = blockers(layout);
   const benches = stops.map((x) => benchBox(x, 0.02));
   const clear = (p: P2, q: P2) =>
-    walls.every((o) => !segmentHitsBox(p, q, o)) && benches.every((o) => !segmentHitsBox(p, q, o));
+    (plan ? planWalkClear(plan, p, q) : walls.every((o) => !segmentHitsBox(p, q, o))) &&
+    benches.every((o) => !segmentHitsBox(p, q, o));
 
-  const ra = roomAt(layout, a.z);
-  const rb = roomAt(layout, b.z);
   const pts: P2[] = [{ x: a.x, z: a.z }];
-  const round = roundNook(layout);
-  const aIn = inNook(layout, a.x, a.z);
-  const bIn = inNook(layout, b.x, b.z);
-  if (round && aIn && !bIn) pts.push(round[1], round[0]);
-  const step = rb > ra ? 1 : -1;
-  for (let r = ra; r !== rb; r += step) {
-    const d = layout.doorways[step > 0 ? r : r - 1];
-    const off = d.thickness / 2 + WALL_MARGIN + 0.3;
-    pts.push({ x: d.x, z: d.z + step * off }, { x: d.x, z: d.z - step * off });
+  if (plan) pts.push(...planWaypoints(plan, a, b, WALL_MARGIN + 0.3));
+  else {
+    const ra = roomAt(layout, a.z);
+    const rb = roomAt(layout, b.z);
+    const round = roundNook(layout);
+    const aIn = inNook(layout, a.x, a.z);
+    const bIn = inNook(layout, b.x, b.z);
+    if (round && aIn && !bIn) pts.push(round[1], round[0]);
+    const step = rb > ra ? 1 : -1;
+    for (let r = ra; r !== rb; r += step) {
+      const d = layout.doorways[step > 0 ? r : r - 1];
+      const off = d.thickness / 2 + WALL_MARGIN + 0.3;
+      pts.push({ x: d.x, z: d.z + step * off }, { x: d.x, z: d.z - step * off });
+    }
+    if (round && bIn && !aIn) pts.push(round[0], round[1]);
+    pts.push({ x: b.x, z: b.z });
   }
-  if (round && bIn && !aIn) pts.push(round[0], round[1]);
-  pts.push({ x: b.x, z: b.z });
 
   // detour round benches standing across a leg: past the side nearer the leg
   const out: P2[] = [pts[0]];
@@ -1568,6 +1609,10 @@ export interface WallHit {
  * where the line came from. Null when the line is clear.
  */
 export function firstWallHit(a: P3, b: P3, layout: GalleryLayout): WallHit | null {
+  if (layout.plan) {
+    const h = planFirstHit(layout.plan, a, b);
+    return h ? { t: h.t, x: h.x, y: h.y, z: h.z, facing: h.nz < 0 ? -1 : 1, nx: h.nx, nz: h.nz } : null;
+  }
   let best: WallHit | null = null;
   // a face of constant z, solid where `solid` says
   const zFace = (zf: number, solid: (x: number, y: number) => boolean) => {
@@ -1612,6 +1657,7 @@ export function firstWallHit(a: P3, b: P3, layout: GalleryLayout): WallHit | nul
 
 /** Walking distance between two floor points (through the doorways' centres). */
 export function pathDistance(a: P2, b: P2, layout: GalleryLayout): number {
+  if (layout.plan) return planPathDistance(layout.plan, a, b);
   const ra = roomAt(layout, a.z);
   const rb = roomAt(layout, b.z);
   if (ra === rb) return Math.hypot(b.x - a.x, b.z - a.z);
@@ -1704,6 +1750,15 @@ export function inspectPose(
 
 /** How far the camera may back away from a placement before leaving its room. */
 export function inspectMaxDist(pl: Placement, layout: GalleryLayout): number {
+  if (layout.plan) {
+    // as far as the wall (or free-standing wall) the work faces
+    const nx = Math.sin(pl.rotationY);
+    const nz = Math.cos(pl.rotationY);
+    const from = { x: pl.position[0] + nx * 0.2, y: pl.position[1], z: pl.position[2] + nz * 0.2 };
+    const reach = 60;
+    const hit = planFirstHit(layout.plan, from, { x: from.x + nx * reach, y: from.y, z: from.z + nz * reach });
+    return Math.max(1.5, (hit ? hit.t * reach : reach) - 0.6);
+  }
   const room = layout.rooms[pl.room];
   if (Math.abs(pl.rotationY) > 0.1) {
     const hw = room?.halfWidth ?? layout.hallWidth / 2;
