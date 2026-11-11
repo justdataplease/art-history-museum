@@ -16,7 +16,10 @@ import { createRoomMaterials } from "./Room";
 import { crossWalls } from "./room-shading";
 import { PlanFloors, type FloorPiece } from "./room-floor";
 import { ENV_INTENSITY, roomDimmers, roomState } from "./room-env";
-import { laylightTexture, subscribeProceduralTextures } from "./textures";
+import { arabesqueTexture, laylightTexture, subscribeProceduralTextures } from "./textures";
+import { wikiThumb } from "@/lib/img";
+import { currentQuality } from "./quality";
+import { applyRelief, reliefMap } from "./plan-relief";
 
 /** Environment strength while a painting is focused (dim = 0) vs at rest (1), as Room.tsx's. */
 const envDimFactor = (dim: number) => 0.3 + 0.7 * dim;
@@ -26,6 +29,20 @@ const GLASS_AREA = 80;
 
 /** How bright a room's glass is as a light, by its ceiling (Room.tsx Lighting). */
 const areaLevel = (t: GalleryTheme) => t.room.daylightLevel * (t.room.ceiling === "lightbox" ? 1.25 : t.room.ceiling === "vault" ? 1.15 : 1.0);
+
+/** A photograph laid on a ceiling: unlit (its light is the one it was taken in), each channel less its haze. */
+function photoMaterial(black: [number, number, number]): THREE.MeshBasicMaterial {
+  const m = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, visible: false });
+  const uBlack = { value: new THREE.Vector3(...black) };
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uBlack = uBlack;
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform vec3 uBlack;")
+      .replace("#include <map_fragment>", "#ifdef USE_MAP\n  diffuseColor.rgb *= max(texture2D(map, vMapUv).rgb - uBlack, vec3(0.0));\n#endif");
+  };
+  m.customProgramCacheKey = () => "plan-photo";
+  return m;
+}
 
 export function PlanRooms({
   layout,
@@ -44,7 +61,11 @@ export function PlanRooms({
   const scene = useThree((s) => s.scene);
   const invalidate = useThree((s) => s.invalidate);
 
-  const shells = useMemo(() => plan.shells.map((_, i) => buildShell(layout, i, themes[i])), [layout, plan, themes]);
+  // (the full tier raises a photographed ceiling's figures and frames from its surface; the fast tier keeps it flat)
+  const shells = useMemo(() => {
+    const relief = currentQuality().tier !== "fast";
+    return plan.shells.map((_, i) => buildShell(layout, i, themes[i], { relief }));
+  }, [layout, plan, themes]);
   useEffect(() => () => shells.forEach(disposeShell), [shells]);
 
   const rooms = useMemo(
@@ -55,9 +76,31 @@ export function PlanRooms({
         const mats = createRoomMaterials(themes[i], g.half, cross, frame);
         const t = themes[i];
         const glassBase = new THREE.Color(t.room.daylight).multiplyScalar(t.room.daylightLevel);
-        const glassMap = laylightTexture(g.spec.panes[0], g.spec.panes[1]);
-        const glass = new THREE.MeshBasicMaterial({ color: glassBase.clone(), map: glassMap });
-        return { frame, mats, glass, glassBase, glassMap };
+        // the glazing bars: pale by default, as dark as the room has them (their tone is all the glass's map
+        // holds); a vault's windows have a few large panes
+        const bars = t.room.glazing?.bars ? new THREE.Color(t.room.glazing.bars) : null;
+        const tone = bars ? Math.min(0.9, 0.3 * bars.r + 0.59 * bars.g + 0.11 * bars.b + 0.04) : undefined;
+        const windows = t.room.vault === "cloister";
+        const glassMap = windows
+          ? laylightTexture(3, 4, { bar: 0.12 })
+          : laylightTexture(g.spec.panes[0], g.spec.panes[1], { bar: tone, heavyX: t.room.glazing?.heavy?.[0] });
+        const glass = new THREE.MeshBasicMaterial({ color: glassBase.clone(), map: glassMap, side: THREE.DoubleSide });
+        // gilt scrollwork painted on the coves
+        const scroll = t.room.coveArt?.kind === "arabesque" ? arabesqueTexture() : null;
+        const art = scroll
+          ? new THREE.MeshStandardMaterial({
+              color: new THREE.Color(t.room.coveArt!.color),
+              map: scroll,
+              transparent: true,
+              depthWrite: false,
+              // (gold leaf in the shade of a cove still glints: a little of its own light)
+              emissive: new THREE.Color(t.room.coveArt!.color),
+              emissiveIntensity: 0.06,
+              metalness: 0.6,
+              roughness: 0.45,
+            })
+          : null;
+        return { frame, mats, glass, glassBase, glassMap, art, scroll };
       }),
     [shells, themes]
   );
@@ -69,10 +112,36 @@ export function PlanRooms({
         r.mats.dispose();
         r.glass.dispose();
         r.glassMap.dispose();
+        r.art?.dispose();
+        r.scroll?.dispose();
       });
     };
   }, [rooms]);
   useEffect(() => subscribeProceduralTextures(() => invalidate()), [invalidate]);
+
+  // photographs of the real ceilings: one material each, its picture fetched from Wikimedia Commons the first
+  // time its room is drawn (a smaller one on the fast tier), shown once it has come
+  const skins = useMemo(
+    () =>
+      shells.map((g) =>
+        g.photos.map(({ geometry, photo }) => ({
+          geometry,
+          photo,
+          centre: [g.cx, g.cz] as [number, number],
+          material: photoMaterial(photo.black),
+          asked: false,
+        }))
+      ),
+    [shells]
+  );
+  useEffect(
+    () => () =>
+      skins.flat().forEach((s) => {
+        s.material.map?.dispose();
+        s.material.dispose();
+      }),
+    [skins]
+  );
 
   // the rooms around the visitor
   const [shown, setShown] = useState(() => runtime.shellsShown());
@@ -84,6 +153,31 @@ export function PlanRooms({
     apply();
     return runtime.onWindowChange(apply);
   }, [runtime, invalidate]);
+
+  useEffect(() => {
+    const width = currentQuality().tier === "fast" ? 960 : 1920;
+    skins.forEach((list, i) => {
+      if (!(shown[i] ?? true)) return;
+      for (const s of list) {
+        if (s.asked) continue;
+        s.asked = true;
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin("anonymous");
+        loader.load(wikiThumb(s.photo.src, width, s.photo.size[0]), (t) => {
+          t.colorSpace = THREE.SRGBColorSpace;
+          t.anisotropy = 8;
+          if (s.geometry.getAttribute("aRelief")) {
+            const map = reliefMap(t.image as HTMLImageElement, s.photo);
+            if (map) applyRelief(s.geometry, s.photo, map, s.centre);
+          }
+          s.material.map = t;
+          s.material.visible = true;
+          s.material.needsUpdate = true;
+          invalidate();
+        });
+      }
+    });
+  }, [skins, shown, invalidate]);
 
   const floors = useMemo<FloorPiece[]>(
     () =>
@@ -130,6 +224,7 @@ export function PlanRooms({
   const apply = (k: number) => {
     placeAreas(k);
     rooms.forEach((r) => r.glass.color.copy(r.glassBase).multiplyScalar(0.22 + 0.78 * k));
+    skins.flat().forEach((s) => s.material.color.setRGB(...s.photo.gain).multiplyScalar(0.25 + 0.75 * k));
     scene.environmentIntensity = ENV_INTENSITY * envDimFactor(k);
     roomDimmers.forEach((d) => d.uniform.value.copy(d.base).multiplyScalar(0.25 + 0.75 * k));
     roomState.dim = k;
@@ -172,11 +267,16 @@ export function PlanRooms({
             <mesh geometry={g.trim} material={m.trim} matrixAutoUpdate={false} />
             <mesh geometry={g.gilt} material={m.gilt} matrixAutoUpdate={false} />
             <mesh geometry={g.marble} material={m.marble} matrixAutoUpdate={false} />
+            <mesh geometry={g.paint} material={m.paint} matrixAutoUpdate={false} />
+            {rooms[i].art && <mesh geometry={g.art} material={rooms[i].art!} matrixAutoUpdate={false} renderOrder={2} />}
             <mesh geometry={g.benchSeat} material={m.benchSeat} matrixAutoUpdate={false} />
             <mesh geometry={g.benchFrame} material={m.benchFrame} matrixAutoUpdate={false} />
             <mesh geometry={g.benchAccent} material={m.benchAccent} matrixAutoUpdate={false} />
             <mesh geometry={g.benchShadow} material={m.benchShadow} matrixAutoUpdate={false} layers={1} renderOrder={1} />
             <mesh geometry={g.glass} material={rooms[i].glass} matrixAutoUpdate={false} />
+            {skins[i].map((s, k) => (
+              <mesh key={k} geometry={s.geometry} material={s.material} matrixAutoUpdate={false} />
+            ))}
           </group>
         );
       })}

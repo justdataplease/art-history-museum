@@ -72,6 +72,8 @@ export interface Barrier {
   posts: [number, number][];
   box: [number, number, number, number];
   room: number;
+  /** A rail of wood on slim legs (before a work behind glass) instead of a rope on brass posts. */
+  rail?: boolean;
 }
 
 /** A custom room's elevator, in the entrance wall beside the doors (a room with more than one floor). */

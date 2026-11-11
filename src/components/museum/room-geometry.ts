@@ -46,11 +46,13 @@ export class GeoBatch {
   /** Add a geometry (consumed), optionally transformed into world space, in `color` when the batch is colored. */
   add(g: THREE.BufferGeometry, m?: THREE.Matrix4, color?: THREE.Color): this {
     if (m) g.applyMatrix4(m);
+    // (a part already in its own colours, merged from a coloured batch, keeps them unless given one here)
+    const own = this.colored && !color && !!g.attributes.color;
     for (const name of Object.keys(g.attributes)) {
-      if (name !== "position" && name !== "normal" && name !== "uv") g.deleteAttribute(name);
+      if (name !== "position" && name !== "normal" && name !== "uv" && !(own && name === "color")) g.deleteAttribute(name);
     }
     const count = g.attributes.position.count;
-    if (this.colored) {
+    if (this.colored && !own) {
       const c = color ?? this.current ?? WHITE;
       const rgb = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
@@ -370,8 +372,39 @@ export function roomCeilingSpec(
   inset = TRACK_INSET,
 ): CeilingSpec {
   const railX = W / 2 - inset;
+  const glazing = theme.room.glazing;
+  if (theme.room.ceiling === "vault" && theme.room.vault === "barrel") {
+    // one round vault from wall to wall down the room, its crown glazed between ribs: the glass follows the
+    // vault (plan-geometry.ts builds it); here, where its light comes from
+    const r = W / 2;
+    const rise = theme.room.coveRise ?? r;
+    const wellX = Math.min(theme.room.glassHalfWidth ?? r * 0.52, r - 0.6);
+    const up = Math.sqrt(Math.max(0, 1 - (wellX / r) ** 2));
+    const len = z1 - z0;
+    const n = Math.max(1, Math.round(len / 3.3));
+    const bays: { z0: number; z1: number }[] = [];
+    for (let i = 0; i < n; i++) bays.push({ z0: z0 + (len * i) / n, z1: z0 + (len * (i + 1)) / n });
+    return {
+      kind: "vault",
+      coveR: r,
+      coveBase: H,
+      wellX,
+      wellZ0: z0,
+      wellZ1: z1,
+      yCeil: H + rise,
+      yGlass: H + rise * (0.35 * up + 0.65),
+      bays,
+      beamW: 0.14,
+      beamDepth: 0.2,
+      panes: theme.room.panes ?? [8, 5],
+      z0,
+      z1,
+    };
+  }
   if (theme.room.ceiling === "vault") {
-    // coves as deep as the room allows springing from the top of the walls, a skylight between them
+    // coves as deep as the room allows springing from the top of the walls (or of the attic above them), a
+    // skylight between them (a cloister vault: a painted panel, its light from windows in the coves)
+    const base = H + (theme.room.attic?.height ?? 0);
     const r = theme.room.coveRadius
       ? Math.max(0.6, Math.min(theme.room.coveRadius, W / 2 - 0.9, (z1 - z0) / 2 - 0.9))
       : Math.max(1.2, Math.min(2.6, W / 2 - 1.9, (z1 - z0) / 2 - 1.9));
@@ -380,7 +413,11 @@ export function roomCeilingSpec(
     const wellZ0 = z0 + r + band;
     const wellZ1 = z1 - r - band;
     const len = wellZ1 - wellZ0;
-    const n = Math.max(2, Math.round(len / 3.2));
+    // a skylight of small panes in heavier bars: a bay to each run of panes between two heavy bars
+    const paneOf = glazing?.pane;
+    const pane = Array.isArray(paneOf) ? paneOf[1] : paneOf;
+    const paneAcross = Array.isArray(paneOf) ? paneOf[0] : paneOf;
+    const n = Math.max(1, Math.round(len / (pane && glazing?.heavy ? glazing.heavy[1] * pane : pane ? Math.max(2.4, 4 * pane) : 3.2)));
     const bays: { z0: number; z1: number }[] = [];
     for (let i = 0; i < n; i++) {
       bays.push({ z0: wellZ0 + (len * i) / n, z1: wellZ0 + (len * (i + 1)) / n });
@@ -388,16 +425,16 @@ export function roomCeilingSpec(
     return {
       kind: "vault",
       coveR: r,
-      coveBase: H,
+      coveBase: base,
       wellX,
       wellZ0,
       wellZ1,
-      yCeil: H + (theme.room.coveRise ?? r),
-      yGlass: H + (theme.room.coveRise ?? r) + 0.55,
+      yCeil: base + (theme.room.coveRise ?? r),
+      yGlass: base + (theme.room.coveRise ?? r) + (pane ? 0.3 : 0.55),
       bays,
-      beamW: 0.2,
-      beamDepth: 0.3,
-      panes: theme.room.panes ?? [4, 3],
+      beamW: pane ? 0.07 : 0.2,
+      beamDepth: pane ? 0.1 : 0.3,
+      panes: pane && paneAcross ? [Math.max(1, Math.round((2 * wellX) / paneAcross)), Math.max(1, Math.round(len / n / pane))] : theme.room.panes ?? [4, 3],
       z0,
       z1,
     };

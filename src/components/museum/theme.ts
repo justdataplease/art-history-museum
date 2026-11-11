@@ -42,10 +42,11 @@ export type EraKey =
  */
 export type FrameStyle = "tabernacle" | "baroque" | "gilt-simple" | "wood" | "floater" | "mount" | "print" | "miniature";
 
-/** parquet: oak strips laid in herringbone; chevron: long oak boards in wide chevron bands (point de Hongrie), pale,
- *  as the Louvre's picture galleries have it; marble: polished
+/** parquet: oak strips laid in herringbone; chevron: long oak boards in wide chevron bands (point de Hongrie), pale;
+ *  damier: the same boards in square panels, each panel's slanting the other way from its neighbours', so the
+ *  floor reads as a board of light and dark squares (the Louvre's picture galleries); marble: polished
  *  white slabs with grey veins in running bond (the National Gallery in Athens); concrete: stone or concrete slabs. */
-export type FloorKind = "oak-dark" | "oak-light" | "concrete" | "parquet" | "chevron" | "marble";
+export type FloorKind = "oak-dark" | "oak-light" | "concrete" | "parquet" | "chevron" | "damier" | "marble";
 
 /**
  * laylight — 19th-century top-lit gallery: coved cornice, flat ceiling band
@@ -56,6 +57,10 @@ export type FloorKind = "oak-dark" | "oak-light" | "concrete" | "parquet" | "che
  *            great skylight (the Louvre's Grande Galerie and red rooms).
  */
 export type CeilingKind = "laylight" | "lightbox" | "vault";
+
+/** Seats a real room has that no room style does (furniture.ts SEATS): flat leather daybeds on steel legs; great
+ *  round sofas of padded lobes round a raised back (the Grande Galerie's); a long sofa that winds like a wave. */
+export type SeatKey = "daybed" | "lobed-borne" | "wave-sofa";
 
 /**
  * plaster — lime plaster / distemper with a visible trowel texture
@@ -131,8 +136,45 @@ export interface RoomStyle {
   pedestal?: { height: number; color: string };
   /** The marble of an arch across the gallery and of its piers. */
   archStone?: string;
-  /** Another style's furniture (the red rooms' plain leather benches are a modern museum's). */
-  furniture?: EraKey;
+  /** Another style's furniture (the red rooms' plain leather benches are a modern museum's), or seats of a
+   *  room's own. */
+  furniture?: EraKey | SeatKey;
+  /** Fabric panels' joints: one every so many metres along the wall, and (if given) one across it at this
+   *  height (default: every 1.9 m, across at 4.6 m). */
+  panelSeams?: { every: number; across?: number };
+  /** A chequered floor's lane of plain chevrons down the middle of the room: its width (m). */
+  floorLane?: number;
+  /** A vault's form. cove (default): coves on all four sides round a flat skylight. barrel: one round vault from
+   *  wall to wall down the room, glazed along its crown between ribs (the Grande Galerie). cloister: four tall
+   *  coves rising to a painted panel, lit by round-headed windows in them (the Salon Denon). */
+  vault?: "cove" | "barrel" | "cloister";
+  /** The skylight's glazing: the bars' colour (default pale), a heavier bar every so many panes [across, along],
+   *  and a pane's size in metres, or [across, along] (instead of `panes` a bay). */
+  glazing?: { bars?: string; heavy?: [number, number]; pane?: number | [number, number] };
+  /** The coves' own colour (default: the ceiling's). */
+  cove?: string;
+  /** Ornament on the coves. arabesque: gilt scrollwork painted at intervals along them (the red rooms). stucco:
+   *  panels of `ground` in gilt frames, round medallions and figures in white relief, a seated figure at the
+   *  middle of each side and one in each corner (the Salon Carré). mural: painted compartments in gilt frames,
+   *  an eagle at each corner (the Salon Denon). */
+  coveArt?: { kind: "arabesque" | "stucco" | "mural"; color: string; ground?: string; every?: number };
+  /** A band between the cornice and the coves: gilt panels between small pilasters (the Salon Carré's attic).
+   *  `setback`: it stands this far behind the walls' faces, a gallery with a rail on the cornice before it (a
+   *  pavilion's upper storey: the room is wider above its cornice). */
+  attic?: { height: number; color: string; panel?: number; setback?: number };
+  /** The cornice carried on brackets (a pavilion's heavy cornice). */
+  brackets?: boolean;
+  /** A low barrier before the walls: a cord on slim posts, or a steel rail; how far out, how high. */
+  guard?: { kind: "cord" | "rail"; out: number; height: number };
+  /** A lighting beam that runs round the room, held out from the walls: how high, how far out, its colour (the
+   *  Salon Carré's white trough of lamps). */
+  lightBeam?: { height: number; out: number; color: string };
+  /** The doors' cases (default: the trim) and their leaves (a shut door's; default: the trim). */
+  doorCase?: string;
+  doorLeaf?: string;
+  /** Bays of pale marble on the long walls beside an arch's columns: two pilasters, a round-headed niche between
+   *  them (the Grande Galerie's): the marble's colour. */
+  nicheBays?: string;
 }
 
 export interface GalleryTheme {
@@ -694,6 +736,7 @@ export const GROUNDS: { key: FloorKind; label: string }[] = [
   { key: "oak-dark", label: "Dark oak boards" },
   { key: "parquet", label: "Oak parquet, herringbone" },
   { key: "chevron", label: "Pale oak in wide chevrons" },
+  { key: "damier", label: "Pale oak in chequered panels" },
 ];
 export const isGround = (k: string | null | undefined): k is FloorKind => GROUNDS.some((g) => g.key === k);
 /** Each floor's colour, sheen and slab or board width: marble polished; the others as a style has them. */
@@ -705,6 +748,8 @@ const GROUND_LOOK: Record<FloorKind, { tint: string; roughness: number; plank: n
   parquet: { tint: THEMES.palace.floor.tint, roughness: THEMES.palace.room.floorRoughness, plank: THEMES.palace.room.plankWidth },
   // boards of 12 cm in bands a metre wide, waxed
   chevron: { tint: "#a98a5f", roughness: 0.34, plank: 0.12 },
+  // the same boards in panels 1.4 m square
+  damier: { tint: "#9a8566", roughness: 0.3, plank: 0.115 },
 };
 
 const byPeriod = new Map<string, GalleryTheme>();

@@ -68,7 +68,8 @@ function createFloorMaterial(
   const marble = kind === "marble";
   const wood = kind !== "concrete" && !marble;
   const parquet = kind === "parquet";
-  const chevron = kind === "chevron";
+  const damier = kind === "damier";
+  const chevron = kind === "chevron" || damier;
   // only a map made here is disposed with the floor
   let ownMap: THREE.Texture | null = null;
   const map =
@@ -90,6 +91,8 @@ function createFloorMaterial(
     uPlank: {
       value: parquet
         ? new THREE.Vector2(pw, 5)
+        : damier
+        ? new THREE.Vector2(pw, 1.4)
         : chevron
         ? new THREE.Vector2(pw, 1.05)
         : marble
@@ -103,6 +106,9 @@ function createFloorMaterial(
     // grain / aggregate tile size in metres
     uGrain: { value: wood ? new THREE.Vector2(0.62, 1.2) : new THREE.Vector2(1.1, 1.1) },
     uPlankVar: { value: kind === "oak-dark" ? 0.16 : parquet ? 0.18 : chevron ? 0.13 : marble ? 0.05 : 0.12 },
+    // a chequer of panels: (1: the slant turns from panel to panel down the room too, half the width of a lane of
+    // chevrons down the middle of the room)
+    uPanel: { value: new THREE.Vector2(damier ? 1 : 0, damier ? (theme.room.floorLane ?? 0) / 2 : 0) },
     uOrigin: { value: new THREE.Vector2(-W / 2, -L / 2) },
     uRoomHalf: { value: new THREE.Vector3(W / 2, H, L / 2) },
     uRoomAO: { value: new THREE.Vector3(0.55, 0.32, 0.25) },
@@ -144,6 +150,7 @@ uniform float uReflectMix;
 uniform vec2 uPlank;
 uniform vec2 uGrain;
 uniform float uPlankVar;
+uniform vec2 uPanel;
 uniform vec2 uOrigin;
 varying vec4 vReflUv;
 // 1 on the board face, 0 in a joint; fades to the joint's mean coverage
@@ -207,31 +214,48 @@ float floorJoint = 1.0;
   // long oak boards in chevron bands down the room (point de Hongrie): each band's boards slant 45 degrees, one
   // way and then the other, their ends meeting point to point on the band lines; a band reads lighter or darker
   // than its neighbours as the light takes its grain
+  // (a chequer, uPanel.x: the bands are cut into square panels down the room as well, each panel's boards
+  // slanting the other way from its four neighbours', so the floor reads as a board of light and dark squares;
+  // uPanel.y: a lane of plain chevrons down the middle of the room, half as wide as this)
   vec2 fp = vRoomPos.xz - uOrigin;
   float sw = uPlank.x;
   float bw = uPlank.y;
-  float band = floor(fp.x / bw);
-  float fx = fract(fp.x / bw);
-  float dirn = mod(band, 2.0) < 0.5 ? 1.0 : -1.0;
+  float xc = vRoomPos.x;
+  float band = floor(xc / bw);
+  float fx = fract(xc / bw);
+  float cell = floor(fp.y / bw);
+  float fy = fract(fp.y / bw);
+  bool lane = abs(xc) < uPanel.y;
+  float dirn = mod(band + (lane ? 0.0 : uPanel.x * cell), 2.0) < 0.5 ? 1.0 : -1.0;
+  if (lane) {
+    // two bands, one each side of the middle line, their boards meeting point to point on it
+    float lw = uPanel.y;
+    band = xc < 0.0 ? -0.5 : 0.5;
+    fx = fract(xc / lw);
+    dirn = xc < 0.0 ? 1.0 : -1.0;
+    bw = lw;
+  }
   float v = fp.y + dirn * (fx - 0.5) * bw;
   float pitch = sw * 1.41421356;
   float row = floor(v / pitch);
   float fr = fract(v / pitch);
-  vec2 id = vec2(band, row);
+  vec2 id = vec2(band + (lane ? 0.0 : uPanel.x * cell * 7.0), row);
   float h = roomHash2(id);
   float h2 = roomHash2(id * 1.37 + 4.0);
   vec2 baseUv = fp / uGrain;
   vec2 buv = vec2(fr * sw, fx * bw * 1.41421356) / uGrain;
   vec4 grain = textureGrad(map, buv + vec2(h * 0.53, h2 * 7.31), dFdx(baseUv), dFdy(baseUv));
-  float tone = (1.0 + (h - 0.5) * uPlankVar) * (1.0 + dirn * 0.045);
+  float tone = (1.0 + (h - 0.5) * uPlankVar) * (1.0 + dirn * (lane ? 0.02 : 0.045 + 0.105 * uPanel.x)) * (lane ? 1.05 : 1.0);
   vec3 hue = vec3(1.0 + (h2 - 0.5) * 0.05, 1.0, 1.0 - (h2 - 0.5) * 0.07);
   float wear = roomNoise(vec3(fp * 0.21, 1.3)) * 0.6 + roomNoise(vec3(fp * 0.73, 7.7)) * 0.4;
   tone *= 1.0 + (wear - 0.5) * 0.09;
   float es = min(fr, 1.0 - fr) * sw;
   float eb = min(fx, 1.0 - fx) * bw;
   floorJoint = jointMask(es, 0.0007, fwidth(v) * 0.7071, sw) * jointMask(eb, 0.0009, fwidth(fp.x), bw);
+  if (uPanel.x > 0.5 && !lane) floorJoint *= jointMask(min(fy, 1.0 - fy) * bw, 0.0009, fwidth(fp.y), bw);
+  if (uPanel.y > 0.0) floorJoint *= jointMask(abs(abs(xc) - uPanel.y), 0.0012, fwidth(fp.x), bw);
   diffuseColor.rgb *= grain.rgb * tone * hue * mix(0.4, 1.0, floorJoint);
-  floorRough = (1.0 + (h2 - 0.5) * 0.18 + (wear - 0.5) * 0.14 - dirn * 0.05) * mix(1.6, 1.0, floorJoint);
+  floorRough = (1.0 + (h2 - 0.5) * 0.18 + (wear - 0.5) * 0.14 - dirn * (0.05 + 0.05 * uPanel.x)) * mix(1.6, 1.0, floorJoint);
 }
 `
           : marble

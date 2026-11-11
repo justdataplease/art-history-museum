@@ -472,22 +472,26 @@ export function createRoomMaterials(theme: GalleryTheme, roomHalf: THREE.Vector3
       mottle: finish === "paint" ? 0.006 : 0.03,
       mottleScale: 0.4,
       shadowGap: theme.room.classical || finish === "panel" ? undefined : { bottom: 0.045, top: 0.018 },
-      // fabric stretched on panels: a joint every 1.9 m along the wall and one across it at 4.6 m
+      // fabric stretched on panels: a joint every so far along the wall (1.9 m) and one across it (at 4.6 m, or
+      // none), as the room has them
       extraColor:
         finish === "panel"
           ? `{
   vec3 pan = abs(normalize(vRoomNrm));
   float pal = pan.x > 0.5 ? vRoomPos.z : vRoomPos.x;
   float ppx = fwidth(pal);
-  float pf = fract(pal / 1.9);
-  float seam = 1.0 - smoothstep(0.003, 0.003 + ppx, min(pf, 1.0 - pf) * 1.9);
-  seam = max(seam, 1.0 - smoothstep(0.003, 0.003 + fwidth(vRoomPos.y), abs(vRoomPos.y - 4.6)));
+  float pf = fract(pal / uSeam.x);
+  float seam = 1.0 - smoothstep(0.003, 0.003 + ppx, min(pf, 1.0 - pf) * uSeam.x);
+  seam = max(seam, 1.0 - smoothstep(0.003, 0.003 + fwidth(vRoomPos.y), abs(vRoomPos.y - uSeam.y)));
   seam *= 1.0 - smoothstep(0.03, 0.25, ppx);
   diffuseColor.rgb *= 1.0 - 0.3 * seam;
 }`
           : undefined,
-      extraUniforms: { uWash: wash },
-      extraPars: "uniform vec3 uWash;",
+      extraUniforms: {
+        uWash: wash,
+        uSeam: { value: new THREE.Vector2(theme.room.panelSeams?.every ?? 1.9, theme.room.panelSeams ? theme.room.panelSeams.across ?? -100 : 4.6) },
+      },
+      extraPars: "uniform vec3 uWash;\nuniform vec2 uSeam;",
       extraDirect: useWash
         ? `{
   float t = clamp(vRoomPos.y / uRoomHalf.y, 0.0, 1.0);
@@ -669,9 +673,12 @@ export function createRoomMaterials(theme: GalleryTheme, roomHalf: THREE.Vector3
   float cloud = roomNoise(mp * 0.6 + 4.0);
   float vein = 1.0 - smoothstep(0.0, 0.018, abs(n - 0.5));
   float vein2 = 1.0 - smoothstep(0.0, 0.01, abs(roomNoise(mp * 3.7 + 9.0) - 0.5));
-  diffuseColor.rgb *= 0.86 + 0.16 * n + 0.14 * (cloud - 0.5);
-  vec3 pale = min(diffuseColor.rgb * 1.7 + 0.07, vec3(0.9));
-  diffuseColor.rgb = mix(diffuseColor.rgb, pale, max(vein * 0.4 * cloud, vein2 * 0.3));
+  float blot = smoothstep(0.38, 0.62, roomNoise(mp * 1.3 + 7.0));
+  diffuseColor.rgb *= (0.8 + 0.22 * n + 0.2 * (cloud - 0.5)) * (0.86 + 0.24 * blot);
+  // (a dark marble's veins are pale, a pale marble's dark)
+  float mlum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+  vec3 pale = mlum > 0.3 ? diffuseColor.rgb * vec3(0.5, 0.44, 0.46) : min(diffuseColor.rgb * 1.9 + 0.1, vec3(0.92));
+  diffuseColor.rgb = mix(diffuseColor.rgb, pale, max(vein * 0.7 * cloud, vein2 * 0.5));
 }`
           : `{
   vec3 mp = vRoomPos * vec3(2.2, 0.55, 2.2);
@@ -682,6 +689,13 @@ export function createRoomMaterials(theme: GalleryTheme, roomHalf: THREE.Vector3
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.82, 0.76), max(vein * 0.6, vein2 * 0.35));
 }`,
       }
+    );
+
+    // painted and plain parts, each in its own colour (a real room's: a gilt attic, a door of oak, a cove's
+    // panels, a steel rail)
+    const paint = patchRoomMaterial(
+      new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.7, metalness: 0 }),
+      { key: "paint", roomHalf, frame, cross, ao: [0.42, 0.3, 0.25] }
     );
 
     // soft contact shadow under each bench: an SDF blob, no texture, no pass
@@ -717,7 +731,7 @@ export function createRoomMaterials(theme: GalleryTheme, roomHalf: THREE.Vector3
         }`,
     });
 
-    const all = [wall, ceiling, trim, track, benchSeat, benchFrame, benchAccent, benchShadow, gilt, marble];
+    const all = [wall, ceiling, trim, track, benchSeat, benchFrame, benchAccent, benchShadow, gilt, marble, paint];
     return {
       wall,
       ceiling,
@@ -729,6 +743,7 @@ export function createRoomMaterials(theme: GalleryTheme, roomHalf: THREE.Vector3
       benchShadow,
       gilt,
       marble,
+      paint,
       dimmers,
       floorGrain: woodFloor ? grain : null,
       cross,

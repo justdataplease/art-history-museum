@@ -18,6 +18,7 @@ import {
   frameAllowance,
   labelReach,
   ropeOff,
+  type Barrier,
   type Furnishing,
   type FurnishSizes,
   type GalleryLayout,
@@ -32,8 +33,11 @@ import {
   type PlanDoor,
   type PlanEntry,
   type PlanLayout,
+  type PlanNiche,
   type PlanPartition,
+  type PlanPhoto,
   type PlanShell,
+  type PlanShrine,
   type PlanZone,
   type Side,
 } from "./plan-nav";
@@ -51,10 +55,15 @@ const DOOR_CLEAR = 0.55;
 const CORNER_CLEAR = 0.7;
 /** A shut door's depth (the wall it stands in), and an entrance's. */
 const SHUT_DEPTH = 0.9;
-/** The columns under an arch across a gallery: their radius, how far out from the wall they stand, how far
- *  apart along it; the entablature they carry (its height, and how far it reaches past them); the wall kept clear
- *  of works either side of the arch. */
-const COLUMN = { r: 0.34, out: 1.05, apart: 3.0, entablature: 0.9, reach: 0.5, clear: 2.5 };
+/** The columns under an arch across a gallery, two a side one behind the other along it: their radius, how far
+ *  out from the wall their axis stands, how far apart along the gallery; the entablature they carry (its height:
+ *  the arch springs from its top, the wall's cornice), how far it reaches past them toward the middle of the
+ *  room, how far the arch rises for its half span; the block of marble they stand on (how far it reaches past
+ *  them along the gallery and toward the middle); the wall kept clear of works either side of the arch. */
+export const COLUMN = { r: 0.34, out: 1.6, apart: 1.9, entablature: 1.45, reach: 0.3, rise: 0.62, plinth: 0.72, clear: 2.5 };
+/** A bay of marble beside an arch's columns (two pilasters, a niche): how far from the arch along the wall, and
+ *  half its width. */
+export const NICHE = { off: 7.0, half: 1.35 };
 
 const OPPOSITE: Record<Side, Side> = { n: "s", s: "n", w: "e", e: "w" };
 /** The way a wall's face looks (into its room), as a turn about y (Placement.rotationY). */
@@ -72,8 +81,11 @@ interface Run {
   a: number;
   b: number;
   plane: number;
-  /** A free-standing wall's face: only works pinned to it hang there. */
+  /** A free-standing wall's face; `pinsOnly`: only works pinned to it hang there. */
   wall?: string;
+  pinsOnly?: boolean;
+  /** How high the wall is here. */
+  top: number;
   hung: Hung[];
 }
 interface Hung {
@@ -86,7 +98,7 @@ interface Hung {
   order: number;
   /** A pinned work's centre along the wall (x or z). */
   at?: number;
-  /** A small work hung above this one (a palace gallery hangs its smaller pictures two high). */
+  /** A work hung above this one (a palace gallery hangs its smaller pictures two high, a salon its great ones). */
   over?: Hung;
 }
 
@@ -94,20 +106,34 @@ interface Hung {
 const STACK = { h: 1.15, w: 1.45 };
 const STACK_EYE = 1.3;
 const STACK_GAP = 0.22;
+/** Two rows of great canvases: the wall between an upper frame and the cornice, and between the two rows. */
+const ROW_TOP = 0.4;
+const ROW_GAP = 0.3;
 
 /** A bay's works with its small ones paired, one above the other, where two follow each other and the wall is
- *  high enough: each pair takes one place on the wall. */
-function stacked(works: Hung[], wallHeight: number): Hung[] {
+ *  high enough: each pair takes one place on the wall. `rows`: any two that fit under the cornice, the wider
+ *  below. */
+function stacked(works: Hung[], wallHeight: number, rows: boolean, minBottom: number): Hung[] {
   if (wallHeight < 4.6) return works;
   const small = (hw: Hung) => hw.h <= STACK.h && hw.w <= STACK.w;
+  const framed = (hw: Hung) => hw.h + 2 * frameAllowance(hw.w, hw.h);
   const out: Hung[] = [];
   for (let i = 0; i < works.length; i++) {
-    const lo = works[i];
-    const up = works[i + 1];
-    if (up && small(lo) && small(up)) {
-      out.push({ ...lo, over: up, left: Math.max(lo.left, up.left), right: Math.max(lo.right, up.right) });
+    const a = works[i];
+    const b = works[i + 1];
+    if (b && rows && !(small(a) && small(b))) {
+      const [lo, up] = a.w >= b.w ? [a, b] : [b, a];
+      const fits = Math.max(minBottom, EYE - lo.h / 2) + framed(lo) + ROW_GAP + framed(up) + ROW_TOP <= wallHeight;
+      if (fits && up.w >= lo.w * 0.35) {
+        out.push({ ...lo, order: Math.min(a.order, b.order), over: up, left: Math.max(lo.left, up.left), right: Math.max(lo.right, up.right) });
+        i++;
+        continue;
+      }
+    }
+    if (b && small(a) && small(b)) {
+      out.push({ ...a, over: b, left: Math.max(a.left, b.left), right: Math.max(a.right, b.right) });
       i++;
-    } else out.push(lo);
+    } else out.push(a);
   }
   return out;
 }
@@ -175,9 +201,15 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
     return sh.zones[0];
   };
   const faceOf = (b: Box, side: Side) => (side === "n" ? b.z0 : side === "s" ? b.z1 : side === "w" ? b.x0 : b.x1);
+  /** How near its walls a room lets one stand: behind its cord or rail, where it has one. */
+  const margin = (si: number) => {
+    const g = space.rooms[si].look?.room?.guard;
+    return g ? Math.max(WALL_MARGIN, g.out + BODY_RADIUS + 0.05) : WALL_MARGIN;
+  };
 
   // ---- the doors
   let entry: PlanEntry | null = null;
+  let entryDoor: PlanDoor | null = null;
   for (const d of space.doors) {
     const sh = shellOf(d.room);
     if (!sh) continue;
@@ -193,10 +225,11 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
     const box: Box = horizontal(d.side)
       ? { x0: d.at - half, x1: d.at + half, z0: Math.min(near, far), z1: Math.max(near, far) }
       : { x0: Math.min(near, far), x1: Math.max(near, far), z0: d.at - half, z1: d.at + half };
-    doors.push({
+    const door: PlanDoor = {
       a, b, side: d.side, at: d.at, half, height: d.h,
-      arch: d.arch ? Math.min(half * 0.9, d.h - 2.4) : 0, box, bay: false,
-    });
+      arch: d.arch ? Math.min(half * 0.9, d.h - 2.4) : 0, box, bay: false, window: !!d.window && !to,
+    };
+    doors.push(door);
     if (d.entrance && !entry) {
       // just inside the door, and a few steps on, facing into the room
       const yaw = d.side === "n" ? Math.PI : d.side === "s" ? 0 : d.side === "w" ? -Math.PI / 2 : Math.PI / 2;
@@ -204,11 +237,13 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
       const inZ = d.side === "n" ? 1 : d.side === "s" ? -1 : 0;
       const px = horizontal(d.side) ? d.at : near;
       const pz = horizontal(d.side) ? near : d.at;
+      const walk = Math.max(3.1, margin(sh.index) + 1.6);
       entry = {
         x: round(px + inX * 0.85), z: round(pz + inZ * 0.85),
-        spawnX: round(px + inX * 3.1), spawnZ: round(pz + inZ * 3.1),
+        spawnX: round(px + inX * walk), spawnZ: round(pz + inZ * walk),
         yaw, zone: a,
       };
+      entryDoor = door;
     }
   }
   if (!entry) {
@@ -217,55 +252,100 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
   }
 
   // ---- free-standing walls, and the columns under a gallery's arches
-  const partitions: (PlanPartition & { id: string })[] = space.walls.flatMap((w) => {
+  const walls: (PlanPartition & { id: string; hang: boolean })[] = space.walls.flatMap((w) => {
     const sh = shellOf(w.room);
-    return sh ? [{ id: w.id, shell: sh.index, x0: w.x0, x1: w.x1, z0: w.z0, z1: w.z1, height: w.h }] : [];
+    return sh ? [{ id: w.id, shell: sh.index, x0: w.x0, x1: w.x1, z0: w.z0, z1: w.z1, height: w.h, portal: !!w.portal, hang: !!w.hang }] : [];
   });
+  const partitions: PlanPartition[] = [...walls];
   const columns: PlanColumn[] = [];
   const arches: PlanArch[] = [];
+  const niches: PlanNiche[] = [];
   space.rooms.forEach((r, si) => {
     const sh = shells[si];
     // at each bay line, or where the space says
-    const lines =
+    const lines: { at: number; marble?: string }[] =
       r.arches === "bays"
         ? sh.zones.slice(1).map((zi) => {
             const a = zones[zi];
             const b = zones[zi - 1];
-            return sh.alongX ? (a.x0 === b.x1 ? a.x0 : a.x1) : a.z0 === b.z1 ? a.z0 : a.z1;
+            return { at: sh.alongX ? (a.x0 === b.x1 ? a.x0 : a.x1) : a.z0 === b.z1 ? a.z0 : a.z1 };
           })
-        : r.arches ?? [];
+        : (r.arches ?? []).map((a) => (typeof a === "number" ? { at: a } : a));
     const W = sh.alongX ? r.z1 - r.z0 : r.x1 - r.x0;
     const half = W / 2 - COLUMN.out - COLUMN.reach;
-    const spring = r.h - COLUMN.entablature;
-    const rise = Math.min(half, (r.look?.room?.coveRise ?? r.look?.room?.coveRadius ?? 2.6) + COLUMN.entablature - 0.75);
-    for (const at of lines) {
-      arches.push({ shell: si, at, half, spring, rise, depth: COLUMN.apart / 2 + 0.5 });
-      for (const along of [-COLUMN.apart / 2, COLUMN.apart / 2])
-        for (const wall of [-1, 1]) {
-          const across = wall < 0 ? (sh.alongX ? r.z0 : r.x0) + COLUMN.out : (sh.alongX ? r.z1 : r.x1) - COLUMN.out;
+    const top = r.h - COLUMN.entablature;
+    const plinth = r.look?.room?.pedestal?.height ?? 0;
+    const lo = sh.alongX ? r.z0 : r.x0;
+    const hi = sh.alongX ? r.z1 : r.x1;
+    for (const line of lines) {
+      const at = line.at;
+      arches.push({ shell: si, at, half, spring: r.h, rise: Math.min(half, half * COLUMN.rise), depth: COLUMN.apart / 2 + 0.4, marble: line.marble });
+      for (const wall of [-1, 1]) {
+        const across = wall < 0 ? lo + COLUMN.out : hi - COLUMN.out;
+        for (const along of [-COLUMN.apart / 2, COLUMN.apart / 2]) {
           columns.push({
             x: round(sh.alongX ? at + along : across), z: round(sh.alongX ? across : at + along),
-            r: COLUMN.r, shell: si, height: spring - COLUMN.entablature,
+            r: COLUMN.r, shell: si, height: top, marble: line.marble,
           });
         }
+        // the block the pair stands on, from the wall out past them: nothing walks through it
+        if (plinth > 0) {
+          const a0 = at - COLUMN.apart / 2 - COLUMN.plinth;
+          const a1 = at + COLUMN.apart / 2 + COLUMN.plinth;
+          const c0 = wall < 0 ? lo : hi - COLUMN.out - COLUMN.plinth;
+          const c1 = wall < 0 ? lo + COLUMN.out + COLUMN.plinth : hi;
+          partitions.push({
+            shell: si, height: plinth, portal: false, plinth: true,
+            ...(sh.alongX ? { x0: a0, x1: a1, z0: c0, z1: c1 } : { x0: c0, x1: c1, z0: a0, z1: a1 }),
+          });
+        }
+        // a bay of marble with a niche either side of the columns
+        if (r.look?.room?.nicheBays) {
+          const side: Side = sh.alongX ? (wall < 0 ? "n" : "s") : wall < 0 ? "w" : "e";
+          const ends = sh.alongX ? [r.x0, r.x1] : [r.z0, r.z1];
+          for (const s of [-1, 1]) {
+            const mid = at + s * NICHE.off;
+            if (mid - NICHE.half < ends[0] + 1 || mid + NICHE.half > ends[1] - 1) continue;
+            niches.push({ shell: si, side, at: round(mid), half: NICHE.half, height: top });
+          }
+        }
+      }
     }
   });
 
   // ---- where one may stand, and where a line of sight may run
-  const m = WALL_MARGIN;
-  const allowed: Box[] = zones.map((z) => ({
-    x0: z.x0 + (z.open.w ? 0 : m), x1: z.x1 - (z.open.e ? 0 : m),
-    z0: z.z0 + (z.open.n ? 0 : m), z1: z.z1 - (z.open.s ? 0 : m),
-  }));
+  const allowed: Box[] = zones.map((z) => {
+    const m = margin(z.shell);
+    return {
+      x0: z.x0 + (z.open.w ? 0 : m), x1: z.x1 - (z.open.e ? 0 : m),
+      z0: z.z0 + (z.open.n ? 0 : m), z1: z.z1 - (z.open.s ? 0 : m),
+    };
+  });
   const clear: PlanLayout["clear"] = zones.map((z) => ({ box: { x0: z.x0, x1: z.x1, z0: z.z0, z1: z.z1 }, top: Infinity }));
   for (const d of doors) {
-    if (d.bay || d.b < 0) continue;
-    const reach = m + 0.05;
+    if (d.bay) continue;
     const slim = d.half - BODY_RADIUS;
+    const ma = margin(zones[d.a].shell) + 0.05;
+    if (d.b < 0) {
+      if (d !== entryDoor) continue;
+      // the way in: from the door to the room's standing ground
+      const face = faceOf(shells[zones[d.a].shell], d.side);
+      const into = d.side === "n" || d.side === "w" ? 1 : -1;
+      const lo = Math.min(face, face + into * ma);
+      const hi = Math.max(face, face + into * ma);
+      allowed.push(horizontal(d.side) ? { x0: d.at - slim, x1: d.at + slim, z0: lo, z1: hi } : { x0: lo, x1: hi, z0: d.at - slim, z1: d.at + slim });
+      continue;
+    }
+    // the passage reaches each room's own standing ground (past its cord, where it has one); the room the door
+    // is named in lies on the far side of the opening's box when its wall is the north or west one
+    const mb = margin(zones[d.b].shell) + 0.05;
+    const aHigh = d.side === "n" || d.side === "w";
+    const lowReach = aHigh ? mb : ma;
+    const highReach = aHigh ? ma : mb;
     allowed.push(
       horizontal(d.side)
-        ? { x0: d.at - slim, x1: d.at + slim, z0: d.box.z0 - reach, z1: d.box.z1 + reach }
-        : { x0: d.box.x0 - reach, x1: d.box.x1 + reach, z0: d.at - slim, z1: d.at + slim }
+        ? { x0: d.at - slim, x1: d.at + slim, z0: d.box.z0 - lowReach, z1: d.box.z1 + highReach }
+        : { x0: d.box.x0 - lowReach, x1: d.box.x1 + highReach, z0: d.at - slim, z1: d.at + slim }
     );
     clear.push({
       box: horizontal(d.side)
@@ -275,9 +355,18 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
     });
   }
   const { hops, via } = planRoutes(zones.length, doors);
-  const plan: PlanLayout = { id: space.id, shells, zones, doors, partitions, columns, arches, entry, allowed, clear, hops, via };
+  const shrines: PlanShrine[] = [];
+  const photos: PlanPhoto[] = (space.photos ?? []).flatMap((p) => {
+    const sh = shellOf(p.room);
+    const three = (v: number | [number, number, number] | undefined, d: number): [number, number, number] => (Array.isArray(v) ? v : [v ?? d, v ?? d, v ?? d]);
+    return sh
+      ? [{ shell: sh.index, src: p.src, size: p.size, eye: p.eye, yaw: p.yaw, pitch: p.pitch, roll: p.roll, fov: p.fov, black: three(p.black, 0), gain: three(p.gain, 1), on: p.on }]
+      : [];
+  });
+  const plan: PlanLayout = { id: space.id, shells, zones, doors, partitions, columns, arches, niches, shrines, photos, entry, allowed, clear, hops, via };
 
-  // ---- the walls works hang on: each zone's sides, less its doors, its corners and the columns
+  // ---- the walls works hang on: each zone's sides, less its doors, its corners, the columns and niches, and
+  // where a free-standing wall meets them
   const runs: Run[] = [];
   for (const z of zones) {
     const sh = shells[z.shell];
@@ -297,23 +386,42 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
         const near = (za.shell === z.shell && d.side === side) || (zb && zb.shell === z.shell && OPPOSITE[d.side] === side);
         if (near) holes.push([d.at - d.half - DOOR_CLEAR, d.at + d.half + DOOR_CLEAR]);
       }
-      // the long walls stay clear behind an arch's columns
-      if (along === sh.alongX) for (const a of arches) if (a.shell === z.shell) holes.push([a.at - COLUMN.clear, a.at + COLUMN.clear]);
+      // the long walls stay clear behind an arch's columns, and where a bay of marble stands
+      if (along === sh.alongX) {
+        for (const a of arches) if (a.shell === z.shell) holes.push([a.at - COLUMN.apart / 2 - COLUMN.plinth - 0.5, a.at + COLUMN.apart / 2 + COLUMN.plinth + 0.5]);
+      }
+      for (const n of niches) if (n.shell === z.shell && n.side === side) holes.push([n.at - n.half - 0.45, n.at + n.half + 0.45]);
+      // a free-standing wall that meets this one
+      const face = faceOf(sh, side);
+      for (const w of walls) {
+        if (w.shell !== z.shell) continue;
+        const touch = side === "n" ? w.z0 : side === "s" ? w.z1 : side === "w" ? w.x0 : w.x1;
+        if (Math.abs(touch - face) < 0.08) holes.push(along ? [w.x0 - 0.5, w.x1 + 0.5] : [w.z0 - 0.5, w.z1 + 0.5]);
+      }
       for (const [a, b] of cut([lo, hi], holes)) {
-        if (b - a >= 1.2) runs.push({ zone: z.index, side, a, b, plane: faceOf(sh, side), hung: [] });
+        if (b - a >= 1.2) runs.push({ zone: z.index, side, a, b, plane: face, top: sh.height, hung: [] });
       }
     }
   }
-  // a free-standing wall's two long faces (for the works pinned to them)
-  for (const w of partitions) {
-    const zi = planZoneOf(zones, shells[w.shell], w);
-    if (w.x1 - w.x0 >= w.z1 - w.z0) {
+  // a free-standing wall's two long faces (the works pinned to them; the room's own, where it says so)
+  for (const w of walls) {
+    const sh = shells[w.shell];
+    const zi = planZoneOf(zones, sh, w);
+    const alongX = w.x1 - w.x0 >= w.z1 - w.z0;
+    const post = w.portal ? 0.5 : 0.3;
+    // an end that meets one of the room's walls keeps a corner's clearance
+    const endA = alongX ? Math.abs(w.x0 - sh.x0) < 0.08 : Math.abs(w.z0 - sh.z0) < 0.08;
+    const endB = alongX ? Math.abs(w.x1 - sh.x1) < 0.08 : Math.abs(w.z1 - sh.z1) < 0.08;
+    const a = (alongX ? w.x0 : w.z0) + (endA ? CORNER_CLEAR : post);
+    const b = (alongX ? w.x1 : w.z1) - (endB ? CORNER_CLEAR : post);
+    const base = { zone: zi, a, b, wall: w.id, pinsOnly: !w.hang, top: w.height - (w.portal ? 0.4 : 0) };
+    if (alongX) {
       // it runs along x: a face looking north (hung as on a south wall), one looking south
-      runs.push({ zone: zi, side: "s", a: w.x0 + 0.3, b: w.x1 - 0.3, plane: w.z0, wall: w.id, hung: [] });
-      runs.push({ zone: zi, side: "n", a: w.x0 + 0.3, b: w.x1 - 0.3, plane: w.z1, wall: w.id, hung: [] });
+      runs.push({ ...base, side: "s", plane: w.z0, hung: [] });
+      runs.push({ ...base, side: "n", plane: w.z1, hung: [] });
     } else {
-      runs.push({ zone: zi, side: "e", a: w.z0 + 0.3, b: w.z1 - 0.3, plane: w.x0, wall: w.id, hung: [] });
-      runs.push({ zone: zi, side: "w", a: w.z0 + 0.3, b: w.z1 - 0.3, plane: w.x1, wall: w.id, hung: [] });
+      runs.push({ ...base, side: "e", plane: w.x0, hung: [] });
+      runs.push({ ...base, side: "w", plane: w.x1, hung: [] });
     }
   }
 
@@ -328,6 +436,8 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
     const s = p.section ?? 0;
     bySection.set(s, [...(bySection.get(s) ?? []), p]);
   }
+  const minBottomOf = (room: SpaceRoom) => room.minBottom ?? (room.look?.room?.dado ? room.look.room.dado.height + 0.14 : MIN_BOTTOM);
+  const shrineOf = new Set<Painting>();
   space.rooms.forEach((room, si) => {
     const sh = shells[si];
     const works = (bySection.get(si) ?? []).map(sized);
@@ -336,7 +446,7 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
 
     // the works with a place of their own (each takes its stretch of that wall, in whichever bays it reaches)
     const free: Hung[] = [];
-    const taken: { side: Side; a: number; b: number }[] = [];
+    const taken: { side: Side; wall?: string; a: number; b: number }[] = [];
     for (const hw of works) {
       const pin = space.pins.find((p) => p.room === room.id && p.work === keyOf(hw.painting));
       if (!pin) {
@@ -352,18 +462,22 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
       }
       const lo = Math.min(...cands.map((r) => r.a));
       const hi = Math.max(...cands.map((r) => r.b));
-      const at = pin.at ?? (lo + hi) / 2;
+      // where it is said to hang, kept on the wall
+      const t = T_SIGN[side];
+      const before = t > 0 ? hw.left : hw.right;
+      const after = t > 0 ? hw.right : hw.left;
+      const at = Math.min(Math.max(pin.at ?? (lo + hi) / 2, lo + before), Math.max(lo + before, hi - after));
       const off = (r: Run) => Math.max(r.a - at, 0, at - r.b);
       const run = cands.reduce((best, r) => (off(r) < off(best) ? r : best), cands[0]);
       run.hung.push({ ...hw, at });
-      const t = T_SIGN[side];
-      if (!pin.wall) taken.push({ side, a: at - (t > 0 ? hw.left : hw.right) - AIR, b: at + (t > 0 ? hw.right : hw.left) + AIR });
+      if (pin.shrine) shrineOf.add(hw.painting);
+      taken.push({ side, wall: pin.wall, a: at - before - AIR, b: at + after + AIR });
     }
     // what is left of each run either side of the pinned works hangs the others
     const open: Run[] = [];
     for (const r of mine) {
-      if (r.wall) continue;
-      const holes = taken.filter((k) => k.side === r.side).map((k): [number, number] => [k.a, k.b]);
+      if (r.pinsOnly) continue;
+      const holes = taken.filter((k) => k.side === r.side && k.wall === r.wall).map((k): [number, number] => [k.a, k.b]);
       for (const [a, b] of cut([r.a, r.b], holes)) if (b - a >= 1.2) open.push({ ...r, a, b, hung: [] });
     }
 
@@ -372,21 +486,32 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
     const room_ = (r: Run) => r.b - r.a - r.hung.reduce((s, hw) => s + hw.left + hw.right + AIR, 0);
     const capacity = order.map((zi) => open.filter((r) => r.zone === zi).reduce((s, r) => s + (r.b - r.a), 0));
     const total = capacity.reduce((s, c) => s + c, 0) || 1;
+    const fitsOn = (hw: Hung, r: Run) => {
+      const tall = (x: Hung) => x.h + 2 * frameAllowance(x.w, x.h);
+      return room_(r) >= hw.left + hw.right && (hw.over ? tall(hw) + tall(hw.over) + 1.2 : tall(hw) + 0.6) <= r.top;
+    };
     let at = 0;
     let carried = 0;
     order.forEach((zi, k) => {
       const zoneRuns = open.filter((r) => r.zone === zi);
       carried += (free.length * capacity[k]) / total;
       const take = k === order.length - 1 ? free.length - at : Math.max(0, Math.round(carried) - at);
-      const batch = stacked(free.slice(at, at + take), sh.height);
+      const batch = stacked(free.slice(at, at + take), sh.height, room.rows === 2, minBottomOf(room));
       at += take;
       for (const hw of [...batch].sort((p, q) => q.left + q.right - (p.left + p.right))) {
-        const need = hw.left + hw.right;
         let best: Run | null = null;
-        for (const r of zoneRuns) if (room_(r) >= need && (!best || room_(r) > room_(best))) best = r;
+        for (const r of zoneRuns) if (fitsOn(hw, r) && (!best || room_(r) > room_(best))) best = r;
         // no room in this bay: the next bays' walls
-        if (!best) for (const r of open) if (room_(r) >= need && (!best || room_(r) > room_(best))) best = r;
-        best?.hung.push(hw);
+        if (!best) for (const r of open) if (fitsOn(hw, r) && (!best || room_(r) > room_(best))) best = r;
+        if (best) best.hung.push(hw);
+        else if (hw.over) {
+          // the pair fits nowhere (a low free-standing wall): each alone
+          for (const one of [{ ...hw, over: undefined }, hw.over]) {
+            let b2: Run | null = null;
+            for (const r of open) if (fitsOn(one, r) && (!b2 || room_(r) > room_(b2))) b2 = r;
+            b2?.hung.push(one);
+          }
+        }
       }
     });
     runs.push(...open);
@@ -405,11 +530,11 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
     const room = space.rooms[sh.index];
     const t = T_SIGN[r.side];
     const along = horizontal(r.side);
-    const minBottom = room.minBottom ?? (room.look?.room?.dado ? room.look.room.dado.height + 0.14 : MIN_BOTTOM);
+    const minBottom = minBottomOf(room);
     const hang = (hw: Hung, c: number, y: number) => {
       const nx = Math.sin(FACING[r.side]);
       const nz = Math.cos(FACING[r.side]);
-      placements.push({
+      const pl: Placement = {
         painting: hw.painting,
         position: [round((along ? c : r.plane) + nx * WALL_GAP), round(y), round((along ? r.plane : c) + nz * WALL_GAP)],
         rotationY: FACING[r.side],
@@ -417,15 +542,19 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
         h: hw.h,
         room: r.zone,
         label: 1,
-      });
+      };
+      placements.push(pl);
+      if (shrineOf.has(hw.painting)) shrines.push({ x: pl.position[0], y: pl.position[1], z: pl.position[2], rotationY: pl.rotationY, w: hw.w, h: hw.h, shell: sh.index });
     };
     const place = (hw: Hung, c: number) => {
       if (!hw.over) return hang(hw, c, Math.max(EYE, hw.h / 2 + minBottom));
-      // two small works, one above the other: the lower a little under eye level, the upper a hand above its frame
-      const low = Math.max(STACK_EYE, hw.h / 2 + minBottom);
-      hang(hw, c, low);
       const up = hw.over;
-      hang(up, c, low + hw.h / 2 + frameAllowance(hw.w, hw.h) + STACK_GAP + frameAllowance(up.w, up.h) + up.h / 2);
+      const small = hw.h <= STACK.h && up.h <= STACK.h;
+      // two works, one above the other: small ones, the lower a little under eye level; great ones, the lower as
+      // it would hang alone; the upper a hand above its frame
+      const low = small ? Math.max(STACK_EYE, hw.h / 2 + minBottom) : Math.max(EYE, hw.h / 2 + minBottom);
+      hang(hw, c, low);
+      hang(up, c, low + hw.h / 2 + frameAllowance(hw.w, hw.h) + (small ? STACK_GAP : ROW_GAP) + frameAllowance(up.w, up.h) + up.h / 2);
     };
     const pinned = r.hung.filter((hw) => hw.at !== undefined);
     for (const hw of pinned) place(hw, hw.at!);
@@ -462,29 +591,58 @@ export function buildPlanLayout(space: Space, paintings: Painting[], opts: PlanO
     placements.unshift(star);
   }
 
-  // ---- seating: a piece down the middle of each bay that has the room (none where a free-standing wall stands)
+  // ---- seating: down the middle of each bay that has the room, one piece or one every so many metres, clear of
+  // the way in and of any free-standing wall
   const furniture: Furnishing[] = [];
   zones.forEach((z) => {
     const sizes = opts.furnish?.[z.shell];
     const sh = shells[z.shell];
-    if (!sizes?.centre.length || partitions.some((w) => w.shell === z.shell)) return;
-    const index = z.index % Math.min(2, sizes.centre.length);
-    const [w, d] = sizes.centre[index];
+    const every = space.rooms[z.shell].seatEvery;
+    if (!sizes?.centre.length || every === 0) return;
     const long = sh.alongX ? z.x1 - z.x0 : z.z1 - z.z0;
     const wide = sh.alongX ? z.z1 - z.z0 : z.x1 - z.x0;
-    if (long < d + 9 || wide < w + 6.5) return;
-    const cx = (z.x0 + z.x1) / 2;
-    const cz = (z.z0 + z.z1) / 2;
-    // clear of the way in
-    if (Math.hypot(cx - entry!.spawnX, cz - entry!.spawnZ) < 4.5) return;
-    const top = sizes.top?.[index];
-    furniture.push({
-      kind: "centre", index, position: [round(cx), round(cz)], rotation: sh.alongX ? Math.PI / 2 : 0, size: [w, d],
-      room: z.index, tint: ((z.shell * 37 + 11) % 100) / 100, ...(top ? { top } : {}),
-    });
+    const n = every ? Math.max(1, Math.round(long / every)) : 1;
+    for (let k = 0; k < n; k++) {
+      const index = (z.index + k) % Math.min(2, sizes.centre.length);
+      const [w, d] = sizes.centre[index];
+      if (long / n < d + 3 || wide < w + 4.6) continue;
+      const mid = (sh.alongX ? z.x0 : z.z0) + (long * (k + 0.5)) / n;
+      const cx = sh.alongX ? mid : (z.x0 + z.x1) / 2;
+      const cz = sh.alongX ? (z.z0 + z.z1) / 2 : mid;
+      if (Math.hypot(cx - entry!.spawnX, cz - entry!.spawnZ) < 4.5) continue;
+      const reach = Math.max(w, d) / 2 + 1.3;
+      if (partitions.some((p) => p.shell === z.shell && cx > p.x0 - reach && cx < p.x1 + reach && cz > p.z0 - reach && cz < p.z1 + reach)) continue;
+      // not across an arch's columns
+      if (arches.some((a) => a.shell === z.shell && Math.abs((sh.alongX ? cx : cz) - a.at) < d / 2 + a.depth + 1.5)) continue;
+      const top = sizes.top?.[index];
+      furniture.push({
+        kind: "centre", index, position: [round(cx), round(cz)], rotation: sh.alongX ? Math.PI / 2 : 0, size: [w, d],
+        room: z.index, tint: ((z.shell * 37 + 11) % 100) / 100, ...(top ? { top } : {}),
+      });
+    }
   });
 
-  const barriers = placements.filter((pl) => (pl.painting.pageviews ?? 0) >= ROPED_VIEWS).map(ropeOff);
+  // ---- barriers: a rope before the most famous works in a room without a cord of its own; a curved rail before
+  // a work behind glass
+  const guarded = (pl: Placement) => !!space.rooms[zones[pl.room].shell].look?.room?.guard;
+  const barriers: Barrier[] = placements
+    .filter((pl) => (pl.painting.pageviews ?? 0) >= ROPED_VIEWS && !guarded(pl) && !shrineOf.has(pl.painting))
+    .map(ropeOff);
+  for (const s of shrines) {
+    // an arc of rail some 3 m out, 5 m across, its ends turned back to the wall
+    const nx = Math.sin(s.rotationY);
+    const nz = Math.cos(s.rotationY);
+    const R = 3.2;
+    const posts: [number, number][] = [];
+    for (let i = 0; i <= 12; i++) {
+      const a = -1.15 + (2.3 * i) / 12;
+      posts.push([round(s.x + nz * R * Math.sin(a) + nx * (R * Math.cos(a) - 0.5)), round(s.z - nx * R * Math.sin(a) + nz * (R * Math.cos(a) - 0.5))]);
+    }
+    const xs = posts.map((p) => p[0]);
+    const zs = posts.map((p) => p[1]);
+    const zone = zones.find((z) => z.shell === s.shell)!.index;
+    barriers.push({ posts, box: [Math.min(...xs, s.x), Math.max(...xs, s.x), Math.min(...zs, s.z), Math.max(...zs, s.z)], room: zone, rail: true });
+  }
   const seats = furniture.flatMap((f) => opts.furnish?.[zones[f.room].shell]?.seats?.(f) ?? []);
 
   const rooms: SuiteRoom[] = zones.map((z) => {

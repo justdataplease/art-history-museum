@@ -31,3 +31,11 @@ keeps its own licence:
   from OpenStreetMap's indoor survey. © OpenStreetMap contributors, Open Database License (ODbL),
   https://www.openstreetmap.org/copyright. The plans are a derived work of that survey and are offered under the
   same licence.
+- The ceilings of recreated rooms (src/lib/spaces.ts `photos`) are photographs from Wikimedia Commons, loaded
+  from there and shown laid on the model's vaults (adapted: cropped by the surface, balanced in tone, raised in
+  relief). The Salon Carré of the Louvre: Fernando Losada Rodríguez, "Techos (Murillo).003 - Louvre (Paris)", CC
+  BY-SA 4.0; Sumit Surai, "Salon Carré Ceiling", CC BY-SA 4.0; Nathanael Burton, "Verrière du Salon Carré du
+  Louvre", CC BY-SA 2.0; Gary Todd, "Ceiling of the Salon Carré" (two), CC0; APK, "Salon Carré ceiling", CC
+  BY-SA 4.0. The Salon Denon: Sini Merikallio, "Ceiling of the Salon Denon, Louvre 2011", CC BY-SA 2.0. The
+  adapted pictures are offered under the same licences (https://creativecommons.org/licenses/by-sa/4.0/,
+  https://creativecommons.org/licenses/by-sa/2.0/).

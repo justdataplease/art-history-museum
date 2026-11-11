@@ -511,11 +511,18 @@ export function concreteTexture(): THREE.CanvasTexture {
  * One bay of a laylight: frosted, slightly milky glass panes held by thin
  * glazing bars, brightest in the middle of each pane. Used as an emissive map.
  */
-export function laylightTexture(panesX: number, panesY: number): THREE.CanvasTexture {
-  const S = 512;
+export function laylightTexture(
+  panesX: number,
+  panesY: number,
+  /** The bars' tone (0 black .. 1 white; default 0.3), and a heavier bar every so many panes across. */
+  glazing: { bar?: number; heavyX?: number } = {}
+): THREE.CanvasTexture {
+  const S = panesX > 10 ? 1024 : 512;
+  const barTone = glazing.bar ?? 0.3;
+  const heavyX = glazing.heavyX ?? 0;
   // mean of the drawn glass: glazing bars darken a multi-pane bay
   const glassMean = panesX * panesY > 1 ? "rgb(223,223,223)" : "rgb(241,241,241)";
-  const glass = cachedCanvas(`laylight-${panesX}x${panesY}`, S, S, glassMean, function* (ctx) {
+  const glass = cachedCanvas(`laylight-${panesX}x${panesY}-${barTone}-${heavyX}`, S, S, glassMean, function* (ctx) {
     const img = ctx.createImageData(S, S);
     const cloud = periodicFbm(61, 3, 3, 0.5);
     const paneVar = periodicNoise(62, 8);
@@ -529,20 +536,26 @@ export function laylightTexture(panesX: number, panesY: number): THREE.CanvasTex
         const du = Math.min(pu - Math.floor(pu), Math.ceil(pu) - pu) / panesX;
         const dv = Math.min(pv - Math.floor(pv), Math.ceil(pv) - pv) / panesY;
         const d = Math.min(du, dv);
-        const bar = d < 0.0045 ? 0.3 : 1;
+        // (many panes in a bay: thinner bars, so each stays about as wide on the glass)
+        const thin = 0.0045 * Math.min(1, 6 / Math.max(panesX, panesY)) + 0.0012;
+        let bar = d < thin ? barTone : 1;
+        if (heavyX > 0) {
+          const hu = (u * panesX) / heavyX;
+          if ((Math.min(hu - Math.floor(hu), Math.ceil(hu) - hu) * heavyX) / panesX < thin * 2.4) bar = barTone * 0.8;
+        }
         // light falls off a little toward each bar (the bars sit below the glass)
         const glow = 0.86 + 0.14 * Math.min(1, d / 0.06);
         const milk = 0.97 + (cloud(u, v) - 0.5) * 0.06;
         // the bay's outer frame is wider and darker
         const edge = Math.min(u, 1 - u, v, 1 - v);
-        const frame = edge < 0.009 ? 0.22 : 1;
+        const frame = edge < 0.009 ? Math.min(0.22, barTone) : 1;
         // each pane's frosting is a touch different
         const pane = 0.97 + 0.06 * paneVar(Math.floor(pu) / panesX + 0.5 / panesX, Math.floor(pv) / panesY + 0.5 / panesY);
         const l = Math.min(bar, frame) * glow * milk * pane;
         const i = (y * S + x) * 4;
-        img.data[i] = Math.round(255 * Math.max(0.12, l));
-        img.data[i + 1] = Math.round(255 * Math.max(0.12, l));
-        img.data[i + 2] = Math.round(255 * Math.max(0.12, l));
+        img.data[i] = Math.round(255 * Math.max(0.05, l));
+        img.data[i + 1] = Math.round(255 * Math.max(0.05, l));
+        img.data[i + 2] = Math.round(255 * Math.max(0.05, l));
         img.data[i + 3] = 255;
       }
       if ((y & 15) === 15) yield;
@@ -551,5 +564,151 @@ export function laylightTexture(panesX: number, panesY: number): THREE.CanvasTex
   });
   const t = finishTexture(glass, { srgb: true, anisotropy: 8 });
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
+// ------------------------------------------------------------ painted ornament
+
+/**
+ * Scrollwork painted on a cove, one repeat: swags of garland hung from knots along the top, a cartouche under a
+ * crown in the middle, acanthus scrolls spreading from it either side and down. White on nothing: the material
+ * gives it its gold. u runs along the cove, v up it (the top of the canvas is the top of the cove).
+ */
+export function arabesqueTexture(): THREE.CanvasTexture {
+  const W = 1024;
+  const H = 512;
+  const art = cachedCanvas("arabesque", W, H, "rgba(0,0,0,0)", function* (ctx) {
+    ctx.clearRect(0, 0, W, H);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    const ink = (a: number) => `rgba(255,255,255,${a})`;
+    const spiral = (cx: number, cy: number, r0: number, turns: number, dir: number, start: number, lw: number) => {
+      ctx.beginPath();
+      const n = Math.round(48 * turns);
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        const a = start + dir * t * turns * Math.PI * 2;
+        const r = r0 * (1 - 0.86 * t);
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.lineWidth = lw * 1.7;
+      ctx.stroke();
+    };
+    const leaf = (x: number, y: number, len: number, wide: number, ang: number) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ang);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(len * 0.5, -wide, len, 0);
+      ctx.quadraticCurveTo(len * 0.5, wide, 0, 0);
+      ctx.fill();
+      ctx.restore();
+    };
+    // one half, then its mirror about the middle
+    for (const side of [1, -1]) {
+      ctx.save();
+      ctx.translate(W / 2, 0);
+      ctx.scale(side, 1);
+      ctx.strokeStyle = ink(0.95);
+      ctx.fillStyle = ink(0.9);
+      // a swag of garland from the middle knot to the next: thick, with leaves along it
+      ctx.beginPath();
+      ctx.moveTo(8, 44);
+      ctx.quadraticCurveTo(256, 150, 504, 44);
+      ctx.lineWidth = 16;
+      ctx.stroke();
+      for (let i = 1; i < 14; i++) {
+        const t = i / 14;
+        const x = 8 + 496 * t;
+        const y = 44 + 212 * t * (1 - t);
+        leaf(x, y + 14, 26, 9, Math.PI / 2 + (t - 0.5) * 0.9);
+        leaf(x, y - 12, 22, 8, -Math.PI / 2 + (t - 0.5) * 0.9);
+      }
+      // the knots, a tassel hanging from each
+      for (const kx of [0, 504]) {
+        ctx.beginPath();
+        ctx.arc(kx, 40, 24, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(kx, 60);
+        ctx.lineTo(kx, 118);
+        ctx.lineWidth = 7;
+        ctx.stroke();
+        leaf(kx, 112, 34, 11, Math.PI / 2);
+      }
+      yield;
+      // the cartouche: half an oval frame, doubled
+      ctx.beginPath();
+      ctx.ellipse(0, 300, 62, 92, 0, -Math.PI / 2, Math.PI / 2);
+      ctx.lineWidth = 9;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(0, 300, 46, 74, 0, -Math.PI / 2, Math.PI / 2);
+      ctx.lineWidth = 3.5;
+      ctx.stroke();
+      // a crown over it
+      ctx.beginPath();
+      ctx.moveTo(0, 176);
+      ctx.quadraticCurveTo(40, 176, 34, 206);
+      ctx.lineTo(0, 206);
+      ctx.fill();
+      // acanthus scrolls out from the cartouche: a great one, lesser ones below and beyond it
+      ctx.strokeStyle = ink(0.92);
+      spiral(150, 300, 78, 1.6, 1, Math.PI, 8);
+      spiral(262, 248, 52, 1.5, -1, Math.PI * 0.9, 6);
+      spiral(132, 414, 50, 1.4, -1, -Math.PI * 0.55, 6);
+      spiral(330, 372, 60, 1.5, 1, Math.PI * 1.1, 6);
+      spiral(424, 286, 40, 1.4, -1, Math.PI, 4.5);
+      // stems joining them
+      ctx.beginPath();
+      ctx.moveTo(60, 300);
+      ctx.bezierCurveTo(110, 220, 200, 330, 262, 300);
+      ctx.bezierCurveTo(330, 270, 380, 420, 440, 330);
+      ctx.lineWidth = 5;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(44, 372);
+      ctx.bezierCurveTo(90, 470, 220, 470, 300, 430);
+      ctx.lineWidth = 4.5;
+      ctx.stroke();
+      yield;
+      // leaves along the stems
+      const sprays: [number, number, number][] = [
+        [96, 262, -0.9], [128, 244, -0.4], [200, 296, 0.5], [232, 318, 1.0], [300, 292, -0.7], [352, 330, 0.9],
+        [396, 386, 0.3], [430, 352, -0.8], [90, 430, 1.2], [160, 462, 0.4], [230, 456, -0.2], [284, 440, -0.6],
+        [470, 300, -0.3], [476, 260, -1.1], [70, 216, -1.2], [44, 420, 2.0],
+      ];
+      for (const [x, y, a] of sprays) {
+        leaf(x, y, 40, 11, a);
+        leaf(x, y, 30, 9, a + 0.75);
+        leaf(x, y, 30, 9, a - 0.75);
+      }
+      // a row of small flowers along the foot
+      for (let i = 0; i < 7; i++) {
+        ctx.beginPath();
+        ctx.arc(36 + i * 72, 492, 7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      yield;
+    }
+    // a shield in the middle of the cartouche
+    ctx.fillStyle = ink(0.9);
+    ctx.beginPath();
+    ctx.moveTo(W / 2 - 26, 262);
+    ctx.lineTo(W / 2 + 26, 262);
+    ctx.lineTo(W / 2 + 26, 312);
+    ctx.quadraticCurveTo(W / 2 + 22, 344, W / 2, 356);
+    ctx.quadraticCurveTo(W / 2 - 22, 344, W / 2 - 26, 312);
+    ctx.closePath();
+    ctx.fill();
+  });
+  const t = finishTexture(art, { srgb: true, anisotropy: 8 });
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
   return t;
 }

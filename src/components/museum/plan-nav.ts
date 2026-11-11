@@ -44,12 +44,18 @@ export interface PlanDoor {
   box: Box;
   /** Between two bays of one room: nothing but air (and perhaps columns). */
   bay: boolean;
+  /** Not a door but a window to the outside: glazed, daylight behind it. */
+  window?: boolean;
 }
 
 /** A free-standing wall inside a room (the Mona Lisa's, the wall the Wedding at Cana hangs on). */
 export interface PlanPartition extends Box {
   shell: number;
   height: number;
+  /** It stands in a surround of stone: two posts and a lintel (else a plain panel). */
+  portal: boolean;
+  /** Not a wall but the block of marble an arch's columns stand on: it stops a walk, and is built with them. */
+  plinth?: boolean;
 }
 
 /** A round column standing on the floor. */
@@ -58,7 +64,21 @@ export interface PlanColumn {
   z: number;
   r: number;
   shell: number;
+  /** The top of its capital. */
   height: number;
+  /** Its marble (default: the room's). */
+  marble?: string;
+}
+
+/** A work behind glass set in its wall, a shelf below it, a curved rail before it: where it hangs. */
+export interface PlanShrine {
+  x: number;
+  y: number;
+  z: number;
+  rotationY: number;
+  w: number;
+  h: number;
+  shell: number;
 }
 
 /** An arch across a gallery at a bay line: two columns a side under an entablature, the arch springing from
@@ -71,6 +91,18 @@ export interface PlanArch {
   spring: number;
   rise: number;
   depth: number;
+  /** Its columns' marble (default: the room's). */
+  marble?: string;
+}
+
+/** A bay of marble on a long wall beside an arch's columns: two pilasters and a niche. `at`: its middle along
+ *  the wall (x or z), half its width, the height of its pilasters. */
+export interface PlanNiche {
+  shell: number;
+  side: Side;
+  at: number;
+  half: number;
+  height: number;
 }
 
 export interface PlanShell extends Box {
@@ -97,6 +129,70 @@ export interface PlanEntry {
   zone: number;
 }
 
+/** What a photograph is laid on, on one side of a room: its cove, its attic (the band between the wall's top and
+ *  the cove, with its cornice), the frame of the skylight (the flat band between the cove and the glass), or the
+ *  whole flat top of a vault that has no glass (`side`: any). */
+export interface PhotoPatch {
+  side: Side;
+  part: "cove" | "attic" | "frame" | "top";
+  /** An attic that stands upright to the cove's foot, without a cornice standing out under it. */
+  plain?: boolean;
+  /** Raised where the photograph is light (white stucco, gilt frames), up to this many metres from the surface
+   *  (plan-relief.ts): what stands out in the room stands out here, and shifts against its ground as one walks. */
+  relief?: number;
+  /** Along the wall: from..to in metres from the room's middle (x on a north or south side, z on a west or east
+   *  one; default: all of it). */
+  s?: [number, number];
+  /** Only this near each end of the side (the corners of a ceiling), in metres. */
+  ends?: number;
+  /** Up the cove: from..to as shares of its quarter turn (default: all of it). */
+  t?: [number, number];
+  /** The photograph is of the other end of the room: laid here as there, turned about the room's middle. */
+  turned?: boolean;
+}
+
+/** A photograph of the real room laid on its ceiling from where it was taken (src/lib/spaces.ts SpacePhoto). */
+export interface PlanPhoto {
+  shell: number;
+  src: string;
+  size: [number, number];
+  eye: [number, number, number];
+  yaw: number;
+  pitch: number;
+  roll: number;
+  fov: number;
+  /** Its colours on the model: what is taken off each channel first (haze), then what each is multiplied by. */
+  black: [number, number, number];
+  gain: [number, number, number];
+  on: PhotoPatch[];
+}
+
+/** Where a point of the room falls on a photograph: (u, v) from its left and its foot, 0..1 inside the picture;
+ *  null behind the camera. The gallery camera's own turns (yaw about y, then pitch, then roll), as
+ *  scripts/fit-photo.mjs finds them. */
+export function photoUV(ph: Pick<PlanPhoto, "eye" | "yaw" | "pitch" | "roll" | "fov" | "size">, x: number, y: number, z: number): [number, number] | null {
+  const dx = x - ph.eye[0];
+  const dy = y - ph.eye[1];
+  const dz = z - ph.eye[2];
+  const cy = Math.cos(ph.yaw);
+  const sy = Math.sin(ph.yaw);
+  const x1 = cy * dx - sy * dz;
+  const z1 = sy * dx + cy * dz;
+  const cp = Math.cos(ph.pitch);
+  const sp = Math.sin(ph.pitch);
+  const y2 = cp * dy + sp * z1;
+  const z2 = -sp * dy + cp * z1;
+  const cr = Math.cos(ph.roll);
+  const sr = Math.sin(ph.roll);
+  const x3 = cr * x1 + sr * y2;
+  const y3 = -sr * x1 + cr * y2;
+  if (z2 > -1e-6) return null;
+  // the focal length in picture heights
+  const f = 0.5 / Math.tan((ph.fov * Math.PI) / 360);
+  const aspect = ph.size[0] / ph.size[1];
+  return [0.5 + (f * x3) / -z2 / aspect, 0.5 + (f * y3) / -z2];
+}
+
 export interface PlanLayout {
   id: string;
   shells: PlanShell[];
@@ -105,6 +201,9 @@ export interface PlanLayout {
   partitions: PlanPartition[];
   columns: PlanColumn[];
   arches: PlanArch[];
+  niches: PlanNiche[];
+  shrines: PlanShrine[];
+  photos: PlanPhoto[];
   entry: PlanEntry;
   /** Where one may stand: every zone less the wall margin (none on an open side), every open door's passage. */
   allowed: Box[];

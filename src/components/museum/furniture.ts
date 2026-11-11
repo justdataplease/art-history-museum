@@ -14,7 +14,7 @@
 import * as THREE from "three";
 import type { GeoBatch } from "./room-geometry";
 import type { FurnishSizes, Furnishing, SeatSpot } from "./layout";
-import type { EraKey, GalleryTheme } from "./theme";
+import type { EraKey, SeatKey } from "./theme";
 
 export type Part = "up" | "wood" | "metal";
 type Batches = Record<Part, Pick<GeoBatch, "add" | "roundedBoxAt">>;
@@ -1083,6 +1083,87 @@ const SALON: FurnitureSet = {
   chairs: [chair("crapaud", [0.72, 0.72], crapaud), chair("gilt fauteuil", [0.64, 0.6], fauteuil("metal"))],
 };
 
+// ---- seats of a real room's own (a recreated building, src/lib/spaces.ts)
+
+/** A leather daybed: two flat pads on a slim frame of pale wood, four thin steel legs; long along z. */
+function daybed(k: Kit, w: number, d: number): void {
+  for (const s of [-1, 1]) k.box("up", w, 0.085, d / 2 - 0.006, 0, 0.395, (s * d) / 4, 0.022);
+  k.box("wood", w - 0.03, 0.04, d - 0.03, 0, 0.33, 0, 0.006);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) k.post("metal", 0.013, 0.013, 0.31, sx * (w / 2 - 0.09), 0, sz * (d / 2 - 0.16), 8);
+}
+
+/** A great round sofa of padded lobes (Pierre Paulin's for the Grande Galerie, 1968): a low ring of seats round
+ *  a raised ring of backs, a glass table in the middle. */
+function lobedBorne(k: Kit, w: number): void {
+  const R = w / 2;
+  const n = 12;
+  const rs = R - 0.44;
+  const rb = R - 1.04;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * 2 * PI;
+    k.box("up", 2 * rs * Math.sin(PI / n) + 0.16, 0.42, 0.88, rs * Math.sin(a), 0.21, rs * Math.cos(a), 0.15, 0, a);
+    k.box("up", 2 * rb * Math.sin(PI / n) + 0.18, 0.72, 0.46, rb * Math.sin(a), 0.36, rb * Math.cos(a), 0.15, 0, a);
+  }
+  k.disc("metal", Math.max(0.2, R - 1.24), 0.02, 0, 0.69, 0);
+}
+
+/** A long low sofa that winds like a wave: padded lobes along a curve, a low back down its crest. */
+function waveSofa(k: Kit, w: number, d: number): void {
+  const n = 9;
+  const run = d - 0.7;
+  const amp = Math.max(0, (w - 0.82) / 2);
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1) - 0.5;
+    const a = Math.atan(((amp * 2 * PI) / run) * Math.cos(t * 2 * PI));
+    k.box("up", 0.82, 0.4, run / (n - 1) + 0.18, amp * Math.sin(t * 2 * PI), 0.2, t * run, 0.14, 0, a);
+    k.box("up", 0.26, 0.3, run / (n - 1) + 0.1, amp * Math.sin(t * 2 * PI), 0.52, t * run, 0.1, 0, a);
+  }
+}
+
+const noWall: Piece[] = [];
+/** Seats a real room has that no room style does (theme.ts SeatKey). */
+export const SEATS: Record<SeatKey, FurnitureSet> = {
+  daybed: {
+    name: "Black leather daybeds on steel legs",
+    up: { colors: ["#1d1c1c"], roughness: 0.42, sheen: 0.1, weave: "plain" },
+    wood: { colors: ["#b3936a"], finish: "paint" },
+    metal: { color: "#c8cbcd", metalness: 1, roughness: 0.25 },
+    centre: [piece("leather daybed", [0.96, 2.05], daybed)],
+    wall: noWall,
+    chairs: [],
+  },
+  "lobed-borne": {
+    name: "Great round sofas of padded lobes, aubergine",
+    up: { colors: ["#7a2148"], roughness: 0.9, sheen: 0.4, weave: "plain" },
+    wood: { colors: ["#55585c"], finish: "paint" },
+    metal: { color: "#aab4b8", metalness: 0.6, roughness: 0.15 },
+    centre: [
+      piece(
+        "lobed borne",
+        [3.1, 3.1],
+        Object.assign(lobedBorne, {
+          spots: (w: number): [number, number, number][] =>
+            Array.from({ length: 12 }, (_, i) => {
+              const a = (i / 12) * 2 * PI;
+              return [(w / 2 - 0.5) * Math.sin(a), (w / 2 - 0.5) * Math.cos(a), a] as [number, number, number];
+            }),
+        })
+      ),
+    ],
+    wall: noWall,
+    chairs: [],
+  },
+  "wave-sofa": {
+    name: "Long blue sofas that wind like a wave",
+    up: { colors: ["#34478a"], roughness: 0.9, sheen: 0.3, weave: "plain" },
+    wood: { colors: ["#2a2f45"], finish: "paint" },
+    metal: { color: "#aab4b8", metalness: 0.6, roughness: 0.2 },
+    centre: [piece("wave sofa", [1.5, 3.4], waveSofa)],
+    wall: noWall,
+    chairs: [],
+  },
+};
+
 /** Each room style's furniture (theme.ts THEMES). */
 export const FURNITURE: Record<EraKey, FurnitureSet> = {
   sacred: SACRED,
@@ -1103,8 +1184,8 @@ export const FURNITURE: Record<EraKey, FurnitureSet> = {
   salon: SALON,
 };
 
-export function furnitureOf(theme: Pick<GalleryTheme, "era">): FurnitureSet {
-  return FURNITURE[theme.era] ?? NINETEENTH;
+export function furnitureOf(theme: { era: EraKey | SeatKey }): FurnitureSet {
+  return SEATS[theme.era as SeatKey] ?? FURNITURE[theme.era as EraKey] ?? NINETEENTH;
 }
 
 /** The footprints the layout arranges (layout.ts furnish). */
@@ -1114,7 +1195,7 @@ export function furnishSizes(set: FurnitureSet): FurnishSizes {
     wall: set.wall.map((p) => p.size),
     chairs: set.chairs.map((p) => p.size),
     // the benches, ottomans and divans down the middle can be stood on (not a borne, round its column)
-    top: set.centre.map((p) => (p.name === "borne" ? null : SIT[p.name] ?? 0.48)),
+    top: set.centre.map((p) => (p.name.endsWith("borne") ? null : SIT[p.name] ?? 0.48)),
     seats: (f) => seatSpots(set, f),
   };
 }
@@ -1134,7 +1215,7 @@ const SIT: Record<string, number> = {
   "Barcelona daybed": 0.465, "two Wassily chairs": 0.4, "Barcelona chair": 0.47, "Wassily chair": 0.4,
   "low sofa": 0.47, "teak armchair": 0.44, "huanghuali bench": 0.48, "official's hat chair": 0.53,
   "horseshoe armchair": 0.53, "shōgi": 0.45, divan: 0.36, "divan with cushions": 0.37, mora: 0.49,
-  "steel bench": 0.43, "curved bench": 0.44,
+  "steel bench": 0.43, "curved bench": 0.44, "leather daybed": 0.44, "wave sofa": 0.4, "lobed borne": 0.42,
 };
 /** How far in from the wall a wall piece's sitter sits (its seat's middle). */
 const WALL_SEAT: Record<string, number> = {

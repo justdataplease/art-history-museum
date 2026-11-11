@@ -5,6 +5,8 @@
 //   node scripts/shot-space.mjs <slug> [outDir=verify-artifacts] [prefix=space] [tier=full|fast] [baseUrl]
 //        [--at name:x,z,yaw[,pitch]] ...        (x east, z south, m; yaw 0 looks north, 1.57 west, 3.14 south)
 //        [--only room-id,room-id]
+//        [--views file.json]   only these views: [{ name, x, z, yaw, pitch?, roll?, fov?, y?, size?: [w, h] }], each at its
+//                              own lens and picture size (to set beside a photograph taken from the same place)
 //
 // Headless and silent: the audio is muted and the pointer lock is faked (a real one clips the user's cursor).
 import { chromium } from "playwright";
@@ -13,6 +15,7 @@ import fs from "node:fs";
 const args = process.argv.slice(2);
 const extra = [];
 let only = null;
+let views = null;
 const plain = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--at") {
@@ -20,6 +23,7 @@ for (let i = 0; i < args.length; i++) {
     const [x, z, yaw, pitch = 0.05] = rest.split(",").map(Number);
     extra.push({ name, x, z, yaw, pitch });
   } else if (args[i] === "--only") only = new Set(args[++i].split(","));
+  else if (args[i] === "--views") views = JSON.parse(fs.readFileSync(args[++i], "utf8"));
   else plain.push(args[i]);
 }
 const [slug = "louvre", outDir = "verify-artifacts", prefix = "space", tier = "full", base = "http://localhost:3000"] = plain;
@@ -73,7 +77,7 @@ try {
   await page.waitForTimeout(1500);
 
   const poses = [];
-  for (const r of info.rooms) {
+  for (const r of views ? [] : info.rooms) {
     if (only && !only.has(r.id)) continue;
     const cx = (r.x0 + r.x1) / 2;
     const cz = (r.z0 + r.z1) / 2;
@@ -90,14 +94,18 @@ try {
       poses.push({ name: `${r.id}-ceiling`, x: cx, z: r.z1 - back, yaw: 0, pitch: 0.7 });
     }
   }
-  poses.push(...extra);
+  poses.push(...extra, ...(views ?? []).filter((v) => !only || only.has(v.name)));
+  const fov0 = await page.evaluate(() => window.__museum.camera.fov);
   for (const p of poses) {
-    await page.evaluate(({ x, z, yaw, pitch }) => {
+    await page.setViewportSize({ width: p.size?.[0] ?? 1600, height: p.size?.[1] ?? 900 });
+    await page.evaluate(({ x, z, yaw, pitch = 0.05, roll = 0, fov, y = 1.65 }) => {
       const m = window.__museum;
-      m.camera.position.set(x, 1.65, z);
-      m.camera.rotation.set(pitch, yaw, 0, "YXZ");
+      m.camera.position.set(x, y, z);
+      m.camera.rotation.set(pitch, yaw, roll, "YXZ");
+      m.camera.fov = fov;
+      m.camera.updateProjectionMatrix();
       m.invalidate();
-    }, p);
+    }, { ...p, fov: p.fov ?? fov0 });
     // the works mount, their textures load, the lights come up, the room's own reflections are taken
     await page.waitForTimeout(1200);
     await page.evaluate(() => window.__museum.invalidate());

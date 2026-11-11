@@ -91,20 +91,38 @@ WikiArt images load from `uploads*.wikiart.org`, allowed in the CSP
 
 - **A real building, to plan** (`src/lib/spaces.ts`): a recreated museum can be walked as its building stands
   instead of as suites of rooms joined by an elevator. A space is a small description: each room a rectangle in
-  metres where it really is (measured from OpenStreetMap's indoor survey, `scripts/osm-rooms.mjs`), its wall
-  height, its look (a room style and what the real room changes of it: wall and floor, plinth, frieze, vault,
-  glass), the doors between the rooms, the free-standing walls, and the works with a known place (the Mona Lisa
-  on its own wall). A room's link names its space (`sp=louvre-denon`); the link's floor plan then gives each room
-  of the space its works, so they are chosen, kept and moved with the room picker like any other room's.
-  `plan-layout.ts` hangs each room's works on its own walls, clear of its doors (small works two high) and cuts a
-  long gallery into bays that hang, light and load one by one; `plan-nav.ts` is where one may walk, what a line
-  of sight meets and the way from room to room (`layout.ts` `confine`, `planRoute`, `firstWallHit` follow it when
-  a layout has a `plan`); `plan-geometry.ts` builds each room's walls with their doors, plinth, frieze, cornice,
-  ceiling, arches on columns and floor; `PlanRooms.tsx` draws the rooms around the visitor, each with its own
+  metres where it really is (its place, length and doors from OpenStreetMap's indoor survey,
+  `scripts/osm-rooms.mjs`; its width and height from photographs, against something of known size in them), its
+  look (a room style and what the real room changes of it, `theme.ts` `RoomStyle`: wall, floor, plinth, frieze,
+  the vault's form (`vault`: coves round a skylight, a round barrel glazed along its crown, a closed cloister
+  vault), an `attic` (set back behind a gallery where the room is wider above its cornice), the glazing,
+  ornament on the coves, a cord or rail before the walls, the door cases, niche bays), the doors and windows,
+  the free-standing walls (bare, or in a stone surround; hung or not), the works with a known place (one may be
+  a `shrine`: behind glass with a shelf and a curved rail, the Mona Lisa), and photographs of its ceiling. A
+  room's link names its space (`sp=louvre-denon`); the link's floor plan then gives each room of the space its
+  works, so they are chosen, kept and moved with the room picker like any other room's.
+  `plan-layout.ts` hangs each room's works on its own walls and free-standing walls, clear of doors, columns and
+  niches (small works two high; `rows: 2`: great canvases in two rows), cuts a long gallery into bays that hang,
+  light and load one by one, sets seats down the middle (`seatEvery`) and keeps the visitor behind a room's cord;
+  `plan-nav.ts` is where one may walk, what a line of sight meets and the way from room to room (`layout.ts`
+  `confine`, `planRoute`, `firstWallHit` follow it when a layout has a `plan`); `plan-geometry.ts` builds each
+  room's walls with their doors and windows, plinth, frieze, cornice, ceiling, arches on paired columns (each
+  arch its own marble) and floor; `PlanRooms.tsx` draws the rooms around the visitor, each with its own
   materials (the room AO and the floor's boards follow the room's own frame, `room-shading.ts` `uRoomFrame`),
   all the floors sharing one reflection (`room-floor.tsx` `PlanFloors`), and each room gets its own reflection
   probe the first time one stands in it (`Room.tsx` `EnvSetup`). A plan's rooms are daylit from their glass, so
   they use fewer lights than a suite (six spots, two area lights; four and one in the fast tier).
+- **A real ceiling, photographed** (`spaces.ts` `photos`, `plan-relief.ts`): stucco figures, gilding and painted
+  vaults are not modelled but taken from photographs of the room on Wikimedia Commons (loaded from there as the
+  paintings are, credited in NOTICE.md). Each photograph is laid on the surfaces it shows (a side's cove, its
+  attic, the skylight's frame, a vault's flat top) from where it was taken: `scripts/fit-photo.mjs` finds the
+  camera's place, turn and lens from a few places marked on the picture whose position in the room is known,
+  and `plan-nav.ts` `photoUV` gives every point of the surface its place on the picture. A side without a
+  photograph of its own takes the opposite side's (`turned`); each photograph has a `gain` and `black` so the
+  sides sit together. On the full tier a patch with `relief` is raised where the photograph is light (white
+  stucco, gilt frames) and every raised point looked up again on the picture, so figures stand before their
+  ground and shift against it as one walks; the fast tier keeps the picture flat and loads a smaller one. Where
+  an attic is set back, what the camera could not see behind the cornice is carried down from what it saw.
 
 - **Rooms that differ** (`layout.ts`): each room has its own width (`SuiteRoom.halfWidth`: the suite's
   `hallWidth` or, now and then, wider) and each doorway its own centre (`Doorway.x`: on the axis or stepped
@@ -218,9 +236,19 @@ Postgres.
   and touch, unchanged light counts at unlock, effects budgets, marker hits, restoration and zero idle frames.
 - `node scripts/shot-museum.mjs <slug> <prefix> [baseUrl]`: gallery screenshots.
 - `node scripts/osm-rooms.mjs <south,west,north,east> <level> [axisRoom] [filter]`: a building's rooms and doors
-  from OpenStreetMap's indoor survey, in metres in the building's own frame (what a space is measured from).
-- `node scripts/shot-space.mjs <slug> [outDir] [prefix] [tier] [baseUrl] [--at name:x,z,yaw]`: a recreated
-  building room by room (a view down each room, a wall, the ceiling), to set beside photographs of it.
+  from OpenStreetMap's indoor survey, in metres: where each lies in the building's frame, and the room in its
+  own frame (its true length and width, its doors by wall). `OSM_CACHE=<folder>` keeps the survey's answer.
+- `node scripts/shot-space.mjs <slug> [outDir] [prefix] [tier] [baseUrl] [--at name:x,z,yaw] [--views file.json]`:
+  a recreated building room by room (a view down each room, a wall, the ceiling), or from each camera of a views
+  file (a photograph's own place and lens), to set beside photographs of it.
+- `node scripts/fit-photo.mjs marks.json`: where a photograph of a room was taken from (place, turn, lens), from
+  places marked on it; what a space's `photos` and a views file take.
+- `node scripts/pair-shots.mjs <views.json> <photoDir> <shotDir> <prefix> <outDir>`: each photograph beside the
+  model's screenshot from the same place.
+- `node scripts/check-space.mjs <slug> [baseUrl]`: a recreated building's plan (every room reached, works on
+  their walls under the cornice, seats clear) and a walk through every door and at every room's walls.
+- `node scripts/fps-space.mjs <slug> [baseUrl]`: frames a second in each room of a recreated building, both
+  graphics tiers (headless: the integrated graphics, a weak laptop).
 - `node scripts/error-sweep.mjs [baseUrl]`: console-error sweep.
 - `npm run check-layout`: collection and room-navigation checks up to 10,000 works.
 - `npm run test:performance`: painting-upload priority, cancellation and frame pacing; identical hall geometry
