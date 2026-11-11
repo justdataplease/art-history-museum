@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 const base = process.argv[2] ?? "http://localhost:3000";
 const browser = await chromium.launch({
   channel: "chrome", headless: true,
-  args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11"],
+  args: ["--mute-audio", "--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11"],
 });
 const errors = [];
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGPoqkqDIwbiOABO0hahD+yEBAAAAABJRU5ErkJggg==", "base64");

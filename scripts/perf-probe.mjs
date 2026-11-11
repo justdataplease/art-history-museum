@@ -43,7 +43,7 @@ const origin = new URL(base).origin;
 const browser = await chromium.launch({
   channel: "chrome",
   headless: true,
-  args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", "--disable-gpu-vsync", "--disable-frame-rate-limit"],
+  args: ["--mute-audio", "--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", "--disable-gpu-vsync", "--disable-frame-rate-limit"],
 });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 await page.addInitScript(POINTER_LOCK_STUB);

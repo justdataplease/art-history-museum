@@ -40,6 +40,7 @@ import styles from "./museum.module.css";
 import { SourceLink } from "@/components/timeline/SourceLink";
 import { ScreeningHud, useScreening } from "@/components/cinema/ScreeningHud";
 import { TouchStick } from "./TouchStick";
+import { subscribeInputMode, walksByTouch } from "./input-mode";
 
 const FOV = 55;
 /** Let the title on the doors register before they part. */
@@ -72,18 +73,8 @@ const GL_PROPS = {
   debug: { checkShaderErrors: process.env.NODE_ENV !== "production", onShaderError: null },
 };
 
-// Touch-only devices get drag-to-look / tap-to-walk instead of pointer lock.
-function subscribeTouch(cb: () => void) {
-  const mq = window.matchMedia("(pointer: coarse)");
-  mq.addEventListener("change", cb);
-  return () => mq.removeEventListener("change", cb);
-}
-function getTouch() {
-  return (
-    window.matchMedia("(pointer: coarse)").matches ||
-    !("requestPointerLock" in Element.prototype)
-  );
-}
+// Walking by touch (the sticks, drag to look) or with the mouse (pointer lock): what the visitor uses
+// (input-mode.ts; a laptop with a touchscreen walks with its touchpad until the screen is touched).
 const getTouchServer = () => false;
 
 const FX_AUDIO = { duck: duckMusic, muted: musicMuted };
@@ -146,7 +137,7 @@ export function MuseumApp({
   const rooms = layout.rooms.length;
   const tracker = useMemo(() => createSettleTracker(), [layout]);
   const total = layout.placements.length;
-  const touch = useSyncExternalStore(subscribeTouch, getTouch, getTouchServer);
+  const touch = useSyncExternalStore(subscribeInputMode, walksByTouch, getTouchServer);
 
   const [live, setLive] = useState(false); // frameloop: never -> demand
   const [doorsOpen, setDoorsOpen] = useState(false);
