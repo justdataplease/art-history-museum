@@ -20,7 +20,7 @@ import {
   type Placement,
   type SeatSpot,
 } from "./layout";
-import { setInspectFlying, setMoving } from "./renderer-motion";
+import { noteLook, setInspectFlying, setMoving } from "./renderer-motion";
 import { getSettings, PACE_SPEED, TAP_PACE_SPEED } from "./settings";
 
 // Camera behaviour: the entry walk, first-person movement (pointer lock on
@@ -652,7 +652,7 @@ export function Player({
   });
 
   // selector matches nothing: no document-wide click → lock() listener.
-  return <PointerLockControls ref={controls} enabled={walkEnabled} selector="#plc-none" />;
+  return <PointerLockControls ref={controls} enabled={walkEnabled} selector="#plc-none" onChange={noteLook} />;
 }
 
 // ------------------------------------------------------------ TouchPlayer
@@ -787,6 +787,7 @@ export function TouchPlayer({
       euler.x = THREE.MathUtils.clamp(euler.x - dy * LOOK_SPEED, -MAX_PITCH, MAX_PITCH);
       euler.z = 0;
       camera.quaternion.setFromEuler(euler);
+      noteLook();
       invalidate();
     };
     const up = (e: PointerEvent) => {
@@ -832,6 +833,7 @@ export function TouchPlayer({
       lookEuler.x = THREE.MathUtils.clamp(lookEuler.x + lookStick.y * angle, -MAX_PITCH, MAX_PITCH);
       lookEuler.z = 0;
       camera.quaternion.setFromEuler(lookEuler);
+      noteLook();
       invalidate();
     }
     // the walking stick: that way (forward, back, aside, as the camera faces), as fast as it is pushed

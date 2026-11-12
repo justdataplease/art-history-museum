@@ -17,7 +17,7 @@ import { PaintingExhibit } from "./PaintingExhibit";
 import { EnvSetup, Lighting, Room } from "./Room";
 import { PlanRooms } from "./PlanRooms";
 import { EntryDolly, InspectCamera, Player, TouchPlayer, type LockApi } from "./Controls";
-import { isMoving } from "./renderer-motion";
+import { isLooking, isMoving } from "./renderer-motion";
 import { planExhibitLights, roomDims } from "./exhibit-lights";
 import { SuiteRuntime, type Lod } from "./suite-runtime";
 import { textureStats } from "./exhibit-texture";
@@ -25,7 +25,7 @@ import { FxSlot } from "./fx/Slot";
 import { Elevator, type ElevatorApi, type LiftDirection } from "./Elevator";
 import { ExitDoors, type ExitSide } from "./ExitDoors";
 import { FilmNook } from "@/components/cinema/FilmNook";
-import { rememberSteppedDown, setReflection, type Quality } from "./quality";
+import { capturesProbe, onReflection, reflectionOn, rememberSteppedDown, setReflection, type Quality } from "./quality";
 import { useSetting } from "./settings";
 import type { CinemaRuntime } from "@/components/cinema/cinema-runtime";
 
@@ -149,7 +149,7 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
         start: { x: entryPose(layout).x, z: entryPose(layout).z },
         // (a plan's rooms: fewer lights, each of its bays' glass being far larger than a suite room's)
         areaPool: layout.plan ? Math.max(1, Math.floor(props.quality.areaLights / 2)) : props.quality.areaLights,
-        poolMax: layout.plan && props.quality.tier === "fast" ? 4 : undefined,
+        poolMax: layout.plan ? props.quality.planSpots : props.quality.spots,
         near: props.quality.near,
       }),
     // the tier is the gallery's for its life (a light count change would recompile every lit program)
@@ -397,7 +397,7 @@ export const Gallery = memo(function Gallery(props: GalleryProps) {
         compile={() => props.warmApi.current?.run() ?? Promise.resolve()}
       />
       {/* last, so its effect runs after the room and exhibits have set up */}
-      <Warmup api={props.warmApi} />
+      <Warmup api={props.warmApi} plan={!!layout.plan} />
     </>
   );
 });
@@ -432,7 +432,7 @@ function SuiteDirector({
   useEffect(() => {
     const w = window as unknown as { __MUSEUM_DEBUG__?: boolean; __museum?: unknown };
     if (!w.__MUSEUM_DEBUG__) return;
-    w.__museum = { camera, scene, layout: runtime.layout, runtime, invalidate, textureStats };
+    w.__museum = { camera, scene, layout: runtime.layout, runtime, invalidate, textureStats, reflectionOn, setReflection };
     return () => {
       w.__museum = undefined;
     };
@@ -475,27 +475,38 @@ const drawable = (o: THREE.Object3D) =>
  *  layer-1 props would get render-target programs that are never drawn.
  *  (compileAsync's own poll dereferences each material's current program and
  *  throws if a material is disposed meanwhile, e.g. an exhibit swapping its
- *  fallback for the loaded canvas.) */
+ *  fallback for the loaded canvas.)
+ *
+ *  `targets`: something is drawn into a render target: the floor's
+ *  reflection, or the reflection probe's capture of the room (quality.ts).
+ *  In the fast tier neither is, so those variants are never used and are not
+ *  compiled: half the lit programs, and where the browser compiles on the
+ *  page's own thread (Firefox has no KHR_parallel_shader_compile) half the
+ *  wait behind the doors. */
 async function precompile(
   gl: THREE.WebGLRenderer,
   scene: THREE.Scene,
-  camera: THREE.Camera
+  camera: THREE.Camera,
+  targets: boolean
 ): Promise<void> {
-  const rt = new THREE.WebGLRenderTarget(1, 1);
-  // the reflector's virtual camera is a fresh camera: layer 0 only
-  const rtCam = camera.clone();
-  rtCam.layers.set(0);
   const prev = gl.getRenderTarget();
+  let rt: THREE.WebGLRenderTarget | null = null;
   try {
-    gl.setRenderTarget(rt);
-    scene.traverse((o) => {
-      if (drawable(o) && o.layers.test(rtCam.layers)) gl.compile(o, rtCam, scene);
-    });
-    gl.setRenderTarget(prev);
+    if (targets) {
+      rt = new THREE.WebGLRenderTarget(1, 1);
+      // the reflector's virtual camera is a fresh camera: layer 0 only
+      const rtCam = camera.clone();
+      rtCam.layers.set(0);
+      gl.setRenderTarget(rt);
+      scene.traverse((o) => {
+        if (drawable(o) && o.layers.test(rtCam.layers)) gl.compile(o, rtCam, scene);
+      });
+      gl.setRenderTarget(prev);
+    }
     gl.compile(scene, camera);
   } finally {
     gl.setRenderTarget(prev);
-    rt.dispose();
+    rt?.dispose();
   }
   const deadline = performance.now() + 8000;
   const ready = () =>
@@ -506,12 +517,12 @@ async function precompile(
   while (performance.now() < deadline && !ready()) await sleep(16);
 }
 
-function Warmup({ api }: { api: RefObject<WarmupApi | null> }) {
+function Warmup({ api, plan }: { api: RefObject<WarmupApi | null>; plan: boolean }) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
   useEffect(() => {
-    const warm: WarmupApi = { run: () => precompile(gl, scene, camera) };
+    const warm: WarmupApi = { run: () => precompile(gl, scene, camera, reflectionOn() || capturesProbe(plan)) };
     api.current = warm;
     // Start right away (in parallel with the image downloads); MuseumApp
     // runs it again once the first works have arrived, which then only has
@@ -519,17 +530,26 @@ function Warmup({ api }: { api: RefObject<WarmupApi | null> }) {
     const t = setTimeout(() => {
       warm.run().catch(() => {});
     }, 0);
+    // the reflection switched on later (Settings -> Graphics: Full): its variants, before its pass needs them
+    const off = onReflection(() => {
+      if (reflectionOn()) warm.run().catch(() => {});
+    });
     return () => {
       clearTimeout(t);
+      off();
       if (api.current === warm) api.current = null;
     };
-  }, [gl, scene, camera, api]);
+  }, [gl, scene, camera, api, plan]);
   return null;
 }
 
 const DPR_WINDOW_MS = 250; // one frame-rate sample
 const DPR_WINDOWS = 10; // samples per decision: 2.5 s of walking in all
-const DPR_MAX_GAP_MS = 250; // a slower frame is a stall or an idle canvas, not a rate
+const DPR_QUICK_WINDOWS = 4; // ...or one second, every sample of it far too slow
+const DPR_MAX_GAP_MS = 500; // a slower frame is a stall or an idle canvas, not a rate
+/** A step under 0.75x is taken only while the picture keeps this many pixels: a large window on weak graphics,
+ *  never a phone or a small laptop (blurred for little gain). */
+const DPR_LOW_MIN_PIXELS = 700_000;
 
 /** A step of the quality ladder: a pixel ratio, with or without the floor's reflection. */
 interface Step {
@@ -538,19 +558,31 @@ interface Step {
 }
 
 /** The ladder, richest first: at full, 1.5x then 1x, then (Auto only: a visitor who chose Full keeps it) the
- *  floor's reflection off, then 0.75x; fast starts without the reflection, at 1x. */
+ *  floor's reflection off, then 0.75x and 0.6x; fast starts without the reflection, at 1x. */
 function ladder(tier: Quality["tier"], auto: boolean): Step[] {
-  if (tier === "fast") return [{ dpr: 1, reflection: false }, { dpr: 0.75, reflection: false }];
+  const low = [{ dpr: 0.75, reflection: false }, { dpr: 0.6, reflection: false }];
+  if (tier === "fast") return [{ dpr: 1, reflection: false }, ...low];
   const full = [{ dpr: 1.5, reflection: true }, { dpr: 1, reflection: true }];
-  return auto ? [...full, { dpr: 1, reflection: false }, { dpr: 0.75, reflection: false }] : full;
+  return auto ? [...full, { dpr: 1, reflection: false }, ...low] : full;
+}
+
+/** The pixel ratio a step gives on this screen (the canvas takes the screen's own, within [min(1, cap), cap]). */
+function effectiveDpr(cap: number): number {
+  const device = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  return Math.min(Math.max(Math.min(1, cap), device), cap);
 }
 
 /** Adaptive quality: a step down the ladder when walking runs below ~40 fps, back up when it holds 60 (drei
  *  PerformanceMonitor's bounds and 3/4 majority), except past the reflection: once Auto has taken it away, it
- *  stays away, and the next gallery starts fast (remembered). Only sampled while frames are continuous
- *  (walking): in demand mode an idle canvas, or one redrawn per look event, would otherwise read as a slow one.
- *  Finished samples are kept across walking bursts, so short hops add up to a decision; only the sample in
- *  progress is dropped when walking stops. The visitor's choice in Settings (Graphics) applies at once. */
+ *  stays away, and the next gallery starts fast (remembered). A second in which every sample is far too slow
+ *  (under 30 fps; under 20 for the step that takes the reflection away for good) steps down at once: a visitor
+ *  on weak graphics should not wait 2.5 s per step at 13 frames a second. Only sampled while frames are
+ *  continuous: walking, or looking round (frames are then drawn between the mouse's events too, so the rate is
+ *  the graphics' and not the mouse's); in demand mode an idle canvas would otherwise read as a slow one.
+ *  Finished samples are kept across bursts, so short hops add up to a decision; only the sample in progress is
+ *  dropped when the visitor stops. A step that changes nothing on this screen (1.5x to 1x on a 1x screen) is
+ *  passed over, and the last (0.6x) is only for a large window. The visitor's choice in Settings (Graphics)
+ *  applies at once. */
 function AdaptiveDpr({ onDprCap, quality, auto }: { onDprCap: (cap: number) => void; quality: Quality; auto: boolean }) {
   const choice = useSetting("graphics");
   // Auto keeps the tier the gallery started with; a choice made since applies at once (its lights from the next)
@@ -567,6 +599,9 @@ function AdaptiveDpr({ onDprCap, quality, auto }: { onDprCap: (cap: number) => v
     refresh: 0, // highest rate seen: tells a 120 Hz screen from a 60 Hz one
   });
   const stepsRef = useRef(steps);
+  const size = useThree((s) => s.size);
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
   useEffect(() => {
     stepsRef.current = steps;
     Object.assign(st.current, { step: 0, floor: 0, flips: 0, settled: false, t0: 0, fps: [] });
@@ -574,10 +609,26 @@ function AdaptiveDpr({ onDprCap, quality, auto }: { onDprCap: (cap: number) => v
     setReflection(steps[0].reflection);
   }, [steps, onDprCap]);
 
+  /** The step a move toward `i` lands on: past the steps that look and cost the same as the present one on
+   *  this screen (the present one when there is nothing else that way). */
+  const landing = (i: number) => {
+    const s = st.current;
+    const list = stepsRef.current;
+    const same = (a: Step, b: Step) => a.reflection === b.reflection && effectiveDpr(a.dpr) === effectiveDpr(b.dpr);
+    // (how far down: not under 0.75x unless the picture stays large enough)
+    const area = sizeRef.current.width * sizeRef.current.height;
+    let lowest = list.length - 1;
+    while (lowest > s.step && list[lowest].dpr < 0.75 && area * list[lowest].dpr ** 2 < DPR_LOW_MIN_PIXELS) lowest--;
+    let k = THREE.MathUtils.clamp(i, s.floor, Math.max(lowest, s.floor));
+    const dir = Math.sign(k - s.step);
+    while (dir !== 0 && k + dir >= s.floor && k + dir <= lowest && same(list[k], list[s.step])) k += dir;
+    return same(list[k], list[s.step]) ? s.step : k;
+  };
+
   const go = (i: number) => {
     const s = st.current;
     const list = stepsRef.current;
-    const k = THREE.MathUtils.clamp(i, s.floor, list.length - 1);
+    const k = landing(i);
     if (k === s.step) return;
     const was = list[s.step];
     s.step = k;
@@ -591,13 +642,16 @@ function AdaptiveDpr({ onDprCap, quality, auto }: { onDprCap: (cap: number) => v
     if (++s.flips >= 4) s.settled = true; // it keeps flip-flopping: stay on this (the cheaper side, as it goes)
   };
 
-  useFrame(() => {
+  useFrame((state) => {
     const s = st.current;
     if (s.settled) return;
-    if (!isMoving()) {
+    const looking = isLooking();
+    if (!isMoving() && !looking) {
       s.t0 = 0;
       return;
     }
+    // turning the view draws a frame per mouse event: keep them coming between events while it lasts
+    if (looking) state.invalidate();
     const now = performance.now();
     if (s.t0 === 0 || now - s.last > DPR_MAX_GAP_MS) {
       s.t0 = s.last = now;
@@ -612,8 +666,17 @@ function AdaptiveDpr({ onDprCap, quality, auto }: { onDprCap: (cap: number) => v
     s.frames = 0;
     s.refresh = Math.max(s.refresh, fps);
     s.fps.push(fps);
-    if (s.fps.length < DPR_WINDOWS) return;
     const [lower, upper] = s.refresh > 100 ? [60, 100] : [40, 60];
+    if (s.fps.length < DPR_WINDOWS) {
+      // far too slow for a second: no need to wait out the rest
+      const list = stepsRef.current;
+      const sticky = list[s.step].reflection && !list[landing(s.step + 1)].reflection;
+      if (s.fps.length >= DPR_QUICK_WINDOWS && s.fps.every((v) => v < lower * (sticky ? 0.5 : 0.75))) {
+        s.fps.length = 0;
+        go(s.step + 1);
+      }
+      return;
+    }
     // a screen's full rate measures a little under it (the odd dropped frame)
     const fast = s.fps.filter((v) => v >= upper * 0.9).length;
     const slow = s.fps.filter((v) => v < lower).length;

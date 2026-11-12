@@ -210,6 +210,17 @@ linked behind the entry doors; the count stayed at 28 throughout the walk.
 |---|---|---|---|---|---|---|
 | Caravaggio | 9 | 15–103 | 7 | 0 | 28 → 28 | 2.68 → 30.89 MB |
 
+Firefox (November 2026, `scripts/browser-probe.mjs`, on integrated AMD graphics): Firefox compiles every shader
+program on the page's own thread, and on Windows each lit program goes through Direct3D's compiler. With
+three.js's lights written out once per light (16 spots, 4 area lights) a gallery's 35 lit programs took 0.5 to
+0.9 s each: the page was frozen for 21 s before the doors opened. Three changes brought that down:
+the spot and area lights are real loops on Windows (`renderer-shader-patches.ts`: a third of the compile time,
+and a frame 13 % cheaper); the floor reflection's programs are compiled only where the reflection is drawn
+(`Gallery.tsx` `precompile`: half the lit programs in the fast tier); and Auto takes the fast tier for the name
+Firefox gives integrated AMD graphics (`quality.ts`; on a computer with two cards Firefox on Windows draws on
+the integrated one, whatever the page asks for). What each part of a frame costs there, at 1600×900: an area
+light about 4 ms, edge smoothing 5 ms, the floor's reflection 2 ms, image-based lighting 5 ms, eight spots 2 ms.
+
 ## Deploy
 
 Artist galleries are served one floor at a time, with at most six rooms per floor. The first floor keeps the
@@ -232,6 +243,10 @@ Postgres.
 - `node scripts/suite-check.mjs`: walks a gallery suite (collision, doorways,
   navigator, inspect).
 - `node scripts/perf-probe.mjs <slug> [baseUrl] [label]`: rendering cost.
+- `node scripts/browser-probe.mjs <firefox|chrome> [path] [tier] [baseUrl]`: a gallery in Firefox or Chrome: how
+  long the page is frozen while it loads and in which WebGL calls, the programs linked, the tier Auto picks, a
+  frame's true cost standing and after walking (`W`, `H`, `DSF`: a screen's size and scaling; Firefox once
+  needs `npx playwright install firefox`).
 - `FX_CODE=<access phrase> node scripts/check-fx.mjs [baseUrl]`: hidden-tools startup on fast/full desktop
   and touch, unchanged light counts at unlock, effects budgets, marker hits, restoration and zero idle frames.
 - `node scripts/shot-museum.mjs <slug> <prefix> [baseUrl]`: gallery screenshots.

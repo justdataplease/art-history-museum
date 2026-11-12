@@ -8,6 +8,7 @@ import { outerHalf, type GalleryLayout } from "./layout";
 import type { GalleryTheme } from "./theme";
 import type { SuiteRuntime } from "./suite-runtime";
 import { setGalleryEnv } from "./env-store";
+import { capturesProbe } from "./quality";
 import {
   buildGlass,
   buildHall,
@@ -109,7 +110,7 @@ export function EnvSetup({
       if (built || captured.current) return;
       built = true;
       swapEnvironment(scene, envRef, pending, initialEnvironment(pm, layout, theme));
-      precompileProbeShader(gl, pm);
+      if (capturesProbe(!!layout.plan)) precompileProbeShader(gl, pm);
       invalidate();
     };
     invalidate();
@@ -157,6 +158,8 @@ export function EnvSetup({
   }, []);
 
   useEffect(() => {
+    // the fast graphics tier keeps the stand-in room (quality.ts)
+    if (!capturesProbe(!!layout.plan)) return;
     if (((ready && texturesDrawn) || fallback) && !captured.current && countdown.current < 0) {
       // let the freshly settled canvases commit and upload first
       countdown.current = 3;

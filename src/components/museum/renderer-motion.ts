@@ -12,6 +12,18 @@ export function setMoving(next: boolean): void {
 /** Current value, for per-frame readers (no React subscription). */
 export const isMoving = (): boolean => moving;
 
+/** How long after the last turn of the view the visitor still counts as looking round (ms). */
+const LOOK_HOLD_MS = 120;
+let lookedAt = -Infinity;
+
+/** The visitor turned the view: a mouse move with the cursor captured, a drag, the look stick. */
+export function noteLook(): void {
+  lookedAt = performance.now();
+}
+
+/** ...and is still turning it (frame rates sampled meanwhile are the graphics', as when walking). */
+export const isLooking = (): boolean => performance.now() - lookedAt < LOOK_HOLD_MS;
+
 // --------------------------------------------------------- settle tracker
 
 /** Counts painting textures that have settled (loaded or failed), so the
