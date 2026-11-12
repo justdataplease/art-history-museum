@@ -18,8 +18,8 @@
 // The room: on activation the lights dip for a beat (tone-mapping exposure,
 // a uniform); sustained mess raises the "heat", and past a point a distant
 // alarm rings and a slow amber/red beacon washes the room. The beacon is
-// one point light added once, at activation (dark at rest, so no program
-// ever recompiles for it); the alarm winds down when the mess stops. The
+// one point light reserved before the gallery warms up (dark at rest, so
+// unlocking never changes the light count); the alarm winds down when the mess stops. The
 // conservator stops the alarm and dissolves the damage work by work.
 
 import * as THREE from "three";
@@ -119,6 +119,8 @@ export interface EngineOptions {
   invalidate: () => void;
   quality?: Quality;
   floorY?: number;
+  /** A dark light reserved by the gallery before its initial shader warm-up (owned by the caller). */
+  beacon?: THREE.PointLight;
   /** compile everything now in the scene (default: renderer.compileAsync) */
   compile?: () => Promise<void>;
   /** the first damage of a session (and after each clean) */
@@ -476,8 +478,9 @@ export class FxEngine {
     this.debris.onPeel = (p) => sfx.peel(this.spatial(p));
     this.darts = new DartSystem(low);
     for (const o of [this.debris.group, this.darts.group]) o.traverse((c) => c.layers.set(PROP_LAYER));
-    // the alarm beacon: in the scene from activation on, dark at rest
-    this.beacon = new THREE.PointLight(AMBER, 0, 16, 2);
+    // Reuse the gallery's reserved light so unlocking does not change its
+    // light count. Standalone users can let the engine own one instead.
+    this.beacon = opts.beacon ?? new THREE.PointLight(AMBER, 0, 16, 2);
     this.beacon.name = "fx-beacon";
     this.beacon.userData.fxIgnore = true;
   }
@@ -556,7 +559,8 @@ export class FxEngine {
     this.active = true;
     for (const e of this.canvases.values()) this.bindCanvas(e);
     const { scene } = this.o;
-    scene.add(this.decals.mesh, this.projectiles.group, this.shards.group, this.particles.points, this.beacon, ...this.rig.objects);
+    scene.add(this.decals.mesh, this.projectiles.group, this.shards.group, this.particles.points, ...this.rig.objects);
+    if (!this.o.beacon) scene.add(this.beacon);
     // (their instanced meshes draw nothing until used, but compile now)
     scene.add(this.debris.group, this.darts.group);
     this.rig.warmup(true);
@@ -597,9 +601,11 @@ export class FxEngine {
    * throw does not also pay for the JIT warming up (done inside the dip).
    */
   private warmPainters(): void {
-    // big enough for the hot loops to reach the optimizing compiler
-    const s = new PaintSurface(640, 640);
-    const rcv: Receiver = { surface: s, ox: 320, oy: 280, sx: 1024, sy: 1024, clip: s.full };
+    // Exercise the code paths without rasterizing full-size splats before
+    // the visitor has used a tool. The old 1024 px/m scratch pass could
+    // block the main thread for seconds on slower computers.
+    const s = new PaintSurface(96, 96);
+    const rcv: Receiver = { surface: s, ox: 48, oy: 42, sx: 128, sy: 128, clip: s.full };
     const plans = [
       buildPaintSplat({ seed: 1, radius: 0.12, dirX: 0, dirY: 1, oblique: 0.3, vertical: true, color: [200, 30, 30], amount: 0.8 }),
       buildEggSplat({ seed: 2, dirX: 0, dirY: 1, oblique: 0.2, vertical: true }),
@@ -614,7 +620,7 @@ export class FxEngine {
         s.refreshLive(0);
       }
     }
-    const can = new SprayCan([40, 120, 220], 0.07, 4, SPRAY_LIMITS.high);
+    const can = new SprayCan([40, 120, 220], 0.07, 4, SPRAY_LIMITS[this.o.quality ?? "high"]);
     for (let i = 0; i < 6; i++) can.spray([{ rcv, feather: true }], 0.03, 1 / 60, i % 2 ? { x: -0.03, y: 0.01 } : null);
     s.dispose();
   }
@@ -633,7 +639,9 @@ export class FxEngine {
     if (this.dipT !== null) this.o.renderer.toneMappingExposure = this.baseExposure;
     sfx.setAlarm(0);
     const { scene } = this.o;
-    scene.remove(this.decals.mesh, this.projectiles.group, this.shards.group, this.particles.points, this.beacon, ...this.rig.objects);
+    scene.remove(this.decals.mesh, this.projectiles.group, this.shards.group, this.particles.points, ...this.rig.objects);
+    this.beacon.intensity = 0;
+    if (!this.o.beacon) scene.remove(this.beacon);
     scene.remove(this.debris.group, this.darts.group);
     for (const e of this.canvases.values()) {
       e.surface?.dispose();
@@ -649,7 +657,7 @@ export class FxEngine {
     this.darts.dispose();
     this.particles.dispose();
     this.rig.dispose();
-    this.beacon.dispose();
+    if (!this.o.beacon) this.beacon.dispose();
     sfx.brushStop();
     sfx.sprayStop();
   }

@@ -21,8 +21,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { FxEngine, TEAM_COLORS, type CanvasRef, type Quality } from "./engine";
-import type { FxSlotProps } from "./Slot";
+import { currentQuality } from "../quality";
+import { FxEngine, TEAM_COLORS, type CanvasRef } from "./engine";
+import type { FxLayerProps } from "./Slot";
 import { armed, BRUSH_SIZES, fx, fxTally, isHeld, SPRAY_SIZES, type Tool } from "./store";
 import { sfx } from "./sfx";
 
@@ -66,7 +67,7 @@ function ballColors(): { fill: string; shell: string } {
   return { fill: s.color, shell: "#" + c.clone().lerp(new THREE.Color("#ffffff"), 0.4).getHexString() };
 }
 
-export default function Layer({ registry, enabled, touch, compile, floorY = 0 }: FxSlotProps) {
+export default function Layer({ registry, enabled, touch, compile, beacon, floorY = 0 }: FxLayerProps) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
@@ -86,7 +87,8 @@ export default function Layer({ registry, enabled, touch, compile, floorY = 0 }:
       scene,
       camera,
       invalidate,
-      quality: (touch ? "low" : "high") as Quality,
+      quality: touch || currentQuality().tier === "fast" ? "low" : "high",
+      beacon: beacon.current ?? undefined,
       floorY,
       compile: async () => {
         if (compileRef.current) await compileRef.current();
